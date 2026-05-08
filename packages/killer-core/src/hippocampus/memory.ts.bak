@@ -1,0 +1,810 @@
+/**
+ * Hippocampus - 记忆引擎接口和实现
+ *
+ * 超越 RAG 的类脑记忆系统
+ */
+
+import type {
+  Episode,
+  SemanticNode,
+  SemanticRelation,
+  ProceduralMemory,
+  ProspectiveMemory,
+  WorkingMemory,
+  AssociativeQuery,
+  AssociativeResult,
+} from './types.js';
+import { MemoryLayer } from './types.js';
+import { AssociationEngine } from './association.js';
+import { DreamEngine } from './dreaming.js';
+import {
+  calculateRetention,
+  shouldRecall,
+  reinforce,
+  decay,
+  calculateNextReview,
+  getMemoryHealth,
+  DEFAULT_FORGETTING_CONFIG,
+  type ForgettingConfig,
+  applyForgettingCurve,
+} from './forgetting.js';
+import {
+  calculateRetention,
+  shouldRecall,
+  reinforce,
+  decay,
+  calculateNextReview,
+  getMemoryHealth,
+  DEFAULT_FORGETTING_CONFIG,
+  type ForgettingConfig,
+  applyForgettingCurve,
+} from './forgetting.js';
+
+/**
+ * 梦境周期结果
+ */
+export interface DreamingResult {
+  replayedEpisodes: number;
+  extractedPatterns: number;
+  recombinations: number;
+  consolidatedMemories: number;
+  evolutionSignals: string[];
+}
+
+/**
+ * 记忆引擎配置
+ */
+export interface MemoryConfig {
+  /**
+   * 工作记忆容量
+   */
+  workingMemoryCapacity: number;
+
+  /**
+   * 遗忘曲线配置
+   */
+  forgetting: ForgettingConfig;
+
+  /**
+   * 是否启用梦境模式
+   */
+  dreamingEnabled: boolean;
+
+  /**
+   * 梦境周期间隔（毫秒）
+   */
+  dreamInterval: number;
+
+  /**
+   * 是否启用自动衰减
+   */
+  autoDecayEnabled: boolean;
+
+  /**
+   * 自动衰减间隔（毫秒）
+   */
+  decayInterval: number;
+}
+
+/**
+ * 默认记忆引擎配置
+ */
+export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
+  workingMemoryCapacity: 7,
+  forgetting: DEFAULT_FORGETTING_CONFIG,
+  dreamingEnabled: true,
+  dreamInterval: 60 * 60 * 1000, // 1 小时
+  autoDecayEnabled: true,
+  decayInterval: 5 * 60 * 1000, // 5 分钟
+};
+
+/**
+ * Hippocampus 记忆引擎
+ *
+ * 管理五层记忆：工作记忆、情节记忆、语义记忆、程序记忆、前瞻记忆
+ */
+export class HippocampusEngine {
+  // === 配置 ===
+  private config: MemoryConfig;
+
+  // === 工作记忆 ===
+  workingMemory: WorkingMemory;
+
+  // === 情节记忆 ===
+  private episodicStore: Map<string, Episode>;
+
+  // === 语义记忆 ===
+  private semanticGraph: Map<string, SemanticNode>;
+
+  // === 程序记忆 ===
+  private proceduralStore: Map<string, ProceduralMemory>;
+
+  // === 前瞻记忆 ===
+  private prospectiveStore: Map<string, ProspectiveMemory>;
+
+  // === 子引擎 ===
+  private associationEngine: AssociationEngine;
+  private dreamEngine: DreamEngine;
+
+  // === 定时器 ===
+  private dreamTimer: ReturnType<typeof setInterval> | null = null;
+  private decayTimer: ReturnType<typeof setInterval> | null = null;
+
+  // === 事件监听器 ===
+  private eventListeners: Map<string, Array<(data: unknown) => void>>;
+
+  constructor(config: MemoryConfig = DEFAULT_MEMORY_CONFIG) {
+    this.config = config;
+    this.episodicStore = new Map();
+    this.semanticGraph = new Map();
+    this.proceduralStore = new Map();
+    this.prospectiveStore = new Map();
+    this.eventListeners = new Map();
+
+    // 初始化工作记忆
+    this.workingMemory = {
+      currentFocus: null,
+      activeContext: [],
+      shortTermBuffer: [],
+      capacity: config.workingMemoryCapacity,
+    };
+
+    // 初始化子引擎
+    this.associationEngine = new AssociationEngine();
+    this.dreamEngine = new DreamEngine();
+
+    // 启动自动维护
+    this.startMaintenance();
+  }
+
+  // === 工作记忆 ===
+
+  /**
+   * 获取当前工作记忆
+   */
+  getWorkingMemory(): WorkingMemory {
+    return { ...this.workingMemory };
+  }
+
+  /**
+   * 更新工作记忆
+   */
+  updateWorkingMemory(update: Partial<WorkingMemory>): void {
+    this.workingMemory = {
+      ...this.workingMemory,
+      ...update,
+    };
+    this.emit('workingMemoryUpdated', this.workingMemory);
+  }
+
+  /**
+   * 聚焦到目标
+   */
+  focusOn(target: string): void {
+    this.workingMemory.currentFocus = target;
+
+    // 将目标添加到上下文
+    if (!this.workingMemory.activeContext.includes(target)) {
+      this.workingMemory.activeContext.push(target);
+    }
+
+    this.emit('focusChanged', { target });
+  }
+
+  /**
+   * 添加到上下文
+   */
+  addToContext(item: string): void {
+    if (!this.workingMemory.activeContext.includes(item)) {
+      this.workingMemory.activeContext.push(item);
+      this.emit('contextAdded', { item });
+    }
+  }
+
+  /**
+   * 添加到短期缓冲区
+   */
+  addToBuffer(item: string): void {
+    this.workingMemory.shortTermBuffer.push(item);
+
+    // 保持缓冲区在容量内
+    if (this.workingMemory.shortTermBuffer.length > this.workingMemory.capacity) {
+      this.workingMemory.shortTermBuffer.shift();
+    }
+
+    this.emit('bufferUpdated', this.workingMemory.shortTermBuffer);
+  }
+
+  /**
+   * 清空工作记忆
+   */
+  clearWorkingMemory(): void {
+    this.workingMemory = {
+      currentFocus: null,
+      activeContext: [],
+      shortTermBuffer: [],
+      capacity: this.config.workingMemoryCapacity,
+    };
+    this.emit('workingMemoryCleared', null);
+  }
+
+  // === 情节记忆 ===
+
+  /**
+   * 存储情节记忆
+   */
+  storeEpisode(episode: Omit<Episode, 'id' | 'timestamp'>): Episode {
+    const now = Date.now();
+    const newEpisode: Episode = {
+      ...episode,
+      id: `ep_${now}_${Math.random().toString(36).substring(2, 9)}`,
+      timestamp: now,
+      decayRate: episode.decayRate ?? this.config.forgetting.defaultStability,
+      accessCount: 0,
+    };
+
+    this.episodicStore.set(newEpisode.id, newEpisode);
+    this.emit('episodeStored', newEpisode);
+
+    return newEpisode;
+  }
+
+  /**
+   * 检索情节记忆
+   */
+  retrieveEpisode(id: string): Episode | null {
+    const episode = this.episodicStore.get(id);
+    if (!episode) {
+      return null;
+    }
+
+    const now = Date.now();
+    const updated = reinforce(episode, now, this.config.forgetting);
+    this.episodicStore.set(id, updated);
+
+    return updated;
+  }
+
+  /**
+   * 获取所有情节记忆
+   */
+  getAllEpisodes(): Episode[] {
+    return Array.from(this.episodicStore.values());
+  }
+
+  /**
+   * 获取近期情节
+   */
+  getRecentEpisodes(count: number = 10): Episode[] {
+    return Array.from(this.episodicStore.values())
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, count);
+  }
+
+  /**
+   * 按标签检索情节
+   */
+  getEpisodesByTag(tag: string): Episode[] {
+    return Array.from(this.episodicStore.values()).filter((episode) =>
+      episode.tags.includes(tag)
+    );
+  }
+
+  /**
+   * 删除情节记忆
+   */
+  deleteEpisode(id: string): boolean {
+    const deleted = this.episodicStore.delete(id);
+    if (deleted) {
+      this.emit('episodeDeleted', { id });
+    }
+    return deleted;
+  }
+
+  // === 语义记忆 ===
+
+  /**
+   * 添加语义节点
+   */
+  addSemanticNode(node: Omit<SemanticNode, 'id' | 'relations'> & { id?: string; relations?: SemanticRelation[] }): SemanticNode {
+    const newNode: SemanticNode = {
+      ...node,
+      id: node.id ?? `semantic_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      relations: node.relations ?? [],
+    };
+
+    this.semanticGraph.set(newNode.id, newNode);
+    this.emit('semanticNodeAdded', newNode);
+
+    return newNode;
+  }
+
+  /**
+   * 获取语义节点
+   */
+  getSemanticNode(id: string): SemanticNode | null {
+    return this.semanticGraph.get(id) ?? null;
+  }
+
+  /**
+   * 按类型获取语义节点
+   */
+  getSemanticNodesByType(type: SemanticNode['type']): SemanticNode[] {
+    return Array.from(this.semanticGraph.values()).filter((node) => node.type === type);
+  }
+
+  /**
+   * 添加语义关系
+   */
+  addRelation(from: string, to: string, type: string, weight: number): void {
+    const fromNode = this.semanticGraph.get(from);
+    if (!fromNode) {
+      throw new Error(`Source node not found: ${from}`);
+    }
+
+    // 检查是否已存在相同关系
+    const existingRelation = fromNode.relations.find(
+      (r) => r.to === to && r.type === type
+    );
+
+    if (existingRelation) {
+      // 更新权重
+      existingRelation.weight = weight;
+    } else {
+      fromNode.relations.push({ to, type, weight });
+    }
+
+    this.emit('relationAdded', { from, to, type, weight });
+  }
+
+  /**
+   * 删除语义节点
+   */
+  deleteSemanticNode(id: string): boolean {
+    // 删除所有指向该节点的关系
+    for (const node of this.semanticGraph.values()) {
+      node.relations = node.relations.filter((r) => r.to !== id);
+    }
+
+    const deleted = this.semanticGraph.delete(id);
+    if (deleted) {
+      this.emit('semanticNodeDeleted', { id });
+    }
+    return deleted;
+  }
+
+  // === 联想扩散（替代 RAG）===
+
+  /**
+   * 联想扩散检索
+   */
+  associativeRecall(query: AssociativeQuery): AssociativeResult {
+    // 激活语义节点
+    const activatedNodes = this.associationEngine.spreadActivation(
+      this.semanticGraph,
+      query.seed,
+      query.depth,
+      query.threshold
+    );
+
+    // 激活关联的情节记忆
+    const activatedEpisodes: Episode[] = [];
+    for (const node of activatedNodes) {
+      for (const episode of this.episodicStore.values()) {
+        if (
+          episode.associations.includes(node.node.id) ||
+          episode.tags.includes(node.node.label)
+        ) {
+          if (!activatedEpisodes.includes(episode)) {
+            activatedEpisodes.push(episode);
+          }
+        }
+      }
+    }
+
+    // 计算相关性分数
+    const relevanceScore =
+      activatedNodes.length > 0
+        ? activatedNodes.reduce((sum, n) => sum + n.activation, 0) / activatedNodes.length
+        : 0;
+
+    // 限制结果数量
+    const nodes = activatedNodes.slice(0, query.limit).map((a) => a.node);
+    const episodes = activatedEpisodes.slice(0, query.limit);
+
+    return {
+      nodes,
+      episodes,
+      relevanceScore,
+    };
+  }
+
+  /**
+   * 获取节点间的关联强度
+   */
+  getAssociationStrength(from: string, to: string): number {
+    return this.associationEngine.calculateAssociationStrength(
+      this.semanticGraph,
+      from,
+      to
+    );
+  }
+
+  /**
+   * 获取最短激活路径
+   */
+  getShortestPath(from: string, to: string): string[] {
+    return this.associationEngine.findShortestPath(this.semanticGraph, from, to);
+  }
+
+  // === 程序记忆 ===
+
+  /**
+   * 存储程序记忆
+   */
+  storeProcedural(memory: Omit<ProceduralMemory, 'id'>): ProceduralMemory {
+    const newMemory: ProceduralMemory = {
+      ...memory,
+      id: `proc_${memory.skillId}_${Date.now()}`,
+      lastUsed: Date.now(),
+    };
+
+    this.proceduralStore.set(newMemory.id, newMemory);
+    this.emit('proceduralStored', newMemory);
+
+    return newMemory;
+  }
+
+  /**
+   * 检索程序记忆
+   */
+  retrieveProcedural(skillId: string): ProceduralMemory | null {
+    for (const memory of this.proceduralStore.values()) {
+      if (memory.skillId === skillId) {
+        // 更新使用统计
+        memory.usageCount++;
+        memory.lastUsed = Date.now();
+        return memory;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 标记为快速路径
+   */
+  markAsFastPath(skillId: string): boolean {
+    const memory = this.retrieveProcedural(skillId);
+    if (memory) {
+      memory.fastPath = true;
+      memory.compiled = true;
+      return true;
+    }
+    return false;
+  }
+
+  // === 前瞻记忆 ===
+
+  /**
+   * 添加前瞻记忆
+   */
+  addProspective(item: Omit<ProspectiveMemory, 'id'>): ProspectiveMemory {
+    const newItem: ProspectiveMemory = {
+      ...item,
+      id: `prospective_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+    };
+
+    this.prospectiveStore.set(newItem.id, newItem);
+    this.emit('prospectiveAdded', newItem);
+
+    return newItem;
+  }
+
+  /**
+   * 获取到期前瞻记忆
+   */
+  checkDue(now: number = Date.now()): ProspectiveMemory[] {
+    const due: ProspectiveMemory[] = [];
+
+    for (const memory of this.prospectiveStore.values()) {
+      if (!memory.completed && memory.triggerTime <= now) {
+        due.push(memory);
+      }
+    }
+
+    // 按优先级排序
+    due.sort((a, b) => b.priority - a.priority);
+
+    return due;
+  }
+
+  /**
+   * 完成前瞻记忆
+   */
+  completeProspective(id: string): boolean {
+    const memory = this.prospectiveStore.get(id);
+    if (memory) {
+      memory.completed = true;
+      this.emit('prospectiveCompleted', memory);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * 删除前瞻记忆
+   */
+  deleteProspective(id: string): boolean {
+    return this.prospectiveStore.delete(id);
+  }
+
+  // === 维护操作 ===
+
+  /**
+   * 应用遗忘曲线
+   */
+  applyDecay(): void {
+    const now = Date.now();
+    const episodes = Array.from(this.episodicStore.values());
+
+    const decayed = applyForgettingCurve(episodes, now, this.config.forgetting);
+
+    for (const episode of decayed) {
+      this.episodicStore.set(episode.id, episode);
+    }
+
+    this.emit('decayApplied', { count: episodes.length });
+  }
+
+  /**
+   * 梦境周期
+   */
+  async dreamCycle(): Promise<DreamingResult> {
+    const now = Date.now();
+
+    const result = this.dreamEngine.executeDreamCycle(
+      this.episodicStore,
+      this.semanticGraph,
+      now
+    );
+
+    const dreamingResult: DreamingResult = {
+      replayedEpisodes: result.episodesReplayed,
+      extractedPatterns: result.patternsExtracted,
+      recombinations: result.insights.length,
+      consolidatedMemories: result.memoriesConsolidated,
+      evolutionSignals: result.insights,
+    };
+
+    this.emit('dreamCycleCompleted', dreamingResult);
+
+    return dreamingResult;
+  }
+
+  /**
+   * 获取记忆统计
+   */
+  getStats(): {
+    episodes: number;
+    semanticNodes: number;
+    proceduralMemories: number;
+    prospectiveMemories: number;
+    activeContext: number;
+  } {
+    return {
+      episodes: this.episodicStore.size,
+      semanticNodes: this.semanticGraph.size,
+      proceduralMemories: this.proceduralStore.size,
+      prospectiveMemories: this.prospectiveStore.size,
+      activeContext: this.workingMemory.activeContext.length,
+    };
+  }
+
+  /**
+   * 获取记忆健康报告
+   */
+  getHealthReport(): Array<{
+    id: string;
+    type: MemoryLayer;
+    health: 'strong' | 'moderate' | 'weak' | 'dormant';
+    lastAccessed: number;
+  }> {
+    const report: Array<{
+      id: string;
+      type: MemoryLayer;
+      health: 'strong' | 'moderate' | 'weak' | 'dormant';
+      lastAccessed: number;
+    }> = [];
+
+    const now = Date.now();
+
+    for (const episode of this.episodicStore.values()) {
+      report.push({
+        id: episode.id,
+        type: MemoryLayerEnum.Episodic,
+        health: getMemoryHealth(episode, now),
+        lastAccessed: episode.timestamp,
+      });
+    }
+
+    return report;
+  }
+
+  // === 生命周期 ===
+
+  /**
+   * 启动维护定时器
+   */
+  private startMaintenance(): void {
+    if (this.config.dreamingEnabled) {
+      this.dreamTimer = setInterval(() => {
+        this.dreamCycle().catch((err) => {
+          this.emit('error', { source: 'dreamCycle', error: err });
+        });
+      }, this.config.dreamInterval);
+    }
+
+    if (this.config.autoDecayEnabled) {
+      this.decayTimer = setInterval(() => {
+        this.applyDecay();
+      }, this.config.decayInterval);
+    }
+  }
+
+  /**
+   * 停止引擎
+   */
+  stop(): void {
+    if (this.dreamTimer) {
+      clearInterval(this.dreamTimer);
+      this.dreamTimer = null;
+    }
+
+    if (this.decayTimer) {
+      clearInterval(this.decayTimer);
+      this.decayTimer = null;
+    }
+
+    this.emit('stopped', null);
+  }
+
+  /**
+   * 清空所有记忆
+   */
+  clear(): void {
+    this.episodicStore.clear();
+    this.semanticGraph.clear();
+    this.proceduralStore.clear();
+    this.prospectiveStore.clear();
+    this.clearWorkingMemory();
+
+    this.emit('cleared', null);
+  }
+
+  // === 事件系统 ===
+
+  /**
+   * 订阅事件
+   */
+  on(event: string, callback: (data: unknown) => void): void {
+    if (!this.eventListeners.has(event)) {
+      this.eventListeners.set(event, []);
+    }
+    this.eventListeners.get(event)!.push(callback);
+  }
+
+  /**
+   * 取消订阅
+   */
+  off(event: string, callback: (data: unknown) => void): void {
+    const listeners = this.eventListeners.get(event);
+    if (listeners) {
+      const index = listeners.indexOf(callback);
+      if (index > -1) {
+        listeners.splice(index, 1);
+      }
+    }
+  }
+
+  /**
+   * 触发事件
+   */
+  private emit(event: string, data: unknown): void {
+    const listeners = this.eventListeners.get(event);
+    if (listeners) {
+      for (const callback of listeners) {
+        try {
+          callback(data);
+        } catch (err) {
+          // 防止回调错误影响主流程
+          this.emit('error', { source: 'eventCallback', error: err });
+        }
+      }
+    }
+  }
+
+  // === 导出/导入 ===
+
+  /**
+   * 导出所有记忆
+   */
+  export(): {
+    episodic: Episode[];
+    semantic: SemanticNode[];
+    procedural: ProceduralMemory[];
+    prospective: ProspectiveMemory[];
+    workingMemory: WorkingMemory;
+    exportedAt: number;
+  } {
+    return {
+      episodic: Array.from(this.episodicStore.values()),
+      semantic: Array.from(this.semanticGraph.values()),
+      procedural: Array.from(this.proceduralStore.values()),
+      prospective: Array.from(this.prospectiveStore.values()),
+      workingMemory: this.getWorkingMemory(),
+      exportedAt: Date.now(),
+    };
+  }
+
+  /**
+   * 导入记忆
+   */
+  import(data: {
+    episodic?: Episode[];
+    semantic?: SemanticNode[];
+    procedural?: ProceduralMemory[];
+    prospective?: ProspectiveMemory[];
+  }): void {
+    if (data.episodic) {
+      for (const episode of data.episodic) {
+        this.episodicStore.set(episode.id, episode);
+      }
+    }
+
+    if (data.semantic) {
+      for (const node of data.semantic) {
+        this.semanticGraph.set(node.id, node);
+      }
+    }
+
+    if (data.procedural) {
+      for (const memory of data.procedural) {
+        this.proceduralStore.set(memory.id, memory);
+      }
+    }
+
+    if (data.prospective) {
+      for (const memory of data.prospective) {
+        this.prospectiveStore.set(memory.id, memory);
+      }
+    }
+
+    this.emit('imported', {
+      episodes: data.episodic?.length ?? 0,
+      semantic: data.semantic?.length ?? 0,
+      procedural: data.procedural?.length ?? 0,
+      prospective: data.prospective?.length ?? 0,
+    });
+  }
+}
+
+// 重新导出 MemoryLayer 枚举
+export { MemoryLayer } from './types.js';
+
+// 导出接口保持兼容性
+export interface IMemoryEngine {
+  getWorkingMemory(): WorkingMemory;
+  updateWorkingMemory(update: Partial<WorkingMemory>): void;
+  storeEpisode(episode: Omit<Episode, 'id' | 'timestamp'>): Promise<string>;
+  retrieveEpisode(id: string): Promise<Episode | null>;
+  retrieveEpisodesAssociatively(query: AssociativeQuery): Promise<Episode[]>;
+  upsertSemanticNode(node: Omit<SemanticNode, 'id'>): Promise<string>;
+  retrieveSemanticNode(id: string): Promise<SemanticNode | null>;
+  retrieveSemanticAssociatively(query: AssociativeQuery): Promise<AssociativeResult>;
+  storeProcedural(memory: Omit<ProceduralMemory, 'id'>): Promise<string>;
+  retrieveProcedural(skillId: string): Promise<ProceduralMemory | null>;
+  addProspective(memory: Omit<ProspectiveMemory, 'id'>): Promise<string>;
+  getDueProspective(): Promise<ProspectiveMemory[]>;
+  applyForgettingCurve(): Promise<void>;
+  consolidate(): Promise<DreamingResult>;
+}

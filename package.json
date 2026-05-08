@@ -1,0 +1,62 @@
+{
+  "name": "killer-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Killer Agent Framework — A Samantha-level autonomous AI agent with brain-inspired architecture, emotional intelligence, and persistent memory",
+  "scripts": {
+    "build": "node build.mjs",
+    "prepare": "pnpm run build",
+    "start": "node killer.mjs",
+    "killer": "node killer.mjs",
+    "init": "node killer.mjs --init",
+    "demo": "node killer.mjs --demo",
+    "dev": "pnpm -r --parallel run dev",
+    "test": "pnpm -r run test",
+    "test:coverage": "pnpm -r run test:coverage",
+    "lint": "eslint . --ext .ts,.tsx",
+    "clean": "node clean.mjs"
+  },
+  "keywords": [
+    "agent",
+    "agi",
+    "ai",
+    "autonomous",
+    "brain",
+    "cognitive",
+    "emotional-intelligence",
+    "llm",
+    "memory",
+    "persona",
+    "samantha",
+    "self-evolving",
+    "typescript"
+  ],
+  "bin": {
+    "killer": "./killer.mjs",
+    "killer-agent": "./killer.mjs"
+  },
+  "preferGlobal": true,
+  "author": "Zhifeng Niu",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zhifeng-Niu/killer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Zhifeng-Niu/killer/issues"
+  },
+  "homepage": "https://github.com/Zhifeng-Niu/killer#readme",
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "@vitest/coverage-v8": "^1.6.1",
+    "eslint": "^8.54.0",
+    "typescript": "^5.3.2",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}

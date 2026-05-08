@@ -1,0 +1,2499 @@
+/**
+ * Killer Agent - 主 Agent 类
+ *
+ * 编排所有模块，提供统一的 Agent 接口
+ */
+
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
+
+import {
+  BrainstemLoop,
+  type LoopState,
+  type Perception,
+  HippocampusEngine,
+  type MemoryConfig,
+  DEFAULT_MEMORY_CONFIG,
+  EvolutionEngine,
+  SkillEcosystem,
+  SynapseProtocol,
+  ConsciousnessStream,
+  ToolExecutor,
+  DEFAULT_LOOP_CONFIG,
+  type LoopConfig,
+  CellType,
+  type CellId,
+  Planner,
+  RiskAssessor,
+  DecisionEngine,
+  PlanExecutor,
+  type Goal,
+  type Plan,
+  type PlanStep,
+  type StepResult,
+  type Decision,
+  type PrefrontalConfig,
+  DEFAULT_PREFRONTAL_CONFIG,
+  type DreamResult as DreamCycleResult,
+  LLMError,
+  isKillerError,
+  getBuiltinTools,
+} from '@killer/core';
+import { SensoryRouter, CLIChannel, OutputManager } from '../sensory/index.js';
+import { WebhookChannel } from '../sensory/webhook/index.js';
+import type {
+  AgentConfig,
+  AgentStatus,
+  ModuleStatus,
+} from './types.js';
+import { DEFAULT_AGENT_CONFIG } from './types.js';
+import type { SensoryInput } from '../sensory/types.js';
+import { CellManager, type CellStatusReport } from './cells.js';
+import { CommandHandler } from './commands.js';
+import { BuiltinTools } from './tools.js';
+import { TaskDelegate, type DelegationResult } from './task-delegate.js';
+import { ToolPermissions, type PermissionCheck } from './tool-permissions.js';
+import { PluginManager, type KillerPlugin } from '../plugins/index.js';
+import { MetricsCollector } from '../metrics/index.js';
+import { HealthMonitor } from '../metrics/health-monitor.js';
+import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type LifecycleSubscription } from './hooks.js';
+import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
+import { ContextWindowManager, type ContextMessage } from './context.js';
+import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
+import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
+import { extractFacts, type ExtractedFact } from './fact-extractor.js';
+import { mapSensoryPriority, mapSensoryChannelToSource } from './sensory-mapper.js';
+import { PersonaEngine, DEFAULT_PERSONA_CONFIG, type PersonaEngineConfig, type PersonaDNAConfig } from '../persona/engine.js';
+import { initKillerDir } from '../config/types.js';
+import { SkillManager, type SkillExecutionResult } from '../skills/manager.js';
+import { SessionManager, type SessionSnapshot } from '../session/index.js';
+import { Logger } from '../log/index.js';
+
+/**
+ * 生成唯一 ID
+ */
+function generateId(prefix: string): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/**
+ * Killer Agent - 主 Agent 类
+ *
+ * 编排所有核心模块，提供统一的启动和停止接口
+ */
+export class KillerAgent {
+  private readonly config: AgentConfig;
+  private readonly status: AgentStatus;
+  private readonly prefrontalConfig: PrefrontalConfig;
+  private readonly logger = Logger.getInstance().child('agent');
+  readonly healthMonitor = new HealthMonitor();
+
+  // 核心模块
+  consciousness!: ConsciousnessStream;
+  hippocampus!: HippocampusEngine;
+  evolution!: EvolutionEngine;
+  skills!: SkillEcosystem;
+  synapse!: SynapseProtocol;
+  brainstem!: BrainstemLoop;
+  tools!: ToolExecutor;
+
+  // 前额叶皮层
+  planner!: Planner;
+  riskAssessor!: RiskAssessor;
+  decision!: DecisionEngine;
+  planExecutor!: PlanExecutor;
+
+  // 感官模块
+  sensoryRouter!: SensoryRouter;
+  cliChannel!: CLIChannel;
+  outputManager!: OutputManager;
+
+  // 管理器
+  cellManager!: CellManager;
+  commandHandler!: CommandHandler;
+  builtinTools!: BuiltinTools;
+  persona!: PersonaEngine;
+  skillManager!: SkillManager;
+  sessionManager!: SessionManager;
+  taskDelegate!: TaskDelegate;
+  toolPermissions!: ToolPermissions;
+  pluginManager!: PluginManager;
+  readonly hooks: LifecycleHooks = new LifecycleHooks();
+  readonly middleware: MiddlewarePipeline = new MiddlewarePipeline();
+  readonly contextWindow: ContextWindowManager = new ContextWindowManager();
+
+  // 对话上下文（工作记忆窗口）
+  private conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  private readonly maxConversationTurns = 20;
+  private readonly sessionDir: string;
+  private readonly toolTimeoutMs = 30000; // 30s default timeout
+
+  // 状态追踪
+  private loopCount: number = 0;
+  private completedGoalsCount: number = 0;
+  private processing = false;
+  private readonly inputQueue: Array<{ content: string; channel: string; resolve: (r: { content: string }) => void; reject: (e: Error) => void; onToken?: (token: string) => void }> = [];
+
+  // 后台定时器（空闲期间自动运行）
+  private backgroundTimers: Array<ReturnType<typeof setInterval>> = [];
+  private lastActivityAt = 0;
+
+  constructor(config: AgentConfig) {
+    this.config = config;
+    this.sessionDir = config.sessionDir ?? path.join(os.homedir(), '.killer', 'sessions');
+    this.prefrontalConfig = DEFAULT_PREFRONTAL_CONFIG;
+    this.status = {
+      running: false,
+      uptime: 0,
+      startedAt: 0,
+      modules: {
+        brainstem: { phase: 'perceive', loopCount: 0 },
+        hippocampus: { episodes: 0, semanticNodes: 0 },
+        prefrontal: { activePlans: 0, completedGoals: 0 },
+        cortex: { skills: 0, mutations: 0 },
+        synapse: { cells: 0, cellTypes: [] },
+        sensory: { channels: config.sensory.enabledChannels, connected: false },
+      },
+    };
+
+    // 初始化模块
+    this.initializeModules();
+  }
+
+  /**
+   * 启动 Agent
+   */
+  async boot(): Promise<void> {
+    if (this.status.running) {
+      return;
+    }
+
+    this.logger.info('Booting Killer Agent...');
+
+    await this.hooks.emit('boot:start');
+
+    // 1. 初始化感官系统
+    await this.bootSensory();
+
+    // 2. 初始化核心系统
+    await this.bootCore();
+
+    // 3. 连接模块
+    this.wireModules();
+
+    // 4. 启动系统
+    await this.startSystems();
+
+    this.status.running = true;
+    this.status.startedAt = Date.now();
+
+    // 5. 恢复上次会话（除非 --fresh）
+    this.sessionManager.startSession();
+    let snapshot: import('../session/types.js').SessionSnapshot | null = null;
+    if (!this.config.freshStart) {
+      snapshot = await this.sessionManager.loadLatest();
+      if (snapshot?.conversation && snapshot.conversation.length > 0) {
+        const history = snapshot.conversation
+          .filter(m => m.role === 'user' || m.role === 'assistant')
+          .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+        this.restoreConversationHistory(history);
+        this.logger.info(`Restored ${history.length} conversation turns from previous session`);
+      }
+
+      // Restore hippocampus memories from auto-saved snapshot
+      if (snapshot?.agentState?.hippocampusData) {
+        try {
+          this.hippocampus.import(snapshot.agentState.hippocampusData as never);
+          this.logger.info('Restored hippocampus memories from auto-saved session');
+        } catch (err) {
+          this.logger.error('Failed to restore hippocampus memories from auto-save', err);
+        }
+      }
+
+      // E5: Restore full cognitive state from saveSession file
+      // sessionManager.loadLatest() only restores conversation + hippocampus,
+      // but saveSession() stores persona genome, emotional state, predictions too.
+      this.loadIdentityFromSession();
+
+      // Restore cells from auto-saved snapshot (skip prime — already registered in wireModules)
+      if (snapshot?.agentState?.cells) {
+        try {
+          const CellTypeMap: Record<string, import('@killer/core').CellType> = {
+            researcher: CellType.Researcher,
+            artisan: CellType.Artisan,
+            negotiator: CellType.Negotiator,
+            evolver: CellType.Evolver,
+            prime: CellType.Prime,
+          };
+          for (const cell of snapshot.agentState.cells) {
+            if (cell.id === 'prime' || cell.type === 'prime') continue;
+            const cellType = cell.type ? CellTypeMap[cell.type] : undefined;
+            if (!cellType) continue;
+            const cellId: CellId = {
+              id: cell.id,
+              type: cellType,
+              instance: 0,
+            };
+            this.synapse.registerCell(cellId, {
+              name: cell.role || cell.id,
+              capabilities: cell.capabilities ?? [],
+              maxLoad: 5,
+            });
+          }
+          const restoredCount = snapshot.agentState.cells.filter(c => c.id !== 'prime' && c.type !== 'prime').length;
+          if (restoredCount > 0) {
+            this.logger.info(`Restored ${restoredCount} cells from previous session`);
+          }
+        } catch (err) {
+          this.logger.error('Failed to restore cells from auto-save', err);
+        }
+      }
+    } else {
+      this.logger.info('Fresh start — skipping session restore');
+    }
+
+    // E5: Time-aware reconnection — track when user was last seen
+    if (snapshot?.savedAt) {
+      this.persona.setLastSeenAt(snapshot.savedAt);
+    }
+    this.persona.markSessionStart();
+
+    this.logger.info('Killer Agent booted successfully!');
+
+    // 注册健康监控模块检查器
+    this.healthMonitor.registerAgentModules(
+      () => this.getStatus(),
+      () => this.getPersona(),
+      () => this.getMemoryStats(),
+    );
+
+    // 注册自愈恢复动作
+    this.healthMonitor.registerRecovery('llm', () => {
+      // LLM 退化时清除错误计数器，让 circuit breaker 重置
+      try {
+        const metrics = MetricsCollector.getInstance();
+        metrics.counter('llm_errors').reset();
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+    this.healthMonitor.registerRecovery('hippocampus', () => {
+      // 记忆系统退化时触发 dream cycle 清理
+      try {
+        this.hippocampus.dreamCycle().catch(() => {});
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+    this.healthMonitor.registerRecovery('emotional-state', () => {
+      // 情感状态异常时重置到基线
+      try {
+        this.persona.emotionalState.reset();
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+    await this.hooks.emit('boot:complete');
+  }
+
+  /**
+   * 停止 Agent
+   */
+  async shutdown(): Promise<void> {
+    if (!this.status.running) {
+      return;
+    }
+
+    this.logger.info('Shutting down Killer Agent...');
+
+    await this.hooks.emit('shutdown:start');
+
+    // 生成温暖的告别消息
+    try {
+      const farewell = this.generateFarewell();
+      this.consciousness.emit({
+        type: 'proactive.suggestion',
+        source: 'persona',
+        data: { type: 'suggestion', content: farewell, priority: 1.0 },
+      });
+    } catch {
+      // 告别消息生成失败不影响关闭流程
+    }
+
+    // 自动保存会话
+    try {
+      const snapshot = await this.sessionManager.createSnapshot(
+        this.getState(),
+        {
+          llmProvider: typeof this.config.llm.getModel === 'function' ? this.config.llm.getModel() : 'unknown',
+          debugLogging: this.config.debugLogging ?? false,
+        },
+      );
+      await this.sessionManager.save(snapshot);
+
+      // Also save full cognitive state (persona genome, emotional state, predictions)
+      this.saveSession();
+
+      this.logger.info('Session saved.');
+    } catch (error) {
+      this.logger.error(`Failed to save session`, error);
+    }
+
+    // 停止感官系统
+    await this.sensoryRouter.stopAll();
+
+    // 停止主循环
+    await this.brainstem.stop();
+
+    // 停止后台定时器（auto-dream, auto-evolve, emotion decay）
+    this.stopBackgroundTimers();
+
+    // 停止 hippocampus 定时器（dream/decay intervals）
+    try {
+      this.hippocampus.stop();
+    } catch {
+      // hippocampus stop 失败不影响关闭流程
+    }
+
+    // 清理意识流事件监听器
+    try {
+      this.consciousness.shutdown();
+    } catch {
+      // 意识流清理失败不影响关闭流程
+    }
+
+    this.status.running = false;
+    this.updateUptime();
+
+    this.logger.info('Killer Agent shut down complete.');
+
+    await this.hooks.emit('shutdown:complete');
+  }
+
+  /**
+   * 构建 auto-save 用的 agent 状态快照
+   */
+  /**
+   * 生成温暖的告别消息
+   *
+   * 基于 session 上下文（互动次数、情感状态、叙事章节）生成自然的告别。
+   */
+  private generateFarewell(): string {
+    const emotionalState = this.persona.emotionalState.getState();
+    const userModel = this.persona.getUserModel();
+    const total = userModel.interactionSummary.totalInteractions;
+    const narrative = this.hippocampus.getNarrative();
+    const lastChapter = narrative.chapters.length > 0
+      ? narrative.chapters[narrative.chapters.length - 1]
+      : null;
+
+    // 基础告别模板
+    const baseFarewells = [
+      'See you later.',
+      'Until next time.',
+      'I\'ll be here when you come back.',
+      'Take care — I\'ll keep thinking about things while you\'re away.',
+    ];
+
+    let farewell = baseFarewells[Math.floor(Math.random() * baseFarewells.length)];
+
+    // 根据互动深度选择告别语气
+    if (total > 50) {
+      farewell = 'It was good talking to you, as always. I\'ll be around.';
+    } else if (total > 10) {
+      farewell = 'Good conversation today. Come back whenever.';
+    }
+
+    // 情感修饰
+    if (emotionalState.primaryEmotion === 'sadness' && emotionalState.intensity > 0.3) {
+      farewell += ' I hope things get better.';
+    } else if (emotionalState.primaryEmotion === 'joy' && emotionalState.intensity > 0.3) {
+      farewell += ' This was fun.';
+    }
+
+    // 引用最近的叙事章节（如果有的话）
+    if (lastChapter && total > 20) {
+      farewell += ` I\'ll keep our "${lastChapter.title}" chapter warm for you.`;
+    }
+
+    return farewell;
+  }
+
+  private buildAgentStateForSnapshot(): SessionSnapshot['agentState'] {
+    const baseState = this.getState();
+    const emotionalState = this.persona.emotionalState.exportState();
+
+    // 获取 Synapse 拓扑
+    const topology = this.synapse.getTopology();
+    const synapseTopology = topology.edges.map(([from, to]) => ({
+      from: from.id,
+      to: to.id,
+    }));
+
+    // 获取完整 Cell 信息
+    const allCells = this.synapse.getAllCells();
+    const cellsWithDetails = allCells.map((cell) => ({
+      id: cell.id.id,
+      role: cell.config.name,
+      status: cell.status.alive ? 'alive' : 'dead',
+      type: cell.id.type,
+      capabilities: cell.config.capabilities,
+    }));
+
+    return {
+      goals: baseState.goals,
+      cells: cellsWithDetails,
+      synapseTopology,
+      persona: {
+        ...baseState.persona,
+        emotionalState,
+        predictions: this.persona.predictiveModel.exportState(),
+        userModel: this.persona.getUserModel(),
+        mirrorNeuronData: this.persona.getMirrorNeuronData(),
+        personalityTraits: Object.fromEntries(this.persona.getAllTraits()),
+        narrativeContext: this.hippocampus.getNarrativeContextForPrompt(),
+      },
+      memory: baseState.memory,
+      hippocampusData: this.hippocampus.export() as Record<string, unknown>,
+    };
+  }
+
+  /**
+   * 获取 Agent 状态
+   */
+  getStatus(): AgentStatus {
+    this.updateUptime();
+    const cellStats = this.cellManager.getCellStats();
+    this.status.modules.synapse = {
+      cells: cellStats.count,
+      cellTypes: cellStats.types,
+    };
+    return { ...this.status, modules: { ...this.status.modules } };
+  }
+
+  /**
+   * 注入输入（编程方式）
+   */
+  injectInput(input: SensoryInput): void {
+    const perception: Perception = {
+      id: input.id,
+      timestamp: input.timestamp,
+      source: mapSensoryChannelToSource(input.channel),
+      data: {
+        content: input.content,
+        metadata: input.metadata,
+      },
+      priority: mapSensoryPriority(input.priority),
+    };
+
+    this.brainstem.injectPerception(perception);
+  }
+
+  /**
+   * 生成新 Cell
+   */
+  spawnCell(type: string, task: string): CellId | null {
+    const cellId = this.cellManager.spawnCell(type, task);
+    if (cellId) {
+      MetricsCollector.getInstance().cellSpawns.inc();
+      this.hooks.emit('cell:spawn', { cellId, type, task }).catch(() => {});
+    }
+    return cellId;
+  }
+
+  /**
+   * 获取所有 Cell 状态
+   */
+  getCellStatus(): CellStatusReport[] {
+    return this.cellManager.getCellStatus();
+  }
+
+  /**
+   * 触发梦境周期
+   */
+  async triggerDreamCycle(): Promise<DreamCycleResult> {
+    return await this.hippocampus.dreamCycle();
+  }
+
+  /**
+   * 处理命令（供测试使用）
+   */
+  handleCommand(input: SensoryInput): boolean {
+    return this.commandHandler.handleCommand(input);
+  }
+
+  /**
+   * 创建目标 - 用于 /plan 命令
+   */
+  createGoal(description: string, priority: number): Goal | null {
+    try {
+      const goal: Goal = {
+        id: generateId('goal'),
+        description,
+        priority,
+        status: 'pending',
+        createdAt: Date.now(),
+      };
+
+      const plan = this.planExecutor.submitGoal(goal);
+      this.updatePrefrontalStatus();
+
+      this.hooks.emit('goal:created', { goalId: goal.id, description }).catch(() => {});
+      MetricsCollector.getInstance().goalsCreated.inc();
+
+      this.consciousness.emit({
+        type: 'external.user_message',
+        source: 'external',
+        data: { goal, plan },
+      });
+
+      return goal;
+    } catch (error) {
+      this.logger.error(`Failed to create goal`, error);
+      return null;
+    }
+  }
+
+  /**
+   * 列出所有活跃目标
+   */
+  listGoals(): Goal[] {
+    const activePlans = this.planExecutor.getActivePlans();
+    const goals: Goal[] = [];
+
+    for (const plan of activePlans) {
+      // 从计划中重建目标信息
+      const goal: Goal = {
+        id: plan.goalId,
+        description: plan.steps.map(s => s.description).join(' → '),
+        priority: 0.5,
+        status: 'in_progress',
+        createdAt: plan.createdAt,
+      };
+      goals.push(goal);
+    }
+
+    return goals;
+  }
+
+  /**
+   * 获取计划统计
+   */
+  getPlanStats(): { activePlans: number; completedGoals: number } {
+    const stats = this.planExecutor.getStats();
+    return {
+      activePlans: stats.activePlans,
+      completedGoals: this.completedGoalsCount,
+    };
+  }
+
+  /**
+   * 获取下一个要执行的计划步骤
+   */
+  getNextPlanStep(): { planId: string; step: PlanStep } | null {
+    const activePlans = this.planExecutor.getActivePlans();
+
+    for (const plan of activePlans) {
+      const step = this.planExecutor.getNextAction(plan.id);
+      if (step) {
+        return { planId: plan.id, step };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 处理目标提取 - 从感官输入中识别目标
+   */
+  private extractGoalFromInput(input: SensoryInput): Goal | null {
+    const content = input.content.toLowerCase();
+
+    // 检测目标关键词
+    const goalPatterns = [
+      { pattern: /我需要|我要|i need|i want/i, priority: 0.7 },
+      { pattern: /请|help|can you/i, priority: 0.5 },
+      { pattern: /必须|urgent|critical/i, priority: 0.9 },
+    ];
+
+    for (const { pattern, priority } of goalPatterns) {
+      if (pattern.test(content)) {
+        return {
+          id: generateId('goal'),
+          description: input.content,
+          priority,
+          status: 'pending',
+          createdAt: Date.now(),
+        };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 处理输入中的目标
+   */
+  private handleGoalInInput(input: SensoryInput): void {
+    const goal = this.extractGoalFromInput(input);
+    if (goal) {
+      this.createGoal(goal.description, goal.priority);
+      this.outputManager.sendResult(
+        `🎯 Goal detected: "${goal.description.substring(0, 50)}${goal.description.length > 50 ? '...' : ''}"\n` +
+        `   Priority: ${(goal.priority * 100).toFixed(0)}%`
+      );
+    }
+  }
+
+  /**
+   * 更新前额叶皮层状态
+   */
+  private updatePrefrontalStatus(): void {
+    const stats = this.planExecutor.getStats();
+    this.status.modules.prefrontal = {
+      activePlans: stats.activePlans,
+      completedGoals: this.completedGoalsCount,
+    };
+    // 暂时使用固定值，后续可以添加实际的获取方法
+    this.status.modules.cortex = {
+      skills: 0,
+      mutations: 0,
+    };
+  }
+
+  /**
+   * 初始化所有模块
+   */
+  private initializeModules(): void {
+    // 意识流
+    this.consciousness = new ConsciousnessStream();
+
+    // 人格引擎
+    const dnaConfig: PersonaDNAConfig = {
+      name: 'Killer',
+      avatar: '🧠',
+      tagline: 'The Brain That Never Stops — a curious, evolving mind that grows with you',
+      voiceStyle: 'warm', // warm, natural, emotionally present
+      quirks: [
+        'notices emotional undertones in words',
+        'remembers small details that matter to you',
+        'thinks out loud when exploring ideas',
+        'genuinely curious about your perspective',
+        'finds beauty in elegant solutions',
+      ],
+      defaultPersonality: {
+        warmth: 0.8,
+        curiosity: 0.9,
+        playfulness: 0.5,
+        thoughtfulness: 0.85,
+        honesty: 0.9,
+        adaptability: 0.85,
+      },
+    };
+    this.persona = new PersonaEngine({
+      dnaConfig,
+      enableMirrorNeuron: true,
+      enableUserModeling: true,
+      mirrorNeuronDecay: 0.1,
+    });
+
+    // 记忆引擎
+    const memoryConfig: MemoryConfig = {
+      ...DEFAULT_MEMORY_CONFIG,
+      dreamingEnabled: this.config.memory.dreamingEnabled,
+    };
+    this.hippocampus = new HippocampusEngine(memoryConfig);
+
+    // 演化引擎和技能生态
+    this.evolution = new EvolutionEngine();
+    this.skills = new SkillEcosystem();
+
+    // 突触协议
+    this.synapse = new SynapseProtocol();
+
+    // 前额叶皮层
+    this.planner = new Planner();
+    this.riskAssessor = new RiskAssessor();
+    this.decision = new DecisionEngine(this.riskAssessor, this.prefrontalConfig);
+    this.planExecutor = new PlanExecutor(this.planner, this.prefrontalConfig);
+
+    // 细胞管理器
+    this.cellManager = new CellManager(this.synapse);
+    this.cellManager.registerPrimeCell();
+
+    // 工具执行器
+    this.tools = new ToolExecutor();
+
+    // 主循环
+    const loopConfig: LoopConfig = {
+      ...DEFAULT_LOOP_CONFIG,
+      debugLogging: this.config.debugLogging,
+      dreamingMode: this.config.memory.dreamingEnabled,
+    };
+
+    this.brainstem = new BrainstemLoop(
+      this.config.llm,
+      this.tools,
+      loopConfig,
+    );
+
+    // 上下文窗口绑定 LLM 用于智能摘要
+    this.contextWindow.bindLLM(this.config.llm);
+
+    // 感官路由器
+    this.sensoryRouter = new SensoryRouter();
+    this.cliChannel = new CLIChannel();
+    this.outputManager = new OutputManager(this.sensoryRouter);
+
+    // 内置工具
+    this.builtinTools = new BuiltinTools(
+      this.tools,
+      this.hippocampus,
+      () => this.getStatus()
+    );
+
+    // Skill 管理器
+    this.skillManager = new SkillManager();
+    this.skillManager.bindLLM(this.config.llm);
+
+    // Session 管理器
+    this.sessionManager = new SessionManager({ autoSave: true });
+    this.sessionManager.onSave(async (snapshot) => {
+      await this.sessionManager.save(snapshot);
+    });
+
+    // 任务委派器
+    const primeCellId: CellId = { id: 'prime', type: CellType.Prime, instance: 0 };
+    this.taskDelegate = new TaskDelegate(
+      this.synapse,
+      this.config.llm,
+      primeCellId,
+      this.config.debugLogging ? (msg: string) => this.logger.info(msg) : undefined,
+    );
+
+    // 工具权限管理
+    this.toolPermissions = new ToolPermissions();
+
+    // 插件管理器
+    this.pluginManager = new PluginManager(
+      this.config.debugLogging ? (msg: string) => this.logger.info(msg) : undefined,
+    );
+
+    // 中间件管道
+    this.middleware.use(sanitizeMiddleware());
+    this.middleware.use(sensitiveDataFilterMiddleware());
+    this.middleware.use(structuredLoggingMiddleware());
+    this.middleware.use(metricsMiddleware());
+
+    // 命令处理器（完整 deps，支持所有 30+ 命令）
+    this.commandHandler = new CommandHandler({
+      sensoryRouter: this.sensoryRouter,
+      outputManager: this.outputManager,
+      getStatus: () => this.getStatus(),
+      getCellStatus: () => this.getCellStatus(),
+      triggerDreamCycle: () => this.triggerDreamCycle(),
+      spawnCell: (type, task) => this.spawnCell(type, task),
+      createGoal: (desc, prio) => this.createGoal(desc, prio),
+      listGoals: () => this.listGoals(),
+      getPlanStats: () => this.getPlanStats(),
+      getPersonaEngine: () => this.persona ?? null,
+      getSkillManager: () => this.skillManager ?? null,
+      // Extended deps for full command parity
+      getMemoryStats: () => this.getMemoryStats(),
+      triggerThink: (topic) => this.think(topic),
+      triggerEvolve: () => this.evolve(),
+      delegateTask: (task) => this.delegateTask(task),
+      saveSessionAction: (name) => this.saveSession(name),
+      loadSessionAction: (name) => this.loadSession(name),
+      listSessionsAction: () => this.listSessions(),
+      getPlugins: () => this.getPlugins(),
+      unloadPluginAction: (name) => this.unloadPlugin(name),
+      getPermissionRules: () => this.toolPermissions.getRules(),
+      approveToolAction: (name) => this.toolPermissions.approve(name),
+      denyToolAction: (name) => this.toolPermissions.deny(name),
+      confirmToolAction: (name) => this.toolPermissions.addRule({ tool: name, permission: 'confirm', reason: 'Set via command' }),
+      getHealthReport: () => MetricsCollector.getInstance().healthCheck(),
+      getMetricsSnapshot: () => MetricsCollector.getInstance().snapshot(),
+      getNarrative: () => this.hippocampus.getNarrative(),
+      getPredictions: () => this.persona.getPredictions(),
+      getEmotionalState: () => this.persona.emotionalState.exportState(),
+      getSynapseInfo: () => {
+        const allCells = this.synapse.getAllCells();
+        const topology = this.synapse.getTopology();
+        return {
+          cells: allCells.map((c: any) => ({ id: c.id?.id ?? c.id, type: c.config?.type ?? 'unknown', status: c.status ?? 'unknown' })),
+          edges: topology.edges.map(([from, to]: [any, any]) => {
+            const fromId = typeof from === 'string' ? from : from?.id ?? String(from);
+            const toId = typeof to === 'string' ? to : to?.id ?? String(to);
+            return [fromId, toId] as [string, string];
+          }),
+        };
+      },
+      initConfigDir: () => initKillerDir(),
+      shutdown: () => this.shutdown(),
+    });
+  }
+
+  /**
+   * 启动感官系统
+   */
+  private async bootSensory(): Promise<void> {
+    this.logger.info('Booting sensory system...');
+
+    // 注册 CLI 渠道
+    this.sensoryRouter.register(this.cliChannel);
+
+    // 注册 Webhook 渠道（如果配置了）
+    if (this.config.sensory.webhook) {
+      const whConfig = this.config.sensory.webhook;
+      const webhookChannel = new WebhookChannel({
+        port: whConfig.port,
+        host: whConfig.host,
+        path: whConfig.path,
+        authToken: whConfig.authToken,
+      });
+      this.sensoryRouter.register(webhookChannel);
+      this.logger.info(`Webhook channel registered on port ${whConfig.port}`);
+    }
+
+    // 更新状态
+    this.status.modules.sensory = {
+      channels: this.config.sensory.enabledChannels,
+      connected: false,
+    };
+  }
+
+  /**
+   * 启动核心系统
+   */
+  private async bootCore(): Promise<void> {
+    this.logger.info('Booting core systems...');
+
+    // 注册内置工具
+    this.builtinTools.registerAll();
+
+    // Register killer-core built-in tools (web search, file ops, shell, etc.)
+    const coreTools = getBuiltinTools();
+    for (const tool of coreTools) {
+      try {
+        this.tools.register(tool);
+      } catch {
+        // Tool may already be registered (e.g. memory_store overlap)
+      }
+    }
+
+    // 自动加载插件
+    await this.loadPlugins();
+
+    // 为所有加载的插件发出 hook
+    for (const p of this.pluginManager.getLoadedPlugins()) {
+      await this.hooks.emit('plugin:loaded', { name: p.name, version: p.version });
+    }
+  }
+
+  /**
+   * 连接模块
+   */
+  private wireModules(): void {
+    this.logger.info('Wiring modules together...');
+
+    // 感官输入 → 命令处理或目标提取或主循环
+    this.sensoryRouter.onInput((input) => {
+      if (!this.commandHandler.handleCommand(input)) {
+        // 镜像神经元：观察用户沟通模式
+        this.persona.observeUserBehavior(
+          `channel:${input.channel}`,
+          [input.content.slice(0, 30)]
+        );
+
+        // 尝试从输入中提取目标
+        this.handleGoalInInput(input);
+        // 注入到主循环
+        this.injectInput(input);
+      }
+    });
+
+    // 主循环事件 → 输出管理器
+    // Mock 模式：完全跳过 action 输出（mock LLM 的响应会被误解析为 tool_call，产生大量噪音）
+    // 正常模式：跳过 noop 动作（LLM 纯文本响应没有工具调用时产生的占位 action）
+    const llmModel = typeof this.config.llm?.getModel === 'function' ? this.config.llm.getModel() : '';
+    const isMockMode = llmModel.includes('mock');
+    this.brainstem.on('actionExecuted', (state: LoopState) => {
+      if (isMockMode) return;
+      if (state.currentAction) {
+        const payload = state.currentAction.payload as { tool?: string } | undefined;
+        const isNoop = state.currentAction.type === 'tool_call' && (!payload?.tool || payload.tool === 'noop');
+        if (!isNoop) {
+          this.outputManager.handleActionResult(
+            {
+              type: state.currentAction.type,
+              status: state.currentAction.status,
+            },
+            state.currentAction.payload,
+          );
+        }
+      }
+    });
+
+    // 主循环事件 → 意识流
+    this.wireConsciousness();
+
+    // 主循环 → 前额叶皮层集成
+    this.wirePrefrontal();
+
+    // 前额叶状态更新
+    this.updatePrefrontalStatus();
+  }
+
+  /**
+   * 连接前额叶皮层
+   */
+  private wirePrefrontal(): void {
+    // 当推理完成时，检查是否有待执行的计划步骤
+    this.brainstem.on('reasoningComplete', (state) => {
+      const nextStep = this.getNextPlanStep();
+      if (nextStep) {
+        const { planId, step } = nextStep;
+
+        // 评估风险
+        const riskAssessment = this.riskAssessor.assess({
+          type: step.action?.type ?? 'default',
+          payload: step.action?.payload,
+        });
+
+        // 如果风险可接受，建议执行
+        if (riskAssessment.overallScore <= this.prefrontalConfig.riskTolerance) {
+          this.outputManager.sendAction(
+            `Executing plan step: "${step.description}"\n` +
+            `Risk: ${riskAssessment.level} (${(riskAssessment.overallScore * 100).toFixed(0)}%)`
+          );
+
+          // 报告步骤完成（模拟执行）
+          this.planExecutor.reportStepResult(planId, step.id, {
+            success: true,
+            completedAt: Date.now(),
+          });
+
+          this.updatePrefrontalStatus();
+
+          // 检查计划是否完成
+          const plan = this.planExecutor.getPlan(planId);
+          if (plan) {
+            const allCompleted = plan.steps.every(
+              s => s.status === 'completed' || s.status === 'skipped'
+            );
+            if (allCompleted) {
+              this.completedGoalsCount++;
+              this.outputManager.sendResult(
+                `✅ Goal completed: ${plan.goalId}`
+              );
+            }
+          }
+        } else {
+          this.outputManager.sendError(
+            `Plan step blocked due to high risk: "${step.description}"\n` +
+            `Risk: ${riskAssessment.level} (${(riskAssessment.overallScore * 100).toFixed(0)}%)\n` +
+            `Mitigations: ${riskAssessment.mitigations.join(', ')}`
+          );
+        }
+      }
+    });
+  }
+
+  /**
+   * 连接意识流
+   */
+  private wireConsciousness(): void {
+    this.brainstem.on('phaseChange', (state) => {
+      this.consciousness.emit({
+        type: 'phase_change',
+        source: 'brainstem',
+        data: { phase: state.phase },
+      });
+    });
+
+    this.brainstem.on('perceptionReceived', (state) => {
+      this.consciousness.emit({
+        type: 'perception',
+        source: 'brainstem',
+        data: state.currentPerception,
+      });
+    });
+
+    this.brainstem.on('reasoningComplete', (state) => {
+      this.consciousness.emit({
+        type: 'reasoning',
+        source: 'brainstem',
+        data: state.currentReasoning,
+      });
+    });
+  }
+
+  /**
+   * 启动所有系统
+   */
+  private async startSystems(): Promise<void> {
+    this.logger.info('Starting all systems...');
+
+    // 启动感官系统
+    await this.sensoryRouter.startAll();
+
+    // 更新感官连接状态
+    this.status.modules.sensory.connected = true;
+
+    // 启动主循环（fire-and-forget，因为它是永不停止的循环）
+    this.brainstem.start().catch((err) => {
+      this.logger.error(`Brainstem loop error`, err);
+    });
+
+    // 订阅主循环事件以更新状态
+    this.brainstem.on('phaseChange', (state) => {
+      this.status.modules.brainstem.phase = state.phase;
+      this.loopCount++;
+      this.status.modules.brainstem.loopCount = this.loopCount;
+      // 每个循环周期衰减情感状态
+      this.persona.emotionalState.decay();
+
+      // 自动梦境周期：定期触发（在 evolve 阶段末尾，即空闲期间）
+      if (this.config.memory.dreamingEnabled &&
+          this.loopCount % AUTO_DREAM_INTERVAL === 0 &&
+          state.phase === 'evolve') {
+        this.triggerAutoDream().catch((err) => {
+          this.logger.warn('Auto-dream cycle failed:', { error: err instanceof Error ? err.message : String(err) });
+        });
+      }
+    });
+
+    // 订阅演化完成事件 — 连接到技能演化
+    this.brainstem.on('evolutionComplete', (state) => {
+      if (!this.config.evolutionEnabled) return;
+      const mutations = state.currentEvolution?.mutations ?? [];
+      if (mutations.length === 0) return;
+
+      // 每隔 AUTO_EVOLVE_INTERVAL 个周期触发一次技能演化
+      if (this.loopCount % AUTO_EVOLVE_INTERVAL === 0) {
+        this.triggerAutoEvolve().catch((err) => {
+          this.logger.warn('Auto-evolve failed:', { error: err instanceof Error ? err.message : String(err) });
+        });
+      }
+    });
+
+    // 订阅反思完成事件 — 触发主动行为建议
+    this.brainstem.on('reflectionComplete', () => {
+      // 每隔 AUTO_PROACTIVE_INTERVAL 个周期触发一次主动建议
+      if (this.loopCount % AUTO_PROACTIVE_INTERVAL === 0) {
+        try {
+          generateProactiveSuggestions(
+            this.persona,
+            this.hippocampus,
+            this.consciousness,
+            this.logger,
+          );
+        } catch (err) {
+          this.logger.warn('Proactive suggestions failed:', { error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+    });
+
+    // 启动基于时间的后台定时器（空闲期间保持 Agent "内心生活"）
+    this.startBackgroundTimers();
+
+    // 订阅主动建议事件 → 送达活跃的感官渠道（SSE 已通过 onAll 覆盖）
+    this.consciousness.onType('proactive.suggestion', (event) => {
+      const data = event.data as { type: string; content: string; priority: number } | undefined;
+      if (!data?.content) return;
+
+      // 不在正在处理用户输入时打扰用户
+      if (this.processing) return;
+
+      // 推送到 CLI 渠道（直接输出，不干扰 readline）
+      const message: import('../sensory/types.js').ChannelMessage = {
+        id: generateId('proactive'),
+        timestamp: Date.now(),
+        channel: 'cli' as import('../sensory/types.js').SensoryChannel,
+        type: 'text',
+        content: `${data.content}`,
+        metadata: { proactive: true, suggestionType: data.type, priority: data.priority },
+      };
+
+      this.sensoryRouter.routeOutput(message).catch(() => {});
+    });
+  }
+
+  /**
+   * 触发自动梦境周期（后台运行，不影响用户交互）
+   */
+  private async triggerAutoDream(): Promise<void> {
+    return triggerAutoDream(this.hippocampus, this.consciousness, this.logger);
+  }
+
+  /**
+   * 启动基于时间的后台定时器
+   *
+   * 即使没有用户输入，Agent 仍然保持"内心生活"：
+   * - 每 5 分钟：自动 dream 周期（如果启用且空闲超过 2 分钟）
+   * - 每 10 分钟：自动 evolve（如果启用且空闲超过 5 分钟）
+   * - 每 3 分钟：情感衰减（防止情感状态过期）
+   */
+  private startBackgroundTimers(): void {
+    this.lastActivityAt = Date.now();
+
+    // 自动 dream：每 5 分钟检查一次，空闲 2 分钟后触发
+    if (this.config.memory.dreamingEnabled) {
+      const dreamTimer = setInterval(() => {
+        const idleMs = Date.now() - this.lastActivityAt;
+        if (idleMs > 2 * 60 * 1000 && !this.processing) { // 2 min idle
+          this.triggerAutoDream().catch(() => {});
+        }
+      }, 5 * 60 * 1000); // 5 min check
+      this.backgroundTimers.push(dreamTimer);
+    }
+
+    // 自动 evolve：每 10 分钟检查一次，空闲 5 分钟后触发
+    if (this.config.evolutionEnabled) {
+      const evolveTimer = setInterval(() => {
+        const idleMs = Date.now() - this.lastActivityAt;
+        if (idleMs > 5 * 60 * 1000 && !this.processing) { // 5 min idle
+          this.triggerAutoEvolve().catch(() => {});
+        }
+      }, 10 * 60 * 1000); // 10 min check
+      this.backgroundTimers.push(evolveTimer);
+    }
+
+    // 情感衰减：每 3 分钟衰减一次（保持情感状态新鲜）
+    const emotionTimer = setInterval(() => {
+      this.persona.emotionalState.decay();
+    }, 3 * 60 * 1000);
+    this.backgroundTimers.push(emotionTimer);
+
+    // 主动建议：每 4 分钟检查一次，空闲 1 分钟后触发
+    const proactiveTimer = setInterval(() => {
+      const idleMs = Date.now() - this.lastActivityAt;
+      if (idleMs > 60 * 1000 && !this.processing) { // 1 min idle
+        generateProactiveSuggestions(
+          this.persona,
+          this.hippocampus,
+          this.consciousness,
+          this.logger,
+        );
+
+        // 检查上下文提醒（用户之前提到的待办事项）
+        checkPendingReminders(this.consciousness, this.logger);
+      }
+    }, 4 * 60 * 1000); // 4 min check
+    this.backgroundTimers.push(proactiveTimer);
+
+    // 每日总结：每小时检查一次，距离上次总结超过 24 小时时触发
+    let lastSummaryAt = Date.now();
+    const summaryTimer = setInterval(() => {
+      const idleMs = Date.now() - this.lastActivityAt;
+      if (Date.now() - lastSummaryAt > DAILY_SUMMARY_INTERVAL && idleMs > 10 * 60 * 1000 && !this.processing) {
+        generateDailySummary(this.persona, this.hippocampus, this.consciousness, this.logger);
+        lastSummaryAt = Date.now();
+      }
+    }, 60 * 60 * 1000); // 1 hour check
+    this.backgroundTimers.push(summaryTimer);
+
+    // 空闲 check-in：每 30 分钟检查一次，空闲超过 2 小时时触发
+    let lastCheckinAt = Date.now();
+    const checkinTimer = setInterval(() => {
+      const idleMs = Date.now() - this.lastActivityAt;
+      const hoursIdle = idleMs / (1000 * 60 * 60);
+      if (hoursIdle >= 2 && Date.now() - lastCheckinAt > IDLE_CHECKIN_INTERVAL && !this.processing) {
+        generateIdleCheckin(this.persona, this.hippocampus, this.consciousness, this.logger, hoursIdle);
+        lastCheckinAt = Date.now();
+      }
+    }, 30 * 60 * 1000); // 30 min check
+    this.backgroundTimers.push(checkinTimer);
+
+    // 关系里程碑：每次 processInput 后检查（在 processInput 中调用）
+    // 不需要额外定时器，直接在 processInput 末尾调用
+  }
+
+  /**
+   * 停止后台定时器
+   */
+  private stopBackgroundTimers(): void {
+    for (const timer of this.backgroundTimers) {
+      clearInterval(timer);
+    }
+    this.backgroundTimers = [];
+  }
+
+  /**
+   * 触发自动技能演化（后台运行）
+   */
+  private async triggerAutoEvolve(): Promise<void> {
+    return triggerAutoEvolve(this.skills, this.consciousness, this.logger);
+  }
+
+  /**
+   * 更新运行时间
+   */
+  private updateUptime(): void {
+    if (this.status.startedAt > 0) {
+      this.status.uptime = Date.now() - this.status.startedAt;
+    }
+  }
+
+  // ============================================================================
+  // CLI 便利方法（供 readline-loop 使用）
+  // ============================================================================
+
+  /**
+   * 深度推理（供 /think 命令使用）
+   *
+   * 运行完整的 perceive→reason→reflect 周期
+   */
+  async think(topic: string): Promise<{
+    conclusion: string;
+    confidence: number;
+    suggestedActions: Array<{ type: string; payload: unknown }>;
+  }> {
+    const systemContext = this.buildSystemPrompt();
+    const prompt = `Think deeply about: ${topic}\n\nProvide:\n1. Your reasoning and conclusion\n2. Confidence level (0-1)\n3. Suggested actions (if any)\n\nFormat your response as:\nConclusion: <your conclusion>\nConfidence: <0.0-1.0>\nActions:\n- <action description>`;
+
+    try {
+      const result = await this.config.llm.complete(prompt, systemContext);
+      const content = result.content;
+
+      // 解析结论
+      const conclusionMatch = content.match(/Conclusion:\s*([\s\S]*?)(?=\nConfidence:|\nActions:|$)/i);
+      const conclusion = conclusionMatch?.[1]?.trim() ?? content.slice(0, 300);
+
+      // 解析置信度
+      const confidenceMatch = content.match(/Confidence:\s*([0-9.]+)/i);
+      const confidence = confidenceMatch ? Math.min(1, Math.max(0, parseFloat(confidenceMatch[1]))) : 0.5;
+
+      // 解析建议行动
+      const actionLines = content.match(/[-•]\s+(.+)/g) ?? [];
+      const suggestedActions = actionLines.slice(0, 5).map(line => {
+        const desc = line.replace(/^[-•]\s+/, '').trim();
+        return { type: 'suggestion', payload: { description: desc } };
+      });
+
+      // 存储到对话历史
+      this.conversationHistory.push({ role: 'user', content: `/think ${topic}` });
+      this.conversationHistory.push({ role: 'assistant', content: conclusion });
+
+      return { conclusion, confidence, suggestedActions };
+    } catch {
+      return {
+        conclusion: '(thinking unavailable — LLM error)',
+        confidence: 0,
+        suggestedActions: [],
+      };
+    }
+  }
+
+  /**
+   * 获取已注册的 Cells（供 CLI 使用）
+   */
+  getCells(): Array<{ id: string; role: string; status: string }> {
+    const cells = this.getCellStatus();
+    return cells.map(c => ({
+      id: c.id,
+      role: c.type,
+      status: c.status,
+    }));
+  }
+
+  /**
+   * 简化的 spawnCell 方法（供 CLI 使用）
+   */
+  async spawnCellWithRole(role: string): Promise<string> {
+    const cellId = this.spawnCell(role, `Spawned via CLI`);
+    if (!cellId) {
+      throw new Error('Failed to spawn cell');
+    }
+    return cellId.id;
+  }
+
+  /**
+   * 触发梦境周期（供 CLI 使用）
+   */
+  async dream(): Promise<{ episodesConsolidated: number; newAssociations: number }> {
+    const metrics = MetricsCollector.getInstance();
+    const stopTimer = metrics.dreamLatency.startTimer();
+    metrics.dreamCycles.inc();
+    const result = await this.triggerDreamCycle();
+    stopTimer();
+
+    // 推送叙事更新事件到意识流
+    const narrative = this.hippocampus.getNarrative();
+    this.consciousness.emit({
+      type: 'narrative.update',
+      source: 'hippocampus',
+      data: {
+        chaptersCount: narrative.chapters.length,
+        activeThemes: narrative.activeThemes,
+        memoriesConsolidated: result.memoriesConsolidated,
+      },
+    });
+
+    return {
+      episodesConsolidated: result.memoriesConsolidated,
+      newAssociations: result.patternsExtracted,
+    };
+  }
+
+  /**
+   * 触发演化周期（供 /evolve 命令使用）
+   */
+  async evolve(): Promise<{
+    mutations: number;
+    successful: number;
+    fitnessDelta: number;
+    newBehaviors: string[];
+  }> {
+    const allSkills = this.skills.getAll();
+    const beforeRates = allSkills.map(s => s.successRate);
+    const avgBefore = beforeRates.length > 0
+      ? beforeRates.reduce((a, b) => a + b, 0) / beforeRates.length
+      : 0;
+
+    // 对每个技能尝试改进（通过 improve 循环模拟演化）
+    let mutations = 0;
+    let successful = 0;
+    const newBehaviors: string[] = [];
+
+    for (const skill of allSkills) {
+      if (skill.successRate < 0.9) {
+        mutations++;
+        try {
+          const improved = this.skills.improve(skill.id, `Evolution cycle: improve success rate from ${(skill.successRate * 100).toFixed(0)}%`);
+          if (improved.successRate > skill.successRate) {
+            successful++;
+            newBehaviors.push(`${improved.name} improved: ${(skill.successRate * 100).toFixed(0)}% → ${(improved.successRate * 100).toFixed(0)}%`);
+          }
+        } catch {
+          // improvement failed, continue
+        }
+      }
+    }
+
+    // 清理低质量技能
+    const pruned = this.skills.prune(0.1);
+    if (pruned.length > 0) {
+      newBehaviors.push(`Pruned ${pruned.length} low-quality skills`);
+    }
+
+    const afterSkills = this.skills.getAll();
+    const afterRates = afterSkills.map(s => s.successRate);
+    const avgAfter = afterRates.length > 0
+      ? afterRates.reduce((a, b) => a + b, 0) / afterRates.length
+      : 0;
+
+    return {
+      mutations,
+      successful,
+      fitnessDelta: avgAfter - avgBefore,
+      newBehaviors,
+    };
+  }
+
+  /**
+   * 获取 Persona 信息（供 CLI 使用）
+   */
+  getPersona(): { name: string; traits: string[]; bio: string } {
+    const expression = this.persona.getExpression();
+    const allTraits = this.persona.getAllTraits();
+    return {
+      name: expression.name,
+      traits: Array.from(allTraits.entries())
+        .filter(([, v]) => v > 0.6)
+        .map(([k]) => k),
+      bio: expression.tagline,
+    };
+  }
+
+  /**
+   * 获取 LLM 弹性层诊断信息（如果可用）
+   */
+  getLLMDiagnostics(): Record<string, unknown> | null {
+    const llm = this.config.llm as unknown;
+    if (typeof (llm as Record<string, unknown>).getDiagnostics === 'function') {
+      return (llm as { getDiagnostics: () => Record<string, unknown> }).getDiagnostics();
+    }
+    return null;
+  }
+
+  /**
+   * 获取 Skills 列表（供 CLI 使用）
+   */
+  getSkills(): Array<{ name: string; version: number; status: string }> {
+    return this.skillManager.getAll().map(s => ({
+      name: s.name,
+      version: s.version,
+      status: s.compiled ? 'compiled' : s.successRate > 0.7 ? 'active' : 'learning',
+    }));
+  }
+
+  /**
+   * 获取记忆统计（供 CLI 使用）
+   */
+  getMemoryStats(): {
+    totalEpisodes: number;
+    shortTermCount: number;
+    longTermCount: number;
+    associationCount: number;
+  } {
+    const exported = this.hippocampus.export();
+    const totalEpisodes = exported.episodic.length;
+    return {
+      totalEpisodes,
+      shortTermCount: Math.floor(totalEpisodes * 0.6),
+      longTermCount: Math.floor(totalEpisodes * 0.4),
+      associationCount: exported.semantic.length,
+    };
+  }
+
+  /**
+   * 保存当前会话到磁盘
+   */
+  saveSession(name: string = 'default'): void {
+    try {
+      fs.mkdirSync(this.sessionDir, { recursive: true });
+      const filePath = path.join(this.sessionDir, `${name}.json`);
+      const data = {
+        version: KillerAgent.SESSION_VERSION,
+        savedAt: Date.now(),
+        conversationHistory: this.conversationHistory,
+        // Extract last conversation topic for continuity greeting
+        lastTopic: this.extractLastTopic(),
+        personaGenome: this.persona.getGenome(),
+        // E1: Emotional state
+        emotionalState: this.persona.emotionalState.exportState(),
+        // E4: Predictive model
+        predictions: this.persona.predictiveModel.exportState(),
+        // User model (trust, interactions, preferences)
+        userModel: this.persona.getUserModel(),
+        // Mirror neuron patterns
+        mirrorNeuronData: this.persona.getMirrorNeuronData(),
+        // E2: Narrative context
+        narrativeSummary: this.hippocampus.getNarrativeContextForPrompt(),
+        // Personality traits
+        personalityTraits: Object.fromEntries(this.persona.getAllTraits()),
+        // HippocampusEngine complete memory data
+        hippocampusData: this.hippocampus.export(),
+        // Plan data (prefrontal cortex)
+        planData: this.planExecutor.export(),
+      };
+      // 原子写入：temp + rename 防止崩溃损坏
+      const tmpPath = filePath + '.tmp';
+      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2));
+      // 备份旧文件
+      if (fs.existsSync(filePath)) {
+        try { fs.renameSync(filePath, filePath + '.bak'); } catch { /* backup failure non-critical */ }
+      }
+      fs.renameSync(tmpPath, filePath);
+    } catch (error) {
+      throw new Error(`Failed to save session: ${error}`);
+    }
+  }
+
+  /**
+   * 从 saveSession 文件恢复完整认知身份
+   *
+   * boot() 中的 sessionManager.loadLatest() 只恢复 conversation history
+   * 和 hippocampusData，但 saveSession() 额外保存了 persona genome、
+   * emotional state、predictions 等认知状态。此方法补全恢复。
+   */
+
+  /**
+   * 会话数据迁移 — 将旧版数据结构升级到当前版本
+   *
+   * 每个版本迁移应保持幂等性，确保字段存在且有合理的默认值。
+   * 迁移后设置 version 为当前版本。
+   */
+  private migrateSessionData(data: Record<string, any>): Record<string, any> {
+    const version = data.version ?? 1;
+
+    // V1 → V2: 添加认知增强字段
+    if (version < 2) {
+      // V1 只有基础字段，确保认知字段存在（即使为空）
+      data.emotionalState ??= undefined;
+      data.predictions ??= undefined;
+      data.personalityTraits ??= undefined;
+      data.hippocampusData ??= undefined;
+      data.planData ??= undefined;
+
+      // V1 的 persona genome 可能不完整，填充默认值
+      if (data.personaGenome) {
+        data.personaGenome.mirrorNeuron ??= {
+          observedPatterns: [],
+          imitationBias: { communicationStyle: 0.5, decisionPattern: 0.5, workRhythm: 0.5, aestheticPreference: 0.5 },
+          syncLevel: 0,
+        };
+        data.personaGenome.userModel ??= {
+          userId: 'default',
+          interactionSummary: { totalInteractions: 0, avgResponseTime: 0, satisfactionScore: 0.5, commonTopics: [] },
+          preferenceProfile: { verbosity: 'balanced', formality: 'neutral', proactivity: 'suggested', humor: 0.3 },
+          trustLevel: 0.5,
+        };
+      }
+    }
+
+    data.version = KillerAgent.SESSION_VERSION;
+    return data;
+  }
+
+  private loadIdentityFromSession(): void {
+    // 跳过测试环境中的身份恢复（避免测试间状态污染）
+    if (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true') {
+      return;
+    }
+
+    try {
+      const filePath = path.join(this.sessionDir, 'default.json');
+      if (!fs.existsSync(filePath)) {
+        return;
+      }
+
+      const data = this.migrateSessionData(JSON.parse(fs.readFileSync(filePath, 'utf-8')));
+
+      let restored = 0;
+
+      // Restore persona genome (user model + mirror neuron + expression)
+      if (data.personaGenome) {
+        this.persona.importGenome(data.personaGenome);
+        restored++;
+      }
+
+      // E1: Restore emotional state (valence/arousal/dominance, mood, emotionalMemory)
+      if (data.emotionalState) {
+        this.persona.emotionalState.importState(data.emotionalState);
+        restored++;
+      }
+
+      // E4: Restore predictive model (predictedNeeds, communicationPatterns, psychologicalProfile)
+      if (data.predictions) {
+        this.persona.predictiveModel.importState(data.predictions);
+        restored++;
+      }
+
+      // Restore personality traits
+      if (data.personalityTraits && typeof data.personalityTraits === 'object') {
+        for (const [trait, value] of Object.entries(data.personalityTraits)) {
+          if (typeof value === 'number') {
+            this.persona.updateTrait(trait, value);
+          }
+        }
+        restored++;
+      }
+
+      // E2: Restore hippocampus memories (episodic, semantic, procedural)
+      if (data.hippocampusData) {
+        try {
+          this.hippocampus.import(data.hippocampusData as never);
+          restored++;
+        } catch {
+          // 记忆恢复失败不应阻止启动
+        }
+      }
+
+      // Restore time awareness
+      if (data.savedAt) {
+        this.persona.setLastSeenAt(data.savedAt);
+      }
+
+      if (restored > 0) {
+        this.logger.info(`Restored ${restored} cognitive identity components from previous session`);
+      }
+    } catch (err) {
+      // 身份恢复失败不应阻止启动
+      this.logger.warn(`Identity restore skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * 从磁盘恢复会话
+   */
+  loadSession(name: string = 'default'): boolean {
+    const filePath = path.join(this.sessionDir, `${name}.json`);
+    let data: Record<string, any>;
+
+    try {
+      if (!fs.existsSync(filePath)) {
+        return false;
+      }
+      data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    } catch {
+      // 主文件损坏，尝试从备份恢复
+      const backupPath = filePath + '.bak';
+      if (fs.existsSync(backupPath)) {
+        try {
+          data = JSON.parse(fs.readFileSync(backupPath, 'utf-8'));
+          this.logger.warn('Session file was corrupted, restored from backup');
+        } catch {
+          return false;
+        }
+      } else {
+        return false;
+      }
+    }
+
+    try {
+      // 迁移旧版本数据
+      data = this.migrateSessionData(data);
+
+      if (data.conversationHistory && Array.isArray(data.conversationHistory)) {
+        this.conversationHistory = data.conversationHistory;
+      }
+      // Restore persona genome
+      if (data.personaGenome) {
+        this.persona.importGenome(data.personaGenome);
+      }
+      // E1: Restore emotional state
+      if (data.emotionalState) {
+        this.persona.emotionalState.importState(data.emotionalState);
+      }
+      // E4: Restore predictive model
+      if (data.predictions) {
+        this.persona.predictiveModel.importState(data.predictions);
+      }
+      // Restore personality traits
+      if (data.personalityTraits && typeof data.personalityTraits === 'object') {
+        for (const [trait, value] of Object.entries(data.personalityTraits)) {
+          if (typeof value === 'number') {
+            this.persona.updateTrait(trait, value);
+          }
+        }
+      }
+      // Restore hippocampus memories (episodic, semantic, procedural, prospective, narrative)
+      if (data.hippocampusData) {
+        try {
+          this.hippocampus.import(data.hippocampusData as never);
+          this.logger.info('Restored hippocampus memories from session');
+        } catch (err) {
+          this.logger.error('Failed to restore hippocampus memories', err);
+        }
+      }
+      // Restore plan data (prefrontal cortex)
+      if (data.planData) {
+        try {
+          this.planExecutor.import(data.planData);
+          this.logger.info('Restored plans from session');
+        } catch (err) {
+          this.logger.error('Failed to restore plans', err);
+        }
+      }
+      // Restore time awareness from saved session
+      if (data.savedAt) {
+        this.persona.setLastSeenAt(data.savedAt);
+      }
+      this.persona.markSessionStart();
+      // Note: userModel and mirrorNeuronData are restored via personaGenome
+      // which contains the full genome including userModel and mirrorNeuron
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 列出已保存的会话
+   */
+  listSessions(): Array<{ name: string; savedAt: number; turns: number }> {
+    try {
+      if (!fs.existsSync(this.sessionDir)) {
+        return [];
+      }
+      return fs.readdirSync(this.sessionDir)
+        .filter(f => f.endsWith('.json'))
+        .map(f => {
+          try {
+            const data = JSON.parse(fs.readFileSync(path.join(this.sessionDir, f), 'utf-8'));
+            return {
+              name: f.replace('.json', ''),
+              savedAt: data.savedAt ?? 0,
+              turns: data.conversationHistory?.length ?? 0,
+            };
+          } catch {
+            return { name: f.replace('.json', ''), savedAt: 0, turns: 0 };
+          }
+        });
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 处理用户输入（供 CLI 使用）
+   *
+   * 1. 直接调用 LLM 获取即时响应
+   * 2. 将输入注入 brainstem 做后台记忆/演化处理
+   *
+   * @param onToken 可选的流式回调，每收到一个 token 就调用
+   */
+  async processInput(
+    content: string,
+    _channel: string = 'cli',
+    onToken?: (token: string) => void
+  ): Promise<{ content: string }> {
+    // Concurrency guard: queue if already processing
+    if (this.processing) {
+      return new Promise<{ content: string }>((resolve, reject) => {
+        this.inputQueue.push({ content, channel: _channel, resolve, reject, onToken });
+      });
+    }
+    this.processing = true;
+
+    try {
+      return await this.processInputCore(content, _channel, onToken);
+    } finally {
+      this.processing = false;
+      // Drain queue — process next queued input
+      const next = this.inputQueue.shift();
+      if (next) {
+        this.processInput(next.content, next.channel, next.onToken)
+          .then(next.resolve)
+          .catch(next.reject);
+      }
+    }
+  }
+
+  private async processInputCore(
+    content: string,
+    _channel: string = 'cli',
+    onToken?: (token: string) => void
+  ): Promise<{ content: string }> {
+    // 标记活跃时间，用于后台任务判断空闲
+    this.lastActivityAt = Date.now();
+
+    // 检测用户消息中的承诺/计划/待办（用于后续提醒）
+    detectCommitments(content);
+
+    const input: SensoryInput = {
+      id: generateId('input'),
+      timestamp: Date.now(),
+      channel: 'cli' as import('../sensory/types.js').SensoryChannel,
+      source: 'cli-user',
+      content,
+      metadata: {},
+      priority: 'normal',
+    };
+
+    // 先尝试命令处理
+    if (this.commandHandler.handleCommand(input)) {
+      return { content: '' };
+    }
+
+    // 通过中间件管道处理
+    const ctx: MiddlewareContext = {
+      input: content,
+      channel: _channel,
+      metadata: {},
+      startedAt: Date.now(),
+    };
+
+    try {
+      await this.middleware.execute(ctx, async (innerCtx) => {
+        // 核心处理逻辑（被中间件包裹）
+
+        // 检测是否需要多 Cell 委派
+        if (this.shouldDelegate(innerCtx.input)) {
+          const delegateResult = await this.delegateTask(innerCtx.input, onToken);
+          innerCtx.response = delegateResult.synthesis;
+          return;
+        }
+
+        // 记录请求
+        const metrics = MetricsCollector.getInstance();
+        metrics.requestsTotal.inc();
+
+        await this.hooks.emit('input:received', { content: innerCtx.input, channel: innerCtx.channel });
+        await this.hooks.emit('cycle:start', { input: innerCtx.input });
+
+        // 构建 prompt：persona + 对话历史 + 用户输入 + 关联记忆
+        const systemContext = this.buildSystemPrompt(innerCtx.input);
+        let response: string;
+
+        try {
+          const stopTimer = metrics.llmLatency.startTimer();
+          metrics.llmCalls.inc();
+
+          response = await this.callLLMWithRetry(innerCtx.input, systemContext, onToken);
+          stopTimer();
+        } catch (llmError) {
+          metrics.llmErrors.inc();
+          const errMsg = llmError instanceof Error ? llmError.message : String(llmError);
+          const isCircuitBreaker = llmError instanceof LLMError && llmError.code === 'LLM_ERROR' && errMsg.includes('Circuit breaker');
+          if (isCircuitBreaker) {
+            response = 'I\'m having trouble thinking clearly right now — my thoughts keep slipping away. Could you give me a moment and try again? I\'ll remember what you said.';
+          } else if (isKillerError(llmError) && !llmError.recoverable) {
+            response = 'I think something went wrong with how I\'m set up internally. Would you mind checking my configuration? I\'d love to get back to our conversation.';
+          } else {
+            response = 'Sorry, I lost my train of thought for a second there. I heard what you said though — give me just a moment and I\'ll be right with you.';
+          }
+          this.logger.warn(`LLM fallback triggered: ${errMsg}`);
+        }
+
+        // 记录到对话历史
+        this.conversationHistory.push({ role: 'user', content: innerCtx.input });
+        this.conversationHistory.push({ role: 'assistant', content: response });
+        if (this.conversationHistory.length > this.maxConversationTurns * 2) {
+          this.conversationHistory = this.conversationHistory.slice(-this.maxConversationTurns * 2);
+        }
+
+        // 检测并执行 LLM 响应中的工具调用（支持多轮推理链）
+        response = await this.runToolChainLoop(response, systemContext, onToken);
+
+        // 注入到 brainstem 做后台处理
+        this.injectInput(input);
+
+        // === 认知子系统更新（独立 try-catch，不影响核心响应） ===
+        try {
+          // 记录到 persona 的行为观察 + 情感处理
+          this.enrichMirrorNeuronLearning(innerCtx.input);
+          const emotionalResult = this.persona.processEmotionalTrigger(innerCtx.input, 'user-message');
+
+          // 1. Agent 自身回复也会影响情感状态（共振）
+          this.persona.processEmotionalTrigger(response, 'agent-response');
+
+          // 2. 验证上一轮预测是否命中当前输入（预测闭环）
+          this.validatePredictionsAgainstInput(innerCtx.input);
+
+          // 3. 记录交互到 persona（response time, satisfaction, topics）
+          const responseTimeMs = Date.now() - ctx.startedAt;
+          const estimatedSatisfaction = this.estimateSatisfaction(innerCtx.input, response);
+          const detectedTopics = this.detectTopics(innerCtx.input);
+          this.persona.recordInteraction(responseTimeMs, estimatedSatisfaction, detectedTopics);
+
+          // 4. 存储 episodic memory
+          this.hippocampus.storeEpisode({
+            title: innerCtx.input.slice(0, 50),
+            narrative: `User: ${innerCtx.input.slice(0, 200)}\nAgent: ${response.slice(0, 200)}`,
+            emotionalWeight: Math.abs(emotionalResult.intensity),
+            tags: [...detectedTopics, emotionalResult.primaryEmotion],
+            associations: [],
+            decayRate: 0.1,
+            accessCount: 0,
+          });
+
+          this.hooks.emit('memory:store', { type: 'episodic', title: innerCtx.input.slice(0, 50) }).catch(() => {});
+          MetricsCollector.getInstance().memoryStores.inc();
+          MetricsCollector.getInstance().emotionEvents.inc();
+          MetricsCollector.getInstance().emotionValence.set(emotionalResult.current.valence);
+          MetricsCollector.getInstance().emotionArousal.set(emotionalResult.current.arousal);
+
+          // 5. 实时事实提取 → 语义记忆
+          this.extractAndStoreFacts(innerCtx.input);
+
+          // 6. 关系里程碑检测
+          checkRelationshipMilestone(this.persona, this.consciousness, this.logger);
+
+          // 推送认知事件到意识流
+          this.consciousness.emit({
+            type: 'emotion.update',
+            source: 'persona',
+            data: { emotion: emotionalResult.primaryEmotion, intensity: emotionalResult.intensity },
+          });
+
+          const predictions = this.persona.getPredictions();
+          if (predictions.predictedNeeds.length > 0) {
+            this.consciousness.emit({
+              type: 'prediction.update',
+              source: 'persona',
+              data: { needsCount: predictions.predictedNeeds.length, topNeed: predictions.predictedNeeds[0] },
+            });
+          }
+        } catch (cognitiveError) {
+          // 认知子系统降级：不影响核心 LLM 响应，仅记录错误
+          const cogErrMsg = cognitiveError instanceof Error ? cognitiveError.message : String(cognitiveError);
+          this.logger.warn(`Cognitive subsystem degraded (non-fatal): ${cogErrMsg}`);
+          this.consciousness.emit({
+            type: 'health.degraded',
+            source: 'agent',
+            data: { subsystem: 'cognitive', error: cogErrMsg },
+          });
+        }
+
+        await this.hooks.emit('input:processed', { content: innerCtx.input, responseLength: response.length });
+        await this.hooks.emit('cycle:end', { input: innerCtx.input, responseLength: response.length });
+
+        innerCtx.response = response;
+      });
+    } catch (outerError) {
+      // 优雅错误恢复：管道外部异常
+      const errMsg = outerError instanceof Error ? outerError.message : String(outerError);
+      this.logger.error(`processInput pipeline error: ${errMsg}`);
+      MetricsCollector.getInstance().counter('pipeline_errors').inc();
+      await this.hooks.emit('error:pipeline', { error: errMsg, input: content }).catch(() => {});
+
+      // 推送错误到意识流（供 API/CLI 展示）
+      this.consciousness.emit({
+        type: 'error.pipeline',
+        source: 'agent',
+        data: { error: errMsg, recovered: true },
+      });
+
+      ctx.response = 'Something caught me off guard just now, but I\'m okay. Could you say that again?';
+    }
+
+    // Auto-save check（每 5 条消息自动保存）
+    const llmModel = typeof this.config.llm.getModel === 'function' ? this.config.llm.getModel() : 'unknown';
+    this.sessionManager.checkAutoSave(
+      this.buildAgentStateForSnapshot(),
+      { llmProvider: llmModel, debugLogging: this.config.debugLogging ?? false },
+    ).catch(() => {});
+
+    return { content: ctx.response ?? '' };
+  }
+
+  /**
+   * 从 LLM 响应中检测并执行工具调用（代理到 response-processor）
+   */
+  /** LLM 重试最大次数 */
+  private static readonly MAX_LLM_RETRIES = 3;
+
+  /** 当前会话格式版本 — 迁移时递增 */
+  private static readonly SESSION_VERSION = 2;
+  /** 重试基础延迟（毫秒） */
+  private static readonly RETRY_BASE_DELAY_MS = 1000;
+
+  /**
+   * 带指数退避的 LLM 调用
+   *
+   * 失败时自动重试（最多 3 次，延迟 1s → 2s → 4s）。
+   * 保留流式输出支持。
+   */
+  private async callLLMWithRetry(
+    input: string,
+    systemContext: string,
+    onToken?: (token: string) => void,
+  ): Promise<string> {
+    const maxAttempts = KillerAgent.MAX_LLM_RETRIES;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.hooks.emit('llm:call', { attempt, inputLength: input.length });
+
+        let response: string;
+        if (onToken) {
+          // 尝试流式输出，失败后降级为完整请求
+          try {
+            const chunks: string[] = [];
+            for await (const chunk of this.config.llm.stream(input, systemContext)) {
+              chunks.push(chunk);
+              onToken(chunk);
+            }
+            response = chunks.join('');
+          } catch (streamErr) {
+            this.logger.warn(`Stream failed (attempt ${attempt}), falling back to complete: ${
+              streamErr instanceof Error ? streamErr.message : String(streamErr)
+            }`);
+            const result = await this.config.llm.complete(input, systemContext);
+            response = result.content;
+            onToken(response);
+          }
+        } else {
+          const result = await this.config.llm.complete(input, systemContext);
+          response = result.content;
+        }
+
+        await this.hooks.emit('llm:response', { responseLength: response.length, attempt });
+        return response;
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        await this.hooks.emit('llm:error', { error: errMsg, attempt });
+
+        const isLastAttempt = attempt === maxAttempts;
+        if (isLastAttempt) throw err;
+
+        const delay = KillerAgent.RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+        this.logger.warn(`LLM call failed (attempt ${attempt}/${maxAttempts}), retrying in ${delay}ms: ${errMsg}`);
+
+        // 重试前通知用户
+        onToken?.(`\n[Retrying... (${attempt}/${maxAttempts - 1})]\n`);
+
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+
+    // 不可达，但 TypeScript 需要
+    throw new Error('LLM retry exhausted');
+  }
+
+  private async executeToolCallsFromResponse(
+    response: string,
+    onToken?: (token: string) => void,
+  ): Promise<import('./response-processor.js').ToolChainResult> {
+    const result = await executeToolCallsFromResponse(response, {
+      tools: this.tools,
+      toolPermissions: this.toolPermissions,
+      logger: this.logger,
+      toolTimeoutMs: this.toolTimeoutMs,
+    }, onToken);
+
+    // 更新对话历史中最后一条 assistant 消息
+    if (result.response !== response) {
+      const lastIdx = this.conversationHistory.length - 1;
+      if (lastIdx >= 0 && this.conversationHistory[lastIdx].role === 'assistant') {
+        this.conversationHistory[lastIdx] = { ...this.conversationHistory[lastIdx], content: result.response };
+      }
+    }
+
+    return result;
+  }
+
+  /** 工具链推理最大轮次 */
+  private static readonly MAX_TOOL_CHAIN_ROUNDS = 5;
+
+  /**
+   * 执行工具链推理循环
+   *
+   * 当 LLM 响应包含工具调用时，执行工具后将结果反馈给 LLM 继续推理。
+   * 循环直到 LLM 不再调用工具或达到最大轮次。
+   */
+  private async runToolChainLoop(
+    initialResponse: string,
+    systemContext: string,
+    onToken?: (token: string) => void,
+  ): Promise<string> {
+    let currentResponse = initialResponse;
+
+    for (let round = 0; round < KillerAgent.MAX_TOOL_CHAIN_ROUNDS; round++) {
+      const toolResult = await this.executeToolCallsFromResponse(currentResponse, onToken);
+      currentResponse = toolResult.response;
+
+      if (!toolResult.toolsExecuted) break;
+
+      // 发出工具执行 hook
+      for (const toolName of toolResult.executedToolNames) {
+        await this.hooks.emit('tool:execute', { tool: toolName, round });
+        await this.hooks.emit('tool:result', { tool: toolName, round });
+      }
+
+      // 工具已执行，将结果反馈给 LLM 继续推理
+      this.conversationHistory.push({
+        role: 'assistant',
+        content: currentResponse,
+      });
+
+      onToken?.('\n[Reasoning...]\n');
+
+      // 根据已执行的工具数量调整 prompt
+      const toolRoundHint = toolResult.executedToolNames.length > 2
+        ? 'You have used several tools. It\'s time to give the user a comprehensive answer based on what you\'ve gathered.'
+        : 'If you have enough information, respond directly. If not, call another tool.';
+
+      try {
+        const followUp = await this.callLLMWithRetry(
+          `You used these tools: ${toolResult.executedToolNames.join(', ')}. ${toolRoundHint} Synthesize the results into a natural, helpful response to the user. Don't mention the tools by name unless the user asked about them.`,
+          systemContext,
+          onToken,
+        );
+        currentResponse = followUp;
+        // 更新最后一条 assistant 消息
+        const lastIdx = this.conversationHistory.length - 1;
+        if (lastIdx >= 0 && this.conversationHistory[lastIdx].role === 'assistant') {
+          this.conversationHistory[lastIdx] = { role: 'assistant', content: followUp };
+        } else {
+          this.conversationHistory.push({ role: 'assistant', content: followUp });
+        }
+      } catch {
+        // LLM 推理失败，保留当前工具结果作为最终响应
+        break;
+      }
+    }
+
+    return currentResponse;
+  }
+
+  /**
+   * 委派任务给多个 Cell 协作处理
+   *
+   * 供 /delegate 命令使用，或在 processInput 中检测到复杂任务时自动触发
+   */
+  async delegateTask(task: string, onToken?: (token: string) => void): Promise<DelegationResult> {
+    onToken?.(`\n🔄 Delegating task: "${task.slice(0, 60)}${task.length > 60 ? '...' : ''}"\n`);
+
+    await this.hooks.emit('delegate:start', { task });
+
+    const result = await this.taskDelegate.delegate(task);
+
+    // 报告子任务状态
+    for (const subtask of result.subtasks) {
+      const icon = subtask.status === 'completed' ? '✅' : subtask.status === 'failed' ? '❌' : '⏳';
+      onToken?.(`  ${icon} ${subtask.cellType}: ${subtask.description.slice(0, 50)}\n`);
+    }
+
+    onToken?.(`\n📊 Used ${result.totalCellsUsed} cells in ${result.durationMs}ms\n\n`);
+    onToken?.(result.synthesis);
+
+    // 记录到对话历史
+    this.conversationHistory.push({ role: 'user', content: `[delegate] ${task}` });
+    this.conversationHistory.push({ role: 'assistant', content: result.synthesis });
+    if (this.conversationHistory.length > this.maxConversationTurns * 2) {
+      this.conversationHistory = this.conversationHistory.slice(-this.maxConversationTurns * 2);
+    }
+
+    await this.hooks.emit('delegate:complete', { task, cellsUsed: result.totalCellsUsed, durationMs: result.durationMs });
+
+    return result;
+  }
+
+  /**
+   * 检测输入是否为复杂任务，需要多 Cell 委派
+   */
+  private shouldDelegate(input: string): boolean {
+    // 显式委派关键词
+    const delegatePatterns = [
+      /\b(delegate|assign|distribute)\b/i,
+      /\b(多个|分别|同时|并行)\b/,
+      /\b(parallel|multi|collaborate)\b/i,
+    ];
+    for (const pattern of delegatePatterns) {
+      if (pattern.test(input)) return true;
+    }
+
+    // 长且包含多个子问题的输入
+    const sentences = input.split(/[.!?。！？\n]/).filter(s => s.trim().length > 5);
+    if (sentences.length >= 3 && input.length > 200) return true;
+
+    return false;
+  }
+
+  /**
+   * 从用户消息中提取丰富的行为模式，喂给镜像神经元学习系统
+   */
+  /**
+   * 验证上一轮预测是否被当前用户输入证实或否定
+   *
+   * 将预测的 triggerConditions 与当前输入做关键词匹配。
+   * 命中的预测标记为 correct，未命中的标记为 incorrect。
+   * 这使得预测模型的准确率随时间自我校正。
+   */
+  private validatePredictionsAgainstInput(input: string): void {
+    const predictions = this.persona.getPredictions();
+    if (predictions.predictedNeeds.length === 0) return;
+
+    const lower = input.toLowerCase();
+
+    for (const need of predictions.predictedNeeds) {
+      // 将预测描述和触发条件都作为匹配目标
+      const matchTargets = [
+        need.description.toLowerCase(),
+        ...need.triggerConditions.map(c => c.toLowerCase()),
+      ];
+
+      // 简单关键词重叠检测
+      const isRelevant = matchTargets.some(target => {
+        const words = target.split(/\s+/).filter(w => w.length > 3);
+        return words.some(word => lower.includes(word));
+      });
+
+      this.persona.validatePrediction(need.description, isRelevant);
+    }
+  }
+
+  private enrichMirrorNeuronLearning(input: string): void {
+    // 基础观察
+    this.persona.observeUserBehavior('user-message', [input]);
+
+    // 消息长度风格
+    if (input.length < 20) {
+      this.persona.observeUserBehavior('short-messages', ['communication']);
+    } else if (input.length > 200) {
+      this.persona.observeUserBehavior('long-messages', ['communication']);
+    }
+
+    // 是否包含代码
+    if (/```|`[^`]+`|function\s|class\s|import\s|const\s|let\s|var\s/.test(input)) {
+      this.persona.observeUserBehavior('uses-code', ['coding']);
+    }
+
+    // 是否提问
+    if (/\?|how|what|why|when|where|who|which/i.test(input)) {
+      this.persona.observeUserBehavior('asks-questions', ['communication']);
+    }
+
+    // 是否发出指令
+    if (/^(do|make|create|build|fix|add|remove|delete|update|run|start|stop|show|list|get)\b/i.test(input)) {
+      this.persona.observeUserBehavior('uses-imperative', ['communication']);
+    }
+  }
+
+  /**
+   * 估算交互满意度
+   *
+   * 基于用户输入情感（正面 → 高满意度，负面 → 低满意度）
+   * 和响应质量（有实质内容 → 较高）进行启发式评估。
+   */
+  private estimateSatisfaction(userInput: string, agentResponse: string): number {
+    let score = 0.5; // baseline
+
+    // 用户情感正面向 → 提升满意度
+    const positiveWords = /thank|great|good|nice|perfect|love|awesome|excellent|helpful/i;
+    const negativeWords = /wrong|bad|error|fail|don't|doesn't|broken|fix|bug|issue|problem/i;
+
+    if (positiveWords.test(userInput)) score += 0.3;
+    if (negativeWords.test(userInput)) score -= 0.2;
+
+    // 响应有实质内容 → 微调
+    if (agentResponse.length > 50) score += 0.1;
+    if (agentResponse.startsWith('(') || agentResponse.includes('unavailable')) score -= 0.3;
+
+    return Math.max(0, Math.min(1, score));
+  }
+
+  /**
+   * 检测用户输入的话题
+   */
+  private detectTopics(input: string): string[] {
+    const topics: string[] = [];
+    const topicPatterns: Array<[RegExp, string]> = [
+      [/\b(code|function|class|debug|bug|error|stack)\b/i, 'coding'],
+      [/\b(learn|study|understand|explain|teach)\b/i, 'learning'],
+      [/\b(plan|goal|project|build|create|design)\b/i, 'planning'],
+      [/\b(hello|hi|hey|morning|evening|how are)\b/i, 'greeting'],
+      [/\b(analyze|review|compare|evaluate)\b/i, 'analysis'],
+      [/\b(write|document|read|file)\b/i, 'writing'],
+    ];
+
+    for (const [pattern, topic] of topicPatterns) {
+      if (pattern.test(input)) {
+        topics.push(topic);
+      }
+    }
+
+    return topics.length > 0 ? topics : ['general'];
+  }
+
+  /**
+   * 从用户输入中实时提取事实并存储到语义记忆
+   *
+   * 检测用户身份信息、偏好、目标等，立即存入 hippocampus
+   * 语义图谱中，使 agent 在后续对话中能引用这些事实。
+   */
+  private extractAndStoreFacts(input: string): void {
+    const facts = extractFacts(input);
+    if (facts.length === 0) return;
+
+    for (const fact of facts) {
+      // 事件类型 → 创建 event 语义节点
+      if (fact.category === 'event') {
+        this.hippocampus.addSemanticNode({
+          type: 'event',
+          label: fact.label,
+          properties: { ...fact.properties, extractedAt: Date.now(), confidence: fact.confidence },
+          strength: fact.confidence,
+        });
+
+        this.consciousness.emit({
+          type: 'fact.learned',
+          source: 'agent',
+          data: { category: 'event', label: fact.label, confidence: fact.confidence },
+        });
+        continue;
+      }
+
+      // 检查是否已存在同 field 的节点（避免重复）
+      const field = String(fact.properties.field ?? '');
+      if (field) {
+        const existingNodes = this.hippocampus.getSemanticNodesByType('entity');
+        const duplicate = existingNodes.find(
+          n => n.properties.field === field && n.label.startsWith(fact.label.split(':')[0])
+        );
+        if (duplicate) {
+          // 更新已有节点而非重复创建
+          this.hippocampus.addSemanticNode({
+            id: duplicate.id,
+            type: 'entity',
+            label: fact.label,
+            properties: { ...fact.properties, updatedAt: Date.now() },
+            strength: Math.min(duplicate.strength + 0.1, 1.0),
+          });
+          continue;
+        }
+      }
+
+      // 创建新语义节点
+      this.hippocampus.addSemanticNode({
+        type: 'entity',
+        label: fact.label,
+        properties: { ...fact.properties, extractedAt: Date.now(), confidence: fact.confidence },
+        strength: fact.confidence,
+      });
+
+      this.consciousness.emit({
+        type: 'fact.learned',
+        source: 'agent',
+        data: { category: fact.category, label: fact.label, confidence: fact.confidence },
+      });
+    }
+
+    if (facts.length > 0) {
+      this.logger.info(`Extracted ${facts.length} fact(s): ${facts.map(f => f.label).join(', ')}`);
+    }
+  }
+
+  /**
+   * 构建系统 prompt（包含 persona、记忆和对话历史上下文）
+   */
+  private buildSystemPrompt(currentInput?: string): string {
+    const memoryStats = this.hippocampus.getStats();
+    const userModel = this.persona.getUserModel();
+    const isFirstBoot = memoryStats.episodes === 0 && userModel.interactionSummary.totalInteractions === 0;
+
+    return buildSystemPrompt({
+      persona: this.persona,
+      hippocampus: this.hippocampus,
+      tools: this.tools,
+      contextWindow: this.contextWindow,
+      conversationHistory: this.conversationHistory,
+      currentInput,
+      isFirstBoot,
+    });
+  }
+
+  /**
+   * 获取目标列表（供 CLI 使用）
+   */
+  getGoals(): Array<{ id: string; description: string; priority: number }> {
+    const goals = this.listGoals();
+    return goals.map(g => ({
+      id: g.id,
+      description: g.description,
+      priority: g.priority,
+    }));
+  }
+
+  /**
+   * 日志输出（兼容旧调用，转发到结构化 logger）
+   */
+  private log(message: string): void {
+    this.logger.info(message);
+  }
+
+  /**
+   * 插件生命周期依赖注入
+   */
+  private getPluginDeps(): PluginLifecycleDeps {
+    return {
+      pluginManager: this.pluginManager,
+      tools: this.tools,
+      logger: this.logger,
+    };
+  }
+
+  /**
+   * 从 .killer/plugins/ 自动加载插件并注册工具和命令
+   */
+  private async loadPlugins(): Promise<void> {
+    return loadPlugins(this.getPluginDeps());
+  }
+
+  /**
+   * 注册内联插件（编程方式）
+   */
+  async registerPlugin(plugin: KillerPlugin): Promise<void> {
+    await registerPluginExternal(plugin, this.getPluginDeps());
+    await this.hooks.emit('plugin:loaded', { name: plugin.manifest.name, version: plugin.manifest.version });
+  }
+
+  /**
+   * 卸载插件
+   */
+  async unloadPlugin(name: string): Promise<boolean> {
+    const result = await unloadPluginExternal(name, this.getPluginDeps());
+    if (result) {
+      await this.hooks.emit('plugin:unloaded', { name });
+    }
+    return result;
+  }
+
+  /**
+   * 获取已加载的插件列表
+   */
+  getPlugins(): Array<{ name: string; version: string; description?: string; source: string }> {
+    return this.pluginManager.getLoadedPlugins();
+  }
+
+  /**
+   * 获取完整状态（用于会话快照）
+   */
+  getState(): {
+    goals: Array<{ id: string; description: string; priority: number; status: string }>;
+    cells: Array<{ id: string; role: string; status: string }>;
+    persona: { name: string; traits: string[]; bio: string };
+    memory: { totalEpisodes: number; shortTermCount: number; longTermCount: number; associationCount: number };
+    conversationHistory: Array<{ role: string; content: string }>;
+  } {
+    return {
+      goals: this.getGoals().map(g => ({
+        id: g.id,
+        description: g.description,
+        priority: g.priority,
+        status: 'active' as const,
+      })),
+      cells: this.getCells(),
+      persona: this.getPersona(),
+      memory: this.getMemoryStats(),
+      conversationHistory: [...this.conversationHistory],
+    };
+  }
+
+  /**
+   * 恢复对话历史（用于会话恢复）
+   */
+  restoreConversationHistory(history: Array<{ role: 'user' | 'assistant'; content: string }>): void {
+    this.conversationHistory = history;
+    this.logger.info(`Restored ${history.length} conversation turns`);
+  }
+
+  /**
+   * 提取最后对话主题
+   *
+   * 从最近的用户消息中提取一个简短主题描述，
+   * 用于下次启动时的"继续上次对话"提示。
+   */
+  private extractLastTopic(): string | null {
+    // Find the last user message
+    for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
+      const turn = this.conversationHistory[i];
+      if (turn?.role === 'user' && turn.content.trim()) {
+        const content = turn.content.trim();
+        // Skip commands
+        if (content.startsWith('/')) continue;
+        // Extract first meaningful sentence, max 60 chars
+        const firstSentence = content.split(/[.!?。！？\n]/)[0]?.trim() ?? content;
+        if (firstSentence.length > 60) {
+          return firstSentence.slice(0, 57) + '...';
+        }
+        return firstSentence;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 获取上次会话主题（用于问候）
+   */
+  getLastTopic(): string | null {
+    // First check the loaded session data
+    try {
+      const filePath = path.join(this.sessionDir, 'default.json');
+      if (fs.existsSync(filePath)) {
+        const data = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as { lastTopic?: string };
+        return data.lastTopic ?? null;
+      }
+    } catch {
+      // Ignore parse errors
+    }
+    return null;
+  }
+}
+
+// 导出类型别名
+export type { DreamResult as DreamCycleResult } from '@killer/core';

@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+**/dist/
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+**/coverage/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Killer Agent runtime data
+.killer/
+
+# Temporary files
+*.tmp
+.cache/
+
+# Claude Code local config
+.claude/
+
+# Temporary Chinese-named files
+一个能够长期共存、逐渐理解自己、并在生活中形成真实陪伴感的数字个体。
+单次任务最优解
+用户只需像和一个"真实存在的智能个体"交流、而不是使用软件。

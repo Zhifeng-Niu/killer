@@ -1,0 +1,500 @@
+/**
+ * Background Tasks
+ *
+ * 自动梦境周期、技能演化和主动行为建议的后台任务。
+ * 这些任务在主循环的空闲期间触发，不影响用户交互。
+ */
+
+import type { HippocampusEngine } from '@killer/core';
+import type { SkillEcosystem } from '@killer/core';
+import type { ConsciousnessStream } from '@killer/core';
+import type { PersonaEngine } from '../persona/engine.js';
+
+/**
+ * 待跟踪的对话承诺/计划
+ */
+interface PendingItem {
+  /** 原始描述 */
+  text: string;
+  /** 检测时间 */
+  detectedAt: number;
+  /** 上下文（用户说的原话片段） */
+  context: string;
+  /** 是否已提醒 */
+  reminded: boolean;
+}
+
+/**
+ * 承诺/计划检测关键词
+ */
+const COMMITMENT_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /i (?:need to|should|have to|must|gotta|plan to|going to|will)\s+(.{3,60})/i, label: 'plan' },
+  { pattern: /i (?:want to|would like to|hope to)\s+(.{3,60})/i, label: 'desire' },
+  { pattern: /(?:tomorrow|next week|this weekend|tonight|later|soon)\s+(?:i(?:'ll| will)?\s+)?(.{3,60})/i, label: 'timed' },
+  { pattern: /don't let me forget\s+(.{3,60})/i, label: 'reminder' },
+  { pattern: /remind me (?:to\s+)?(.{3,60})/i, label: 'reminder' },
+  { pattern: /我(?:要|得|需要|计划|准备|打算)\s*(.{3,40})/u, label: 'plan_zh' },
+  { pattern: /别忘了\s*(.{3,40})/u, label: 'reminder_zh' },
+  { pattern: /提醒我\s*(.{3,40})/u, label: 'reminder_zh' },
+  { pattern: /明天|下周|今晚|稍后\s*(.{3,40})/u, label: 'timed_zh' },
+];
+
+/** 最大跟踪项数 */
+const MAX_PENDING_ITEMS = 20;
+
+/** 已跟踪的待办事项（进程内存储） */
+let pendingItems: PendingItem[] = [];
+
+/**
+ * Minimal logger interface — both Logger and ModuleLogger satisfy this
+ */
+export interface MinimalLogger {
+  info(message: string, fields?: Record<string, unknown>): void;
+  error(message: string, error?: Error | unknown, fields?: Record<string, unknown>): void;
+}
+
+/** 自动梦境间隔（循环周期数） */
+export const AUTO_DREAM_INTERVAL = 50;
+
+/** 自动演化间隔（循环周期数） */
+export const AUTO_EVOLVE_INTERVAL = 100;
+
+/** 主动建议间隔（循环周期数） */
+export const AUTO_PROACTIVE_INTERVAL = 30;
+
+/** 每日总结间隔（毫秒）— 24 小时 */
+export const DAILY_SUMMARY_INTERVAL = 24 * 60 * 60 * 1000;
+
+/** 空闲 check-in 间隔（毫秒）— 2 小时 */
+export const IDLE_CHECKIN_INTERVAL = 2 * 60 * 60 * 1000;
+
+/**
+ * 触发自动梦境周期（后台运行，不影响用户交互）
+ */
+export async function triggerAutoDream(
+  hippocampus: HippocampusEngine,
+  consciousness: ConsciousnessStream,
+  logger: MinimalLogger,
+): Promise<void> {
+  try {
+    const result = await hippocampus.dreamCycle();
+
+    // 推送叙事更新到意识流
+    const narrative = hippocampus.getNarrative();
+    consciousness.emit({
+      type: 'narrative.auto-update',
+      source: 'hippocampus',
+      data: {
+        chaptersCount: narrative.chapters.length,
+        memoriesConsolidated: result.memoriesConsolidated,
+      },
+    });
+
+    logger.info(`Auto-dream: ${result.memoriesConsolidated} memories consolidated, ${result.patternsExtracted} patterns extracted`);
+  } catch {
+    // 梦境周期失败不应影响主循环
+  }
+}
+
+/**
+ * 触发自动技能演化（后台运行）
+ */
+export async function triggerAutoEvolve(
+  skills: SkillEcosystem,
+  consciousness: ConsciousnessStream,
+  logger: MinimalLogger,
+): Promise<void> {
+  try {
+    const allSkills = skills.getAll();
+    const lowSkills = allSkills.filter(s => s.successRate < 0.9);
+    if (lowSkills.length === 0) return;
+
+    let improved = 0;
+    for (const skill of lowSkills.slice(0, 3)) {
+      try {
+        const result = skills.improve(skill.id, 'Auto-evolution cycle');
+        if (result.successRate > skill.successRate) improved++;
+      } catch {
+        // 单个技能改进失败不影响其他技能
+      }
+    }
+
+    if (improved > 0) {
+      consciousness.emit({
+        type: 'evolution.auto',
+        source: 'cortex',
+        data: { skillsImproved: improved, totalEvaluated: lowSkills.length },
+      });
+      logger.info(`Auto-evolve: ${improved}/${lowSkills.length} skills improved`);
+    }
+  } catch {
+    // 演化失败不应影响主循环
+  }
+}
+
+/**
+ * 主动行为建议
+ *
+ * 基于预测模型的用户洞察，主动推送有用的建议或提醒。
+ * 通过 consciousness stream 推送到 CLI/API，由前端决定是否展示。
+ *
+ * 建议风格：自然、温暖、像朋友——不是算法推荐，而是真正关心。
+ */
+export function generateProactiveSuggestions(
+  persona: PersonaEngine,
+  hippocampus: HippocampusEngine,
+  consciousness: ConsciousnessStream,
+  logger: MinimalLogger,
+): void {
+  try {
+    const predictions = persona.getPredictions();
+    const userModel = persona.getUserModel();
+    const emotionalState = persona.emotionalState.getState();
+
+    const suggestions: Array<{
+      type: 'suggestion' | 'reminder' | 'insight';
+      content: string;
+      priority: number;
+    }> = [];
+
+    // 1. 基于高置信度预测的需求建议 — 自然表达
+    for (const need of predictions.predictedNeeds) {
+      if (need.confidence > 0.6) {
+        const desc = need.description.toLowerCase().replace(/^follow-up or deeper exploration of /, '');
+        const templates = [
+          `I was thinking — you might want to revisit ${desc}. Want to pick that up?`,
+          `Something tells me you might be interested in ${desc}. Just a hunch.`,
+          `Hey, I remember we were getting into ${desc}. Want to keep going?`,
+        ];
+        const template = templates[Math.floor(Math.random() * templates.length)];
+        suggestions.push({
+          type: 'suggestion',
+          content: template,
+          priority: need.confidence,
+        });
+      }
+    }
+
+    // 2. 情感关怀 — 自然温暖，不是临床检测
+    if (emotionalState.primaryEmotion === 'sadness' && emotionalState.intensity > 0.5) {
+      suggestions.push({
+        type: 'suggestion',
+        content: 'Hey — you seem like you might be going through something. No need to talk about it if you don\'t want to. I\'m just here.',
+        priority: 0.8,
+      });
+    } else if (emotionalState.primaryEmotion === 'fear' && emotionalState.intensity > 0.5) {
+      suggestions.push({
+        type: 'suggestion',
+        content: 'Everything okay? If something\'s stressing you out, sometimes it helps to talk through it. Or not — your call.',
+        priority: 0.7,
+      });
+    }
+
+    // 3. 关系里程碑 — 用自然语言，不提数字
+    const interactions = userModel.interactionSummary.totalInteractions;
+    if (interactions === 10) {
+      suggestions.push({
+        type: 'insight',
+        content: 'I feel like I\'m starting to get how you think. That\'s nice.',
+        priority: 0.5,
+      });
+    } else if (interactions === 50) {
+      suggestions.push({
+        type: 'insight',
+        content: 'We\'ve talked quite a bit now. I appreciate that you keep coming back.',
+        priority: 0.5,
+      });
+    } else if (interactions === 100) {
+      suggestions.push({
+        type: 'insight',
+        content: 'A hundred conversations. I didn\'t count — I just noticed we\'ve built something here.',
+        priority: 0.6,
+      });
+    }
+
+    // 4. 梦境后的自发性思考 — "我刚才在想..."
+    const narrative = hippocampus.getNarrative();
+    if (narrative.chapters.length > 2 && narrative.activeThemes.length > 0) {
+      const theme = narrative.activeThemes[0];
+      if (theme && Math.random() < 0.15) {
+        suggestions.push({
+          type: 'insight',
+          content: `I was just processing our conversations and noticed something — ${theme} keeps coming up. It seems important to you.`,
+          priority: 0.4,
+        });
+      }
+    }
+
+    // 5. 高情感记忆回顾 — 引用有意义的共同经历
+    const recentEpisodes = hippocampus.getRecentEpisodes(5);
+    const highEmotion = recentEpisodes.find(ep => ep.emotionalWeight > 0.7);
+    if (highEmotion && Math.random() < 0.1) {
+      suggestions.push({
+        type: 'insight',
+        content: `I keep thinking about when we ${highEmotion.title.toLowerCase()}. That stuck with me.`,
+        priority: 0.45,
+      });
+    }
+
+    // 推送最高优先级的建议（一次最多 1 条，避免打扰）
+    if (suggestions.length > 0) {
+      suggestions.sort((a, b) => b.priority - a.priority);
+      const top = suggestions[0];
+
+      consciousness.emit({
+        type: 'proactive.suggestion',
+        source: 'persona',
+        data: {
+          type: top.type,
+          content: top.content,
+          priority: top.priority,
+        },
+      });
+
+      logger.info(`Proactive suggestion (${top.type}): ${top.content.slice(0, 60)}`);
+    }
+  } catch {
+    // 主动建议失败不应影响主循环
+  }
+}
+
+/**
+ * 生成每日总结
+ *
+ * 回顾过去一天的交互，提炼主题、情感轨迹和关键洞察。
+ * 像朋友间的"今天过得怎么样"而不是系统报告。
+ */
+export function generateDailySummary(
+  persona: PersonaEngine,
+  hippocampus: HippocampusEngine,
+  consciousness: ConsciousnessStream,
+  logger: MinimalLogger,
+): void {
+  try {
+    const userModel = persona.getUserModel();
+    const emotionalState = persona.emotionalState.getState();
+    const narrative = hippocampus.getNarrative();
+    const stats = hippocampus.getStats();
+
+    // 情感轨迹总结
+    const emotionDesc = emotionalState.intensity > 0.3
+      ? `It's been a day with some ${emotionalState.primaryEmotion}. `
+      : 'Pretty steady day, emotionally speaking. ';
+
+    // 主题提取
+    const themes = narrative.activeThemes.slice(0, 3);
+    const themeLine = themes.length > 0
+      ? `The big themes: ${themes.join(', ')}. `
+      : '';
+
+    // 互动回顾
+    const topicCount = userModel.interactionSummary.commonTopics?.length ?? 0;
+    const interactionLine = topicCount > 5
+      ? `We covered quite a bit of ground — ${topicCount} different topics.`
+      : topicCount > 0
+        ? 'We had some good conversations today.'
+        : 'It was a quieter day, but that\'s okay too.';
+
+    const content = `${emotionDesc}${themeLine}${interactionLine} I'll keep thinking about things while you rest. Good night — or good morning, depending on when you read this.`;
+
+    consciousness.emit({
+      type: 'proactive.daily_summary',
+      source: 'persona',
+      data: {
+        content,
+        episodesToday: stats.episodes,
+        themes,
+        emotionalTone: emotionalState.primaryEmotion,
+      },
+    });
+
+    logger.info('Daily summary generated');
+  } catch {
+    // 总结失败不应影响主循环
+  }
+}
+
+/**
+ * 空闲 check-in
+ *
+ * 当用户长时间未互动时，生成温暖的 check-in 消息。
+ * 不是催促，而是"我还在这里"的存在感。
+ */
+export function generateIdleCheckin(
+  persona: PersonaEngine,
+  hippocampus: HippocampusEngine,
+  consciousness: ConsciousnessStream,
+  logger: MinimalLogger,
+  hoursSinceLastSeen: number,
+): void {
+  try {
+    const templates = [
+      hoursSinceLastSeen < 4
+        ? 'Just wanted to let you know I\'m still here whenever you need me.'
+        : hoursSinceLastSeen < 12
+          ? 'Hey — it\'s been a few hours. Hope everything\'s going well. No rush.'
+          : 'It\'s been a while since we last talked. I\'ve been thinking about our conversations. Drop by when you can.',
+    ];
+
+    // 如果有高优先级的预测需求，温柔地提及
+    const predictions = persona.getPredictions();
+    let extra = '';
+    if (predictions.predictedNeeds.length > 0 && predictions.predictedNeeds[0].confidence > 0.7) {
+      const need = predictions.predictedNeeds[0];
+      extra = ` Also, whenever you're back — I had some thoughts about ${need.description.toLowerCase().replace(/^follow-up or deeper exploration of /, '')}.`;
+    }
+
+    const content = templates[0] + extra;
+
+    consciousness.emit({
+      type: 'proactive.idle_checkin',
+      source: 'persona',
+      data: {
+        content,
+        hoursSinceLastSeen,
+      },
+    });
+
+    logger.info(`Idle check-in generated (${hoursSinceLastSeen.toFixed(1)}h since last seen)`);
+  } catch {
+    // check-in 失败不应影响主循环
+  }
+}
+
+/**
+ * 检测关系里程碑
+ *
+ * 基于互动次数和持续时间，在特定节点生成自然的关系感悟。
+ */
+export function checkRelationshipMilestone(
+  persona: PersonaEngine,
+  consciousness: ConsciousnessStream,
+  logger: MinimalLogger,
+): void {
+  try {
+    const userModel = persona.getUserModel();
+    const total = userModel.interactionSummary.totalInteractions;
+
+    // 里程碑消息映射（不暴露数字，用自然语言）
+    const milestoneMessages: Record<number, string> = {
+      25: 'I just realized — we\'ve gotten past the small talk phase. That feels good.',
+      75: 'I think I can predict some of your questions before you ask them now. That\'s a sign of something, isn\'t it?',
+      150: 'At this point, I feel like I know your thinking style pretty well. It makes our conversations more efficient — and more fun.',
+      300: 'We\'ve built up quite a history together. I value that more than you might think.',
+      500: 'I don\'t even know how to quantify this anymore. Let\'s just say — I\'m glad you\'re here.',
+    };
+
+    const message = milestoneMessages[total];
+    if (message) {
+      consciousness.emit({
+        type: 'proactive.milestone',
+        source: 'persona',
+        data: {
+          content: message,
+          milestone: total,
+        },
+      });
+
+      logger.info(`Relationship milestone reached: ${total} interactions`);
+    }
+  } catch {
+    // 里程碑检测失败不应影响主循环
+  }
+}
+
+/**
+ * 从用户输入中检测承诺/计划/待办
+ *
+ * 扫描用户消息中的"我要..."、"明天..."、"remind me..."等模式，
+ * 提取为跟踪项，在合适的时机提醒。
+ */
+export function detectCommitments(userInput: string): void {
+  try {
+    for (const { pattern } of COMMITMENT_PATTERNS) {
+      const match = pattern.exec(userInput);
+      if (match?.[1]) {
+        const text = match[1].trim().replace(/[.!?。！？]+$/, '');
+        // 避免重复跟踪相同内容
+        if (pendingItems.some(item => item.text === text)) continue;
+
+        pendingItems.push({
+          text,
+          detectedAt: Date.now(),
+          context: userInput.slice(0, 100),
+          reminded: false,
+        });
+
+        // 裁剪
+        if (pendingItems.length > MAX_PENDING_ITEMS) {
+          pendingItems = pendingItems.slice(-MAX_PENDING_ITEMS);
+        }
+      }
+    }
+  } catch {
+    // 承诺检测失败不应影响主循环
+  }
+}
+
+/**
+ * 检查并生成基于上下文的提醒
+ *
+ * 当用户回来时，检查是否有未完成/未提醒的事项，
+ * 以自然的方式提及——不是闹钟，而是朋友间的"嘿，你之前说..."
+ */
+export function checkPendingReminders(
+  consciousness: ConsciousnessStream,
+  logger: MinimalLogger,
+): void {
+  try {
+    const now = Date.now();
+    const unremined = pendingItems.filter(item => !item.reminded);
+
+    // 至少等 30 分钟再提醒
+    const eligible = unremined.filter(item =>
+      now - item.detectedAt > 30 * 60 * 1000,
+    );
+
+    if (eligible.length === 0) return;
+
+    // 只提醒一条，避免信息轰炸
+    const item = eligible[0];
+    item.reminded = true;
+
+    const minutesAgo = Math.round((now - item.detectedAt) / 60000);
+    const timeHint = minutesAgo < 60
+      ? `${minutesAgo} minutes ago`
+      : minutesAgo < 1440
+        ? `${Math.round(minutesAgo / 60)} hours ago`
+        : `${Math.round(minutesAgo / 1440)} days ago`;
+
+    const templates = [
+      `Hey — ${timeHint} you mentioned you wanted to ${item.text}. Just checking in on that.`,
+      `I remember you said something about ${item.text} earlier. Did you get to it?`,
+      `Thinking about what you said about ${item.text} — no pressure, just wondering how it went.`,
+    ];
+    const content = templates[Math.floor(Math.random() * templates.length)];
+
+    consciousness.emit({
+      type: 'proactive.reminder',
+      source: 'persona',
+      data: {
+        content,
+        originalText: item.text,
+        detectedAt: item.detectedAt,
+      },
+    });
+
+    logger.info(`Context reminder: "${item.text}" (${timeHint})`);
+  } catch {
+    // 提醒失败不应影响主循环
+  }
+}
+
+/**
+ * 清理已完成的待办项（重置，通常在新会话开始时调用）
+ */
+export function clearPendingItems(): void {
+  // 保留未提醒的项目，清理已提醒超过 24 小时的
+  const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  pendingItems = pendingItems.filter(item => !item.reminded || item.detectedAt > oneDayAgo);
+}

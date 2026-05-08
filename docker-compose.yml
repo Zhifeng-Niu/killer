@@ -1,0 +1,51 @@
+# Killer Agent Framework - Docker Compose
+#
+# 一键启动:
+#   DEEPSEEK_API_KEY=your-key docker compose up -d
+#
+# 或用 .env 文件:
+#   cp .env.example .env  →  编辑填入 API key  →  docker compose up -d
+
+services:
+  killer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: killer-agent
+    restart: unless-stopped
+    ports:
+      - "${KILLER_PORT:-3000}:3000"
+    environment:
+      # Provider 自动检测 — 只需设一个 API key
+      - KILLER_LLM_PROVIDER=${KILLER_LLM_PROVIDER:-}
+      - KILLER_API_KEY=${KILLER_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - GLM_API_KEY=${GLM_API_KEY:-}
+      - MINIMAX_API_KEY=${MINIMAX_API_KEY:-}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY:-}
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY:-}
+      - VOLCENGINE_API_KEY=${VOLCENGINE_API_KEY:-}
+      - BAICHUAN_API_KEY=${BAICHUAN_API_KEY:-}
+      - YI_API_KEY=${YI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      # 可选配置
+      - KILLER_MODEL=${KILLER_MODEL:-}
+      - KILLER_API_TOKEN=${KILLER_API_TOKEN:-}
+      - KILLER_LOG_LEVEL=${KILLER_LOG_LEVEL:-info}
+      - KILLER_DEBUG=${KILLER_DEBUG:-false}
+    volumes:
+      - killer-data:/app/.killer
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  killer-data:
+    driver: local

@@ -1,0 +1,56 @@
+{
+  "name": "@killer/app",
+  "version": "0.1.0",
+  "description": "Killer Agent Application — orchestrator, persona engine (mirror neurons, emotional state, predictive model), LLM providers, CLI, HTTP/WS/SSE API, and session persistence",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "killer": "./dist/main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc && node -e \"const f='dist/main.js',fs=require('fs'),c=fs.readFileSync(f,'utf8');fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c)\"",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "start": "tsc && node dist/main.js",
+    "start:dev": "npx tsx src/main.ts",
+    "quickstart": "node dist/main.js",
+    "init": "node dist/main.js --init"
+  },
+  "keywords": [
+    "agent",
+    "ai",
+    "api",
+    "cli",
+    "emotional-intelligence",
+    "llm",
+    "orchestrator",
+    "persona",
+    "session-persistence"
+  ],
+  "author": "Zhifeng Niu",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zhifeng-Niu/killer.git",
+    "directory": "packages/killer-app"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "dependencies": {
+    "@killer/core": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^1.0.0"
+  }
+}

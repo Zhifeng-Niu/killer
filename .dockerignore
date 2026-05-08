@@ -1,0 +1,14 @@
+# Docker ignore - exclude unnecessary files from build context
+node_modules
+.git
+.DS_Store
+*.md
+.env
+.env.*
+!.env.example
+.killer/
+dist/
+coverage/
+*.tsbuildinfo
+.vscode/
+.idea/
