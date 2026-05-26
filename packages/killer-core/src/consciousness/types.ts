@@ -23,7 +23,8 @@ export type EventSource =
   | 'sensory'
   | 'external'
   | 'persona'
-  | 'agent';
+  | 'agent'
+  | 'cerebellum';
 
 export type EventType =
   // Brainstem 事件
@@ -79,7 +80,20 @@ export type EventType =
   // Agent 事件
   | 'error.pipeline'
   | 'health.degraded'
-  | 'fact.learned';
+  | 'fact.learned'
+  // Cerebellum 事件 (实验编排)
+  | 'experiment.started'
+  | 'experiment.checkpoint'
+  | 'experiment.verified'
+  | 'experiment.kept'
+  | 'experiment.discarded'
+  | 'experiment.surprise'
+  | 'experiment.waypoint_complete'
+  | 'experiment.stuck'
+  | 'experiment.completed'
+  | 'mission.created'
+  | 'mission.paused'
+  | 'mission.resumed';
 
 /**
  * 轨迹记录

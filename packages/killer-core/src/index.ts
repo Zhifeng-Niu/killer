@@ -48,6 +48,9 @@ export type {
   CellStatus,
   NetworkTopology,
 } from './synapse/protocol.js';
+
+// Cerebellum
+export * from './cerebellum/index.js';
 export type {
   Cell as SynapseCell,
   CellConfig as SynapseCellConfig,

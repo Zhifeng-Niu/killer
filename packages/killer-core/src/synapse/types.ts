@@ -13,6 +13,8 @@ export enum CellType {
   Artisan = 'artisan',       // 代码/工具专家
   Negotiator = 'negotiator', // 多 Agent 协商
   Evolver = 'evolver',       // 元 Agent，负责演化
+  Explorer = 'explorer',     // 跨域探索者，搜索灵感和模式
+  Critic = 'critic',         // 评估者，审查实验结果的信号与噪声
 }
 
 /**
