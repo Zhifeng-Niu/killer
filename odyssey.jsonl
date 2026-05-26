@@ -1,1 +1,2 @@
 {"type": "config", "name": "20260526-201805", "metricName": "metric", "metricUnit": "", "bestDirection": "lower", "orientation": "engineer", "createdAt": "2026-05-26T12:18:05.252566+00:00"}
+{"run": 1, "commit": "afcc3a4", "status": "keep", "description": "CriticCell + ExplorerCell runtime: system prompts, capability mappings, spawn registration, 5 new tests. 1887 tests pass.", "timestamp": 1779798252767, "metric": 0.0}

@@ -1,11 +1,12 @@
 ---
 orientation: [engineer]
-status: active
+status: completed
 started_at: 2026-05-26T12:18:05Z
 expedition_branch: odyssey/20260526-201805
 baseline_metric: null
 best_metric: null
-total_waypoints: 0
+total_waypoints: 1
+consecutive_discards: 0
 consecutive_discards: 0
 ---
 
@@ -45,17 +46,24 @@ npm test 2>&1
 ## What's Been Tried
 
 ### Wins
-{Auto-updated by engine.}
+- Waypoint 1: CriticCell + ExplorerCell runtime behavior — System prompts with structured output formats (VERDICT/CONFIDENCE for Critic, NOVELTY_SCORE/HYPOTHESIS for Explorer), capability mappings, CellManager spawn registration, 5 new tests. 1887 tests pass, zero type errors.
 
 ### Dead Ends
-{Auto-updated by engine.}
+{None.}
 
 ### Surprises
-{Unexpected findings. Auto-updated in creative mode.}
+- Critic and Explorer were already in the CellType enum but completely unregistered at runtime — a textbook case of "defined but not wired"
 
 ## Current Best
-- metric: (baseline not yet measured)
-- Baseline: (pending)
+- metric: 0 type errors
+- Baseline: 0 type errors
 
 ## Ideas Backlog
-{Auto-populated. Can be manually edited.}
+
+### Remaining
+- [ ] Publish to npm for npx support
+- [ ] GitHub Actions CI/CD
+
+### Completed
+- [x] CriticCell runtime: system prompt, capabilities, spawn registration
+- [x] ExplorerCell runtime: system prompt, capabilities, spawn registration
