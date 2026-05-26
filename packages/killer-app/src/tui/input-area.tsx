@@ -2,12 +2,13 @@
  * Input Area — 用户输入区域
  *
  * 底部输入框，支持输入历史（↑↓）、命令补全和提交。
+ * 处理中状态显示脉冲指示。
  */
 
 import React, { useState, useCallback, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
-import { colors } from './theme.js';
+import { colors, box, statusDot, statusColor } from './theme.js';
 
 const MAX_HISTORY = 200;
 
@@ -52,7 +53,6 @@ export function InputArea({ onSubmit, isProcessing, placeholder }: InputAreaProp
         setValue(matches[0] + ' ');
         historyIdxRef.current = -1;
       } else if (matches.length > 1) {
-        // 补全到公共前缀
         const common = matches.reduce((a, b) => {
           let i = 0;
           while (i < a.length && i < b.length && a[i] === b[i]) i++;
@@ -85,24 +85,27 @@ export function InputArea({ onSubmit, isProcessing, placeholder }: InputAreaProp
     }
   });
 
+  const dot = isProcessing ? statusDot.thinking : statusDot.idle;
+  const dotColor = isProcessing ? statusColor.thinking : statusColor.idle;
+
   return (
     <Box flexDirection="column">
-      <Box borderStyle="single" borderColor={colors.dimmed} paddingX={1}>
-        <Text color={isProcessing ? colors.dimmed : colors.primary}>{isProcessing ? '⏳' : '💬'} </Text>
+      <Box borderStyle="round" borderColor={isProcessing ? colors.dimmed : colors.faint} paddingX={1}>
+        <Text color={dotColor}>{dot} </Text>
         {isProcessing ? (
-          <Text color={colors.dimmed}>{placeholder || '等待回复中...'}</Text>
+          <Text color={colors.dimmed}>{placeholder || 'waiting...'}</Text>
         ) : (
           <TextInput
             value={value}
             onChange={setValue}
             onSubmit={handleSubmit}
-            placeholder="输入消息或 /help 查看命令"
+            placeholder="type a message or /help"
             showCursor={true}
           />
         )}
       </Box>
-      <Box marginTop={0}>
-        <Text color={colors.dimmed}> /help 命令 │ ↑↓ 历史 │ Esc 取消 │ Ctrl+C 退出 </Text>
+      <Box>
+        <Text color={colors.dimmed}> /help · ↑↓ history · esc cancel · ctrl+c exit </Text>
       </Box>
     </Box>
   );

@@ -1,12 +1,13 @@
 /**
  * Sidebar — Agent 状态面板
  *
- * 显示情感、Cell、Memory、Goals 等实时状态信息。
+ * 极简设计：Unicode 分隔线，关键指标高亮。
+ * 窄终端自动隐藏（< 80 列）。
  */
 
 import React from 'react';
 import { Box, Text } from 'ink';
-import { colors, icons } from './theme.js';
+import { colors, box, statusDot, statusColor } from './theme.js';
 
 export interface SidebarData {
   emotion: string;
@@ -27,62 +28,66 @@ interface SidebarProps {
   data: SidebarData;
 }
 
-function SectionTitle({ children }: { children: React.ReactNode }) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Text color={colors.dimmed}>{box.hDot.repeat(22)}</Text>
+      <Text color={colors.muted} bold> {title}</Text>
+      <Box flexDirection="column" marginTop={0}>
+        {children}
+      </Box>
+    </Box>
+  );
+}
+
+function Stat({ label, value, color }: { label: string; value: string | number; color?: string }) {
   return (
     <Box>
-      <Text color={colors.dimmed}>── </Text>
-      <Text color={colors.primary} bold>{children}</Text>
-      <Text color={colors.dimmed}> ──</Text>
+      <Text color={colors.dimmed}>  {label}</Text>
+      <Text color={color || colors.text}> {value}</Text>
     </Box>
   );
 }
 
 export function Sidebar({ data }: SidebarProps) {
-  const statusColor = data.status === 'idle' ? colors.accent
-    : data.status === 'thinking' ? colors.warning
-    : data.status === 'error' ? colors.error
-    : colors.primary;
-
-  const statusLabel = data.status === 'idle' ? '空闲'
-    : data.status === 'thinking' ? '思考中'
-    : data.status === 'streaming' ? '输出中'
-    : '错误';
+  const dot = statusDot[data.status];
+  const dotColor = statusColor[data.status];
+  const statusLabel = data.status === 'idle' ? 'idle'
+    : data.status === 'thinking' ? 'thinking'
+    : data.status === 'streaming' ? 'streaming'
+    : 'error';
 
   return (
-    <Box flexDirection="column" width={24} borderStyle="single" borderLeft={false} borderTop={false} borderBottom={false} borderColor={colors.dimmed} paddingX={1}>
+    <Box flexDirection="column" width={22} borderStyle="single" borderLeft={true} borderRight={false} borderTop={false} borderBottom={false} borderColor={colors.dimmed} paddingX={1}>
+      {/* Status */}
       <Box marginBottom={1}>
-        <Text color={statusColor}>● </Text>
-        <Text color={colors.text} bold>{statusLabel}</Text>
+        <Text color={dotColor}>{dot} </Text>
+        <Text color={colors.text}>{statusLabel}</Text>
       </Box>
 
-      <SectionTitle>Agent</SectionTitle>
-      <Box flexDirection="column" marginBottom={1}>
-        <Text color={colors.muted}>  {icons.emotion} {data.emotionEmoji} {data.emotion}</Text>
-        <Text color={colors.muted}>  ⏱ {data.uptime}</Text>
-        <Text color={colors.muted}>  🔧 {data.model.length > 18 ? data.model.slice(0, 16) + '…' : data.model}</Text>
-      </Box>
+      <Section title="Agent">
+        <Stat label="up" value={data.uptime} />
+        <Stat label="model" value={data.model.length > 14 ? data.model.slice(0, 12) + '…' : data.model} color={colors.muted} />
+      </Section>
 
-      <SectionTitle>Cells</SectionTitle>
-      <Box flexDirection="column" marginBottom={1}>
-        <Text color={colors.muted}>  {icons.cell} {data.cellCount} 个活跃</Text>
-        {data.cellTypes.slice(0, 4).map((ct, i) => (
-          <Text key={i} color={colors.dimmed}>    · {ct}</Text>
+      <Section title="Cells">
+        <Stat label="active" value={data.cellCount} color={data.cellCount > 0 ? colors.accent : colors.dimmed} />
+        {data.cellTypes.slice(0, 3).map((ct, i) => (
+          <Text key={i} color={colors.dimmed}>    {box.v} {ct}</Text>
         ))}
-      </Box>
+      </Section>
 
-      <SectionTitle>Memory</SectionTitle>
-      <Box flexDirection="column" marginBottom={1}>
-        <Text color={colors.muted}>  {icons.memory} {data.episodeCount} episodes</Text>
+      <Section title="Memory">
+        <Stat label="episodes" value={data.episodeCount} />
         <Text color={colors.dimmed}>    {data.shortTermMemory} short · {data.longTermMemory} long</Text>
-      </Box>
+      </Section>
 
-      <SectionTitle>Goals</SectionTitle>
-      <Box flexDirection="column">
-        <Text color={colors.muted}>  {icons.goal} {data.goalCount} 个目标</Text>
+      <Section title="Goals">
+        <Stat label="active" value={data.goalCount} color={data.goalCount > 0 ? colors.accent : colors.dimmed} />
         {data.goals.slice(0, 3).map((g, i) => (
-          <Text key={i} color={colors.dimmed}>    {i + 1}. {g.slice(0, 18)}</Text>
+          <Text key={i} color={colors.dimmed}>  {i + 1}. {g.slice(0, 16)}</Text>
         ))}
-      </Box>
+      </Section>
     </Box>
   );
 }

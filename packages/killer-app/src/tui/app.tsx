@@ -10,7 +10,7 @@ import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { ChatPanel, type ChatMessage } from './chat-panel.js';
 import { Sidebar, type SidebarData } from './sidebar.js';
 import { InputArea } from './input-area.js';
-import { colors, icons } from './theme.js';
+import { colors, box, statusDot, statusColor } from './theme.js';
 import type { KillerAgent } from '../orchestrator/index.js';
 import { generateBootGreeting } from '../cli/greeting.js';
 
@@ -202,29 +202,21 @@ export function KillerTUI({ agent }: KillerTUIProps) {
 
   return (
     <Box flexDirection="column" height="100%">
-      {/* Header */}
-      <Box borderStyle="single" borderBottom={true} borderLeft={false} borderRight={false} borderColor={colors.primary} paddingX={1}>
-        <Text color={colors.primary} bold>{icons.agent} Killer Agent</Text>
+      {/* Header — 极简状态栏 */}
+      <Box borderStyle="single" borderBottom={true} borderLeft={false} borderRight={false} borderColor={colors.dimmed} paddingX={1}>
+        <Text color={colors.primary} bold>{statusDot[agentStatus]} Killer</Text>
         {sidebarData.model.startsWith('mock') && (
           <>
-            <Text color={colors.dimmed}> │ </Text>
-            <Text color={colors.warning}>体验模式</Text>
+            <Text color={colors.dimmed}> {box.v} </Text>
+            <Text color={colors.warning}>demo</Text>
           </>
         )}
-        <Text color={colors.dimmed}> │ </Text>
+        <Text color={colors.dimmed}> {box.v} </Text>
         <Text color={colors.muted}>{sidebarData.model.length > 20 ? sidebarData.model.slice(0, 18) + '…' : sidebarData.model}</Text>
-        <Text color={colors.dimmed}> │ </Text>
+        <Text color={colors.dimmed}> {box.v} </Text>
         <Text color={colors.muted}>{sidebarData.uptime}</Text>
-        <Text color={colors.dimmed}> │ </Text>
-        <Text color={colors.muted}>{messages.length} 消息</Text>
-        {agentStatus !== 'idle' && (
-          <>
-            <Text color={colors.dimmed}> │ </Text>
-            <Text color={agentStatus === 'error' ? colors.error : colors.warning}>
-              {agentStatus === 'thinking' ? '● 思考中' : agentStatus === 'streaming' ? '● 输出中' : '● 错误'}
-            </Text>
-          </>
-        )}
+        <Text color={colors.dimmed}> {box.v} </Text>
+        <Text color={colors.muted}>{messages.length}msg</Text>
       </Box>
 
       {/* Main body: Chat + Sidebar */}
@@ -341,7 +333,7 @@ async function handleCommand(input: string, agent: KillerAgent): Promise<string>
     case 'cells': {
       const cells = agent.synapse.getAllCells();
       if (!cells.length) return '没有活跃的 Cells';
-      return cells.map(c => `${icons.cell} ${c.id.id} (${c.config.type})`).join('\n');
+      return cells.map(c => `${box.v} ${c.id.id} (${c.config.type})`).join('\n');
     }
     case 'goals': {
       const goals = agent.getGoals();
