@@ -1,18 +1,18 @@
 ---
-orientation: [production]
+orientation: [creative]
 status: active
-started_at: 2026-05-26T17:13:06Z
-expedition_branch: odyssey/20260527-011306
+started_at: 2026-05-26T18:09:33Z
+expedition_branch: odyssey/20260527-020933
 baseline_metric: null
-best_metric: "1911 tests pass, 0 type errors, killer command works globally"
-total_waypoints: 1
+best_metric: null
+total_waypoints: 0
 consecutive_discards: 0
 ---
 
-# Mission: CLI单命令启动 — 让Killer Agent像Hermes一样，一条命令就能在终
+# Mission: TUI视觉拉满 — 优化消息显示、动画效果、极简emoji图标体系
 
 ## Goal
-CLI单命令启动 — 让Killer Agent像Hermes一样，一条命令就能在终端里跑起来（npx/全局安装/bin link）
+TUI视觉拉满 — 优化消息显示、动画效果、极简emoji图标体系
 
 ## Context
 Project type: typescript. Auto-detected guard: npm test 2>&1.
@@ -45,10 +45,7 @@ npm test 2>&1
 ## What's Been Tried
 
 ### Wins
-1. **esbuild bundle** — 682KB single-file CLI, inlines @killer/core, 14ms build time. External: react, ink, better-sqlite3.
-2. **npm link** — `killer` and `killer-agent` commands work globally from any directory.
-3. **Package.json refactor** — @killer/core moved to devDependency (only needed for types/tests), better-sqlite3 as optionalDependency.
-4. **Type fix** — DreamingResult/DreamResult counterfactualBranches mismatch resolved.
+{Auto-updated by engine.}
 
 ### Dead Ends
 {Auto-updated by engine.}
