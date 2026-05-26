@@ -1,18 +1,18 @@
 ---
 orientation: [creative]
 status: active
-started_at: 2026-05-26T18:09:33Z
-expedition_branch: odyssey/20260527-020933
+started_at: 2026-05-26T18:43:04Z
+expedition_branch: odyssey/20260527-024304
 baseline_metric: null
 best_metric: null
 total_waypoints: 0
 consecutive_discards: 0
 ---
 
-# Mission: TUI视觉拉满 — 优化消息显示、动画效果、极简emoji图标体系
+# Mission: TUI Live Feel: Parse tool calls/results as distinct visual elements (not mixed t
 
 ## Goal
-TUI视觉拉满 — 优化消息显示、动画效果、极简emoji图标体系
+TUI Live Feel: Parse tool calls/results as distinct visual elements (not mixed text blobs), add interactive permission confirmation UI for blocked tools, make agent status transitions feel alive with real-time state indicators
 
 ## Context
 Project type: typescript. Auto-detected guard: npm test 2>&1.
