@@ -243,8 +243,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           <Text color={colors.user} bold>{bubble.userEnd} You</Text>
           <Text color={colors.dimmed}> {formatTime(message.timestamp)}</Text>
         </Box>
-        <Box marginLeft={3}>
-          <Text color={colors.text}>{renderContent(message.content)}</Text>
+        <Box marginLeft={3} flexDirection="column">
+          {renderContent(message.content)}
         </Box>
       </Box>
     );
