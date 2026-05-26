@@ -7,6 +7,7 @@
 import { KillerAgent, type AgentConfig } from './orchestrator/index.js';
 import { createLLMProvider, getSupportedProviders } from './llm/factory.js';
 import { startReadlineLoop } from './cli/index.js';
+import { startTUI } from './tui/index.js';
 import { APIServer } from './api/index.js';
 import { registerRoutes } from './api/routes.js';
 import { Logger } from './log/index.js';
@@ -81,6 +82,8 @@ Options:
   --quickstart, -q  Same as --demo — instant start, zero config
   --debug, -d     Enable debug logging
   --api, -a       Start HTTP API server alongside CLI
+  --tui           Start with rich terminal UI (default)
+  --cli           Start with classic readline CLI
   --port <port>   API server port (default: 3000)
   --daemon, -D    Run as background daemon (with API server)
   --init          Run interactive setup wizard
@@ -146,7 +149,7 @@ Examples:
 /**
  * 解析命令行参数
  */
-function parseArgs(): { debug: boolean; help: boolean; api: boolean; port: number; init: boolean; daemon: boolean; daemonStop: boolean; daemonStatus: boolean; fresh: boolean } {
+function parseArgs(): { debug: boolean; help: boolean; api: boolean; port: number; init: boolean; daemon: boolean; daemonStop: boolean; daemonStatus: boolean; fresh: boolean; tui: boolean; cli: boolean } {
   const args = process.argv.slice(2);
   const debug = args.includes('--debug') || args.includes('-d');
   const help = args.includes('--help') || args.includes('-h');
@@ -156,6 +159,8 @@ function parseArgs(): { debug: boolean; help: boolean; api: boolean; port: numbe
   const daemonStop = args.includes('--stop');
   const daemonStatus = args.includes('--status') && daemon;
   const fresh = args.includes('--fresh') || args.includes('-f');
+  const tui = args.includes('--tui');
+  const cli = args.includes('--cli');
 
   // Parse --port
   let port = 3000;
@@ -164,7 +169,7 @@ function parseArgs(): { debug: boolean; help: boolean; api: boolean; port: numbe
     port = parseInt(args[portIdx + 1], 10) || 3000;
   }
 
-  return { debug, help, api, port, init, daemon, daemonStop, daemonStatus, fresh };
+  return { debug, help, api, port, init, daemon, daemonStop, daemonStatus, fresh, tui, cli };
 }
 
 /**
@@ -261,7 +266,7 @@ async function main(): Promise<void> {
     // 静默加载，不打印到用户（除非 debug 模式）
   }
 
-  const { debug, help, api, port, init, daemon, daemonStop, daemonStatus, fresh } = parseArgs();
+  const { debug, help, api, port, init, daemon, daemonStop, daemonStatus, fresh, tui, cli } = parseArgs();
 
   if (help) {
     showHelp();
@@ -422,12 +427,16 @@ async function main(): Promise<void> {
     }
   }
 
-  // 启动交互式 readline 循环
-  // 注意：readline 会处理自己的 SIGINT，所以只在非 readline 模式下注册 shutdown
-  const rl = startReadlineLoop(agent);
+  // 启动交互式界面
+  const useTUI = tui || !cli;
 
-  // 当 readline 关闭时清理
-  rl.on('close', shutdown);
+  if (useTUI) {
+    const instance = startTUI(agent);
+    instance.waitUntilExit().then(() => shutdown());
+  } else {
+    const rl = startReadlineLoop(agent);
+    rl.on('close', shutdown);
+  }
 
   // 处理 SIGTERM（Docker/K8s/PM2 发送的终止信号）
   process.on('SIGTERM', shutdown);

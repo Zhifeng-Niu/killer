@@ -14,7 +14,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc && node -e \"const f='dist/main.js',fs=require('fs'),c=fs.readFileSync(f,'utf8');fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c)\"",
     "dev": "tsc --watch",
@@ -48,9 +50,14 @@
     "pnpm": ">=8.0.0"
   },
   "dependencies": {
-    "@killer/core": "workspace:*"
+    "@killer/core": "workspace:*",
+    "ink": "^7.0.4",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.2.6"
   },
   "devDependencies": {
+    "@types/react": "^19.2.15",
     "vitest": "^1.0.0"
   }
 }

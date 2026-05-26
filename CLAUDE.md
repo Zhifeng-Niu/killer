@@ -46,7 +46,8 @@ pnpm test
 
 # Run CLI
 pnpm run demo           # Demo mode (no API key)
-pnpm start              # Start with configured provider
+pnpm start              # Start with TUI (default) + configured provider
+pnpm start -- --cli     # Classic readline mode
 node killer.mjs --init  # Interactive setup wizard
 node packages/killer-app/dist/main.js --api --port 3000
 
@@ -109,6 +110,12 @@ cd packages/killer-app && npx tsc --watch
 
 26. **Consumer-grade first-run**: When no API key or config exists, `validateConfig()` auto-triggers the init wizard instead of silently falling back to mock mode. After wizard saves config, the system re-loads and connects to the real provider seamlessly.
 
+27. **TUI (ink 7 + React 19)**: Default UI mode uses ink for declarative terminal rendering. Layout: Header (model/uptime/messages/demo badge) → Chat + Sidebar → InputArea. Sidebar auto-hides below 80 columns. Files: `src/tui/{index,app,chat-panel,sidebar,input-area,theme}.tsx`. Dependencies: ink 7, react 19, ink-text-input 6, ink-spinner 5.
+
+28. **TUI keyboard shortcuts**: ↑↓ input history (200 items, draft preserved), Tab command completion (27 commands), Esc cancel streaming, Ctrl+C graceful shutdown (saves session). All handled via ink's `useInput` hook.
+
+29. **TUI viewport awareness**: ChatPanel uses `useStdout()` to get terminal dimensions, estimates message height, trims old messages to keep input area visible. Shows "↑ 还有 N 条更早的消息" truncation indicator.
+
 ## Code Conventions
 
 - TypeScript with ESM (`"type": "module"`), strict mode
@@ -134,7 +141,9 @@ cd packages/killer-app && npx tsc --watch
 
 ## CLI Commands
 
-`/status` `/cells` `/spawn` `/plan` `/goals` `/plans` `/persona` `/skills` `/dream` `/think` `/memory` `/metrics` `/delegate` `/permissions` `/approve` `/deny` `/confirm` `/broadcast` `/report` `/plugins` `/plugin-unload` `/init` `/diagnostics` `/evolve` `/save` `/load` `/sessions` `/narrative` `/predictions` `/emotions` `/health` `/help` `/key` `/stop` `/exit`
+`/status` `/cells` `/spawn` `/plan` `/goals` `/plans` `/persona` `/skills` `/dream` `/think` `/memory` `/metrics` `/delegate` `/permissions` `/approve` `/deny` `/confirm` `/broadcast` `/report` `/plugins` `/plugin-unload` `/init` `/diagnostics` `/evolve` `/save` `/load` `/sessions` `/narrative` `/predictions` `/emotions` `/health` `/help` `/key` `/find` `/retry` `/clear` `/mission` `/stop` `/exit`
+
+TUI keyboard: `↑↓` history (200 items) │ `Tab` command completion │ `Esc` cancel streaming │ `Ctrl+C` graceful shutdown
 
 ## API Endpoints
 
@@ -158,3 +167,15 @@ Dream: `POST /dream`
 Think: `POST /think`
 Evolve: `POST /evolve`
 Delegate: `POST /delegate`
+
+## TUI Mode
+
+Default interactive mode using ink (React for CLI). Started automatically unless `--cli` flag is provided.
+
+**Layout**: Header bar → Chat panel (left, markdown rendering, streaming) + Sidebar (right, agent status/cells/memory/goals) → Input area (bottom, command support).
+
+**Components** (`src/tui/`): `app.tsx` (main layout + command handler), `chat-panel.tsx` (messages + markdown), `sidebar.tsx` (real-time agent state), `input-area.tsx` (text input), `theme.ts` (Catppuccin colors + icons).
+
+**Key behaviors**: Boot greeting from `generateBootGreeting()`, consciousness stream proactive suggestions, Esc to cancel streaming, 23 commands (/help /status /cells /goals /memory /emotions /persona /narrative /predictions /dream /think /evolve /spawn /delegate /diagnostics /health /metrics /sessions /save /load /mission /exit).
+
+**Dependencies**: `ink` 7.x, `react` 19.x, `ink-text-input` 6.x, `ink-spinner` 5.x. JSX configured via `"jsx": "react-jsx"` in tsconfig.
