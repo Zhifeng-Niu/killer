@@ -518,6 +518,10 @@ Respond in this exact JSON format:
       const result = await this.runExperimentWaypoint(hypothesis);
       if (result) {
         this.log(`Experiment waypoint ${result.waypoint}: ${result.decision}`);
+        this.injectExperimentPerception(result);
+        if (result.terminated) {
+          this.log(`Mission terminated: ${result.terminationReason ?? 'completed'}`);
+        }
       }
       return;
     }
@@ -624,6 +628,31 @@ Respond in this exact JSON format:
     }
 
     return `Extend success: reinforce approach with adaptability=${reflection.adaptability.toFixed(2)}`;
+  }
+
+  /**
+   * 将实验结果注入感知队列
+   *
+   * 形成 Cerebellum → BrainstemLoop 的反馈闭环：
+   * 实验决策结果作为内部感知传入下一轮循环，
+   * 使后续的推理和行动能参考实验发现。
+   */
+  private injectExperimentPerception(result: ExperimentWaypointResult): void {
+    const perception: Perception = {
+      id: generateId('exp'),
+      timestamp: Date.now(),
+      source: 'internal',
+      priority: result.decision === 'keep' ? 'normal' : 'low',
+      data: {
+        type: 'experiment_result',
+        waypoint: result.waypoint,
+        decision: result.decision,
+        hypothesis: result.hypothesis,
+        terminated: result.terminated,
+        terminationReason: result.terminationReason,
+      },
+    };
+    this.perceptionQueue.push(perception);
   }
 
   /**
