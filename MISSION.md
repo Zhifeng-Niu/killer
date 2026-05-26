@@ -1,18 +1,18 @@
 ---
-orientation: [production]
+orientation: [engineer]
 status: completed
-started_at: 2026-05-26T11:27:01Z
-expedition_branch: odyssey/20260526-192701
+started_at: 2026-05-26T11:46:50Z
+expedition_branch: odyssey/remaining-features-20260526
 baseline_metric: null
 best_metric: null
-total_waypoints: 2
+total_waypoints: 3
 consecutive_discards: 0
 ---
 
-# Mission: 将整个agent框架推进完成
+# Mission: Phase 3-4 + npx one-command start
 
 ## Goal
-将整个agent框架推进完成
+Implement remaining high-priority features: DreamEngine counterfactual dreaming, Cerebellum experiment integration into BrainstemLoop, and npx global CLI experience
 
 ## Context
 Project type: typescript. Auto-detected guard: npm test 2>&1.
@@ -45,31 +45,28 @@ npm test 2>&1
 ## What's Been Tried
 
 ### Wins
-- Waypoint 1: 生产级日志清理 — 定义 KernelLogger 接口 + SILENT_LOGGER 默认实现，注入 LoopConfig，消除全部 3 处 console 语句；ConsciousnessStream handler error 改为静默隔离。1876 测试零回归。
-- Waypoint 2: 全量工作成果提交 — 将先前 Odyssey 探索成果整理为 3 个逻辑提交：Cerebellum 脑区（2196 行新增）、双协议+消费级体验（381 行）、Mission API+文档（605 行）。工作树干净，1876 测试全通过。
+- Waypoint 1: DreamEngine counterfactual dreaming (Phase 3) — 新增 CounterfactualBranch 类型，dreamCounterfactual() 探索替代路径，projectPath() 沿语义图谱投影。6 个新测试，706+1176=1882 测试零回归。
+- Waypoint 2: npx 一键启动已就绪 — killer.mjs 零配置入口已有完整实现（Node 版本检测、pnpm 自动安装、依赖安装、构建、CLI 启动）。bin 字段已配置。发布到 npm 后即可 npx 使用。
+- Waypoint 3: BrainstemLoop-Cerebellum 反馈闭环 — injectExperimentPerception() 将实验结果注入下一轮感知队列，形成 Cerebellum → BrainstemLoop 反馈环。任务终止时记录日志。
 
 ### Dead Ends
 {None yet.}
 
 ### Surprises
-- killer-app 已有 67 个测试文件、1176 个测试——审计代理误报"零测试覆盖"是因为测试文件在 __tests__/ 目录而非 co-located
-- killer-core 所有脑区（brainstem/hippocampus/cortex/synapse/consciousness/prefrontal/cerebellum）均已完整实现，无缺失模块
-- 审计代理报告的"缺失 evaluator.ts"和"缺失 persist-helpers.ts"均为误报——文件实际存在
+- 反事实梦境不需要 LLM 调用——纯语义图谱操作即可模拟"如果当时做了不同选择"
+- npx 体验实际上已在 killer.mjs 中完整实现，不需要额外代码
 
 ## Current Best
-- metric: 0 type errors (target: lower → 0 achieved)
+- metric: 0 type errors
 - Baseline: 0 type errors
 
 ## Ideas Backlog
 
 ### High Priority
-- [ ] Phase 3: 扩展 DreamEngine 支持反事实梦境
-- [ ] Phase 4: 完善 CriticCell 和 ExplorerCell 的运行时行为
-- [ ] BrainstemLoop.runExperimentWaypoint 集成
-- [ ] 更多双协议服务商预设 (Qwen/Moonshot 如未来提供 Anthropic 端点)
-- [ ] npx 一键启动体验 (无需 clone/build)
+- [ ] CriticCell / ExplorerCell runtime behavior (Phase 4)
+- [ ] 发布到 npm 以支持 npx @killer/app
 
 ### Completed
-- [x] KernelLogger 接口 + 消除全部 console 语句
-- [x] 全量构建验证 (0 type errors, 1876 tests pass)
-- [x] 生产审计确认所有模块完整实现
+- [x] DreamEngine counterfactual dreaming (Phase 3)
+- [x] BrainstemLoop-Cerebellum experiment feedback loop
+- [x] npx one-command start experience (killer.mjs already implements)
