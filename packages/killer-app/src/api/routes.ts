@@ -7,7 +7,17 @@
 import type { APIServer, RouteHandler, WSConnection } from './types.js';
 import type { KillerAgent } from '../orchestrator/agent.js';
 import { MetricsCollector } from '../metrics/index.js';
-import { ValidationError } from '@killer/core';
+import { ValidationError, Cerebellum } from '@killer/core';
+
+/** Lazy-initialized cerebellum instance shared across routes */
+let sharedCerebellum: Cerebellum | null = null;
+
+function getCerebellum(): Cerebellum {
+  if (!sharedCerebellum) {
+    sharedCerebellum = new Cerebellum();
+  }
+  return sharedCerebellum;
+}
 
 const ERROR = {
   MESSAGE_REQUIRED: 'message is required',
@@ -364,6 +374,87 @@ export function registerRoutes(server: APIServer, agent: KillerAgent): void {
     return { status: 200, body: { confirmed: tool } };
   });
 
+  // === Cerebellum: Mission Management ===
+
+  server.route('POST', '/mission', (req) => {
+    const body = req.body as {
+      goal?: string;
+      orientation?: 'engineer' | 'creative' | 'production';
+      metrics?: unknown[];
+      guard?: string;
+      maxWaypoints?: number;
+    };
+
+    if (!body.goal || typeof body.goal !== 'string') {
+      return validationError('goal', 'goal is required');
+    }
+
+    const cerebellum = getCerebellum();
+
+    const mission = cerebellum.createMission({
+      goal: body.goal,
+      orientation: body.orientation,
+      guard: body.guard,
+      maxWaypoints: body.maxWaypoints,
+    });
+
+    cerebellum.activateMission(mission);
+
+    return { status: 201, body: { mission } };
+  });
+
+  server.route('GET', '/mission', () => {
+    if (!sharedCerebellum) {
+      return { status: 200, body: { active: false } };
+    }
+    const mission = sharedCerebellum.getActiveMission();
+    if (!mission) {
+      return { status: 200, body: { active: false } };
+    }
+    const history = sharedCerebellum.getHistory();
+    const termination = sharedCerebellum.checkTermination();
+    return {
+      status: 200,
+      body: {
+        active: true,
+        mission,
+        history: {
+          totalWaypoints: history.totalWaypoints,
+          wins: history.wins.length,
+          deadEnds: history.deadEnds.length,
+          surprises: history.surprises.length,
+          consecutiveDiscards: history.consecutiveDiscards,
+          currentBest: history.currentBest,
+        },
+        terminated: termination.terminated,
+        terminationReason: termination.reason,
+      },
+    };
+  });
+
+  server.route('GET', '/mission/history', () => {
+    if (!sharedCerebellum) {
+      return { status: 200, body: { experiments: [] } };
+    }
+    const history = sharedCerebellum.getHistory();
+    return {
+      status: 200,
+      body: {
+        wins: history.wins,
+        deadEnds: history.deadEnds,
+        surprises: history.surprises,
+      },
+    };
+  });
+
+  server.route('DELETE', '/mission', () => {
+    if (!sharedCerebellum) {
+      return { status: 200, body: { deactivated: false } };
+    }
+    sharedCerebellum.activateMission(null as unknown as Parameters<typeof sharedCerebellum.activateMission>[0]);
+    return { status: 200, body: { deactivated: true } };
+  });
+
   // === SSE: consciousness event stream ===
 
   server.registerSSEEndpoint('/events');
@@ -480,6 +571,20 @@ function handleWSCommand(conn: WSConnection, data: { command: string; args?: Rec
     case 'evolve':
       agent.evolve().then(reply).catch((e) => replyError(e instanceof Error ? e.message : 'Evolve failed'));
       break;
+    case 'mission': {
+      if (!sharedCerebellum) {
+        reply({ active: false });
+        break;
+      }
+      const m = sharedCerebellum.getActiveMission();
+      if (!m) {
+        reply({ active: false });
+        break;
+      }
+      const h = sharedCerebellum.getHistory();
+      reply({ active: true, mission: m, waypoints: h.totalWaypoints, wins: h.wins.length, deadEnds: h.deadEnds.length });
+      break;
+    }
     default:
       replyError(`Unknown command: ${command}`);
   }

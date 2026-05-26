@@ -105,6 +105,10 @@ cd packages/killer-app && npx tsc --watch
 
 24. **Zero `as any` in production**: Production code has no `as any` type casts. Readline internal history access uses `ReadlineWithHistory` interface. Cell topology uses typed `CellId.id` access. Only `as never` remains for hippocampus JSON deserialization (3 instances).
 
+25. **Dual-protocol provider support**: MiniMax and GLM expose both OpenAI-compatible (`/v1/chat/completions`) and Anthropic-compatible (`/anthropic/v1/messages`) endpoints on the same API key. The factory routes to `AnthropicProvider` or `OpenAICompatibleProvider` based on `config.protocol` (explicit), URL pattern detection (`/anthropic/` → anthropic), or default OpenAI. Set via `KILLER_PROTOCOL` env var. Init wizard offers protocol selection for dual-protocol providers.
+
+26. **Consumer-grade first-run**: When no API key or config exists, `validateConfig()` auto-triggers the init wizard instead of silently falling back to mock mode. After wizard saves config, the system re-loads and connects to the real provider seamlessly.
+
 ## Code Conventions
 
 - TypeScript with ESM (`"type": "module"`), strict mode
@@ -119,9 +123,11 @@ cd packages/killer-app && npx tsc --watch
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `KILLER_LLM_PROVIDER` | LLM provider (anthropic/openai/openrouter/gemini/mock) | anthropic |
+| `KILLER_LLM_PROVIDER` | LLM provider (anthropic/openai/openrouter/gemini/mock + 9 Chinese providers) | anthropic |
 | `KILLER_API_KEY` | API key (or provider-specific env var) | required |
 | `KILLER_MODEL` | Model name override | provider default |
+| `KILLER_BASE_URL` | Custom API endpoint (for openai-compatible) | provider default |
+| `KILLER_PROTOCOL` | Communication protocol: openai \| anthropic (dual-protocol providers) | openai |
 | `KILLER_DEBUG` | Debug logging | false |
 | `KILLER_API_TOKEN` | Bearer token for API auth | none (no auth) |
 | `KILLER_LOG_LEVEL` | Log level (debug/info/warn/error/silent) | info |
