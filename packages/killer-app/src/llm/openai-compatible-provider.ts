@@ -14,10 +14,13 @@ import type { LLMProvider, LLMCompletion } from '@killer/core';
 import type { LLMProviderConfig } from './types.js';
 
 /**
- * 预配置的 OpenAI-compatible 服务商
+ * 预配置的服务商预设
  *
  * 用户只需设置 KILLER_LLM_PROVIDER=minimax 和 MINIMAX_API_KEY 即可。
  * baseUrl 和默认模型自动填充。
+ *
+ * 双协议支持: 部分服务商同时提供 OpenAI 和 Anthropic 兼容端点。
+ * 设置 anthropicBaseUrl 后，用户可通过 protocol: 'anthropic' 切换协议。
  */
 export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
   baseUrl: string;
@@ -25,6 +28,10 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
   models: string[];
   envKey: string;
   description: string;
+  /** Anthropic 兼容端点（双协议服务商） */
+  anthropicBaseUrl?: string;
+  /** Anthropic 协议下可用的模型（可能与 OpenAI 协议不同） */
+  anthropicModels?: string[];
 }> = {
   minimax: {
     baseUrl: 'https://api.minimaxi.com/v1/chat/completions',
@@ -32,6 +39,8 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     models: ['MiniMax-M2.7', 'MiniMax-M2.7-highspeed'],
     envKey: 'MINIMAX_API_KEY',
     description: 'MiniMax (海螺 AI)',
+    anthropicBaseUrl: 'https://api.minimaxi.com/anthropic/v1/messages',
+    anthropicModels: ['MiniMax-M2.7', 'MiniMax-M2.7-highspeed'],
   },
   glm: {
     baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4/chat/completions',
@@ -39,6 +48,8 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     models: ['glm-5.1', 'glm-5', 'glm-4.7', 'glm-4.5-air'],
     envKey: 'GLM_API_KEY',
     description: 'GLM / 智谱 AI',
+    anthropicBaseUrl: 'https://open.bigmodel.cn/api/anthropic/v1/messages',
+    anthropicModels: ['glm-5.1', 'glm-5', 'glm-4.7', 'glm-4.5-air'],
   },
   deepseek: {
     baseUrl: 'https://api.deepseek.com/v1/chat/completions',

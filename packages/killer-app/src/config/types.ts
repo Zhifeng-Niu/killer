@@ -34,6 +34,8 @@ export interface KillerConfig {
     baseUrl?: string;
     temperature?: number;
     maxTokens?: number;
+    /** 通信协议: 'openai' | 'anthropic' — 用于双协议服务商 */
+    protocol?: string;
   };
 
   // Agent 行为
@@ -237,6 +239,9 @@ function readEnvLLMConfig(): Partial<KillerConfig['llm']> {
 
   const baseUrl = process.env.KILLER_BASE_URL;
   if (baseUrl) config.baseUrl = baseUrl;
+
+  const protocol = process.env.KILLER_PROTOCOL;
+  if (protocol) config.protocol = protocol;
 
   return config;
 }

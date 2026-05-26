@@ -1,12 +1,13 @@
 /**
  * Interactive Init Wizard
  *
- * 极简首次配置：检测 → 选服务商 → 粘贴 Key → 自动保存 → 启动。
- * 目标：从「没有任何配置」到「开始聊天」只需 2 步交互。
+ * 消费级傻瓜式配置：粘贴 Key → 自动识别 → 选模型 → 启动。
+ * 目标：从「没有任何配置」到「开始聊天」只需 1-2 步交互。
  *
  * 流程：
- * 1. 自动扫描环境变量中已有的 Key → 找到就直接用（0 步交互）
- * 2. 没找到 → 列出服务商，用户选一个 → 粘贴 Key → 自动测试 → 保存（2 步交互）
+ * 0. 自动扫描环境变量中已有的 Key → 找到就直接用（0 步交互）
+ * 1. 没找到 → 粘贴 Key → 自动识别服务商（1 步交互）
+ * 2. 选模型 → 连接测试 → 保存（可选交互）
  */
 
 import * as fs from 'node:fs';
@@ -19,12 +20,14 @@ interface ProviderOption {
   name: string;
   description: string;
   envKey: string;
+  /** 是否支持双协议 (OpenAI + Anthropic) */
+  dualProtocol?: boolean;
 }
 
 export const PROVIDER_OPTIONS: ProviderOption[] = [
   { name: 'deepseek', description: 'DeepSeek (推荐 — 性价比最高)', envKey: 'DEEPSEEK_API_KEY' },
-  { name: 'glm', description: 'GLM / 智谱 AI', envKey: 'GLM_API_KEY' },
-  { name: 'minimax', description: 'MiniMax (海螺 AI)', envKey: 'MINIMAX_API_KEY' },
+  { name: 'glm', description: 'GLM / 智谱 AI', envKey: 'GLM_API_KEY', dualProtocol: true },
+  { name: 'minimax', description: 'MiniMax (海螺 AI)', envKey: 'MINIMAX_API_KEY', dualProtocol: true },
   { name: 'qwen', description: 'Qwen / 通义千问 (阿里云)', envKey: 'DASHSCOPE_API_KEY' },
   { name: 'moonshot', description: 'Moonshot / Kimi (月之暗面)', envKey: 'MOONSHOT_API_KEY' },
   { name: 'siliconflow', description: 'SiliconFlow (硅基流动)', envKey: 'SILICONFLOW_API_KEY' },
@@ -90,10 +93,59 @@ export function detectProviderFromKey(key: string): { provider: string; confiden
   // 低置信度 — sk- 前缀但不确定是哪家
   if (key.startsWith('sk-')) return { provider: 'deepseek', confidence: 'low' };
 
-  // 通义千问 — dashscope key 通常是 sk- 开头但无法与 deepseek 区分
-  // 火山方舟 — 通常也是 sk- 开头
-
   return null;
+}
+
+/**
+ * 让用户选择模型（可选步骤）
+ */
+async function selectModel(
+  providerName: string,
+  question: (prompt: string) => Promise<string>,
+): Promise<string | undefined> {
+  const preset = OPENAI_COMPATIBLE_PROVIDERS[providerName];
+  if (!preset || preset.models.length <= 1) return undefined;
+
+  console.log(`  可选模型:`);
+  preset.models.forEach((m, i) => {
+    const marker = m === preset.defaultModel ? ' (默认)' : '';
+    console.log(`    ${i + 1}. ${m}${marker}`);
+  });
+  console.log(`    回车 = 使用默认 (${preset.defaultModel})`);
+
+  const choice = await question('  选模型: ');
+  const trimmed = choice.trim();
+
+  if (!trimmed) return preset.defaultModel;
+
+  const idx = parseInt(trimmed, 10) - 1;
+  if (!isNaN(idx) && idx >= 0 && idx < preset.models.length) {
+    return preset.models[idx];
+  }
+
+  return undefined;
+}
+
+/**
+ * 询问双协议服务商的协议选择
+ */
+async function selectProtocol(
+  providerName: string,
+  question: (prompt: string) => Promise<string>,
+): Promise<'openai' | 'anthropic' | undefined> {
+  const provider = PROVIDER_OPTIONS.find(p => p.name === providerName);
+  if (!provider?.dualProtocol) return undefined;
+
+  console.log(`  ${provider.description} 支持双协议:`);
+  console.log(`    1. OpenAI 协议 (推荐 — 兼容性最广)`);
+  console.log(`    2. Anthropic 协议 (适合 Claude Code / Cursor 等工具用户)`);
+  console.log(`    回车 = OpenAI 协议`);
+
+  const choice = await question('  选协议: ');
+  const trimmed = choice.trim();
+
+  if (trimmed === '2') return 'anthropic';
+  return 'openai';
 }
 
 /**
@@ -111,7 +163,7 @@ async function handleKeyPaste(
   if (forceProvider) {
     providerName = forceProvider;
     provider = PROVIDER_OPTIONS.find(p => p.name === providerName)!;
-    confidence = 'high'; // 用户手动指定 = 高置信度
+    confidence = 'high';
   } else {
     const detected = detectProviderFromKey(key);
     if (detected) {
@@ -130,20 +182,26 @@ async function handleKeyPaste(
     }
   }
 
+  // 模型选择
+  const model = await selectModel(providerName, question);
+
+  // 双协议选择
+  const protocol = await selectProtocol(providerName, question);
+
   // 测试连接
   console.log('  验证中...');
-  const testResult = await testConnection(providerName, key);
+  const testResult = await testConnection(providerName, key, protocol);
 
   if (testResult.ok) {
-    await saveConfig(providerName, key, undefined);
+    await saveConfig(providerName, key, model, protocol);
     console.log(`  ✓ 连接成功！运行 killer 即可。`);
     return;
   }
 
-  // 高置信度识别失败 → 可能是网络问题，直接保存（信任 key 格式判断）
+  // 高置信度识别失败 → 可能是网络问题，直接保存
   if (confidence === 'high') {
     console.log(`  ⚠ 验证未通过（${testResult.error}），但 Key 格式匹配`);
-    await saveConfig(providerName, key, undefined);
+    await saveConfig(providerName, key, model, protocol);
     console.log(`  ✓ 已保存为 ${provider.description}。运行 killer 即可。`);
     return;
   }
@@ -152,7 +210,7 @@ async function handleKeyPaste(
   if (providerName !== 'deepseek') {
     const retryResult = await testConnection('deepseek', key);
     if (retryResult.ok) {
-      await saveConfig('deepseek', key, undefined);
+      await saveConfig('deepseek', key, model);
       console.log(`  ✓ 连接成功！运行 killer 即可。`);
       return;
     }
@@ -162,7 +220,7 @@ async function handleKeyPaste(
   console.log(`  ⚠ 验证失败: ${testResult.error}`);
   const proceed = await question('  仍然保存？(y/N): ');
   if (proceed.trim().toLowerCase() === 'y') {
-    await saveConfig(providerName, key, undefined);
+    await saveConfig(providerName, key, model, protocol);
     console.log('  ✓ 已保存。运行 killer 即可。');
   } else {
     console.log('  已取消。运行 killer --init 重试。');
@@ -170,7 +228,7 @@ async function handleKeyPaste(
 }
 
 /**
- * 运行交互式配置向导 — 极简版
+ * 运行交互式配置向导 — 消费级傻瓜版
  */
 export async function runInitWizard(): Promise<void> {
   const rl = readline.createInterface({
@@ -183,7 +241,10 @@ export async function runInitWizard(): Promise<void> {
 
   try {
     console.log('');
-    console.log('  🧠 连接 AI — 粘贴 API Key 即可（自动识别服务商）');
+    console.log('  ┌─────────────────────────────────────────────┐');
+    console.log('  │  Killer Agent — 粘贴 API Key 即可开始        │');
+    console.log('  │  自动识别服务商 / 模型 / 协议                 │');
+    console.log('  └─────────────────────────────────────────────┘');
     console.log('');
 
     // ── 第 0 步：检测已有配置（0 交互） ──
@@ -223,8 +284,14 @@ export async function runInitWizard(): Promise<void> {
       console.log('');
     }
 
-    // ── 核心交互：一行提示，粘贴 Key 或输入编号 ──
-    const input = await question('  粘贴 Key: ');
+    // ── 核心交互：粘贴 Key 或输入编号 ──
+    console.log('  支持的服务商:');
+    PROVIDER_OPTIONS.forEach((p, i) => {
+      const dual = p.dualProtocol ? ' [双协议]' : '';
+      console.log(`    ${String(i + 1).padStart(2)}. ${p.description}${dual}`);
+    });
+    console.log('');
+    const input = await question('  粘贴 Key (或输入编号选择服务商): ');
     const trimmed = input.trim();
 
     if (!trimmed) {
@@ -232,13 +299,13 @@ export async function runInitWizard(): Promise<void> {
       return;
     }
 
-    // ── 用户粘贴了一个 Key ──
+    // 用户粘贴了一个 Key
     if (!/^\d+$/.test(trimmed)) {
       await handleKeyPaste(trimmed, question);
       return;
     }
 
-    // ── 用户输入了编号 → 显示服务商列表 ──
+    // 用户输入了编号 → 选择服务商
     const idx = parseInt(trimmed, 10) - 1;
     if (isNaN(idx) || idx < 0 || idx >= PROVIDER_OPTIONS.length) {
       console.log('  输入编号无效。也可直接粘贴 Key。');
@@ -274,13 +341,45 @@ export async function runInitWizard(): Promise<void> {
 /**
  * 测试 API 连接
  */
-async function testConnection(provider: string, apiKey: string): Promise<{ ok: boolean; model?: string; error?: string }> {
+async function testConnection(
+  provider: string,
+  apiKey: string,
+  protocol?: 'openai' | 'anthropic',
+): Promise<{ ok: boolean; model?: string; error?: string }> {
   const preset = OPENAI_COMPATIBLE_PROVIDERS[provider];
   if (!preset) {
-    // 非 OpenAI-compatible 的 provider，跳过测试
     return { ok: true };
   }
 
+  // 双协议测试：如果指定了 Anthropic 协议，测试 Anthropic 端点
+  if (protocol === 'anthropic' && preset.anthropicBaseUrl) {
+    try {
+      const response = await fetch(preset.anthropicBaseUrl, {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: preset.anthropicModels?.[0] ?? preset.defaultModel,
+          max_tokens: 5,
+          messages: [{ role: 'user', content: 'Hi' }],
+        }),
+      });
+
+      if (response.ok) {
+        return { ok: true };
+      }
+
+      const err = await response.json().catch(() => ({})) as { error?: { message?: string } };
+      return { ok: false, error: err.error?.message || `HTTP ${response.status}` };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  // 默认 OpenAI 协议测试
   try {
     const response = await fetch(preset.baseUrl, {
       method: 'POST',
@@ -372,13 +471,13 @@ function maskKey(key: string): string {
 
 /**
  * 保存配置到 .env 和 ~/.killer/.env（全局）
- *
- * 写入两个位置：
- * 1. 当前目录 .env — 项目级配置
- * 2. ~/.killer/.env — 全局配置（任何目录都能找到）
- * 3. ~/.killer/config.json — 备份（不含明文 key）
  */
-export async function saveConfig(provider: string, apiKey: string, model?: string): Promise<void> {
+export async function saveConfig(
+  provider: string,
+  apiKey: string,
+  model?: string,
+  protocol?: 'openai' | 'anthropic',
+): Promise<void> {
   const lines: string[] = [
     '# Killer Agent — auto-generated by init wizard',
     `KILLER_LLM_PROVIDER=${provider}`,
@@ -393,12 +492,16 @@ export async function saveConfig(provider: string, apiKey: string, model?: strin
     lines.push(`KILLER_MODEL=${model}`);
   }
 
+  if (protocol && protocol !== 'openai') {
+    lines.push(`KILLER_PROTOCOL=${protocol}`);
+  }
+
   const envContent = lines.join('\n') + '\n';
 
   // 写入当前目录 .env
   fs.writeFileSync(path.join(process.cwd(), '.env'), envContent, 'utf-8');
 
-  // 写入 ~/.killer/.env（全局，任何目录启动都能加载）
+  // 写入 ~/.killer/.env（全局）
   const killerDir = path.join(os.homedir(), '.killer');
   if (!fs.existsSync(killerDir)) {
     fs.mkdirSync(killerDir, { recursive: true });
@@ -416,6 +519,8 @@ export async function saveConfig(provider: string, apiKey: string, model?: strin
     llm: {
       ...(existing.llm as Record<string, unknown> || {}),
       provider,
+      ...(model && { model }),
+      ...(protocol && protocol !== 'openai' && { protocol }),
     },
   };
 

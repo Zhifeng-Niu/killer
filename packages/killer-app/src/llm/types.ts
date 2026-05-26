@@ -14,6 +14,14 @@ export type LLMProviderType =
   | 'openai-compatible';
 
 /**
+ * 通信协议 — 用于双协议服务商
+ *
+ * - openai: OpenAI Chat Completions 格式 (默认)
+ * - anthropic: Anthropic Messages 格式
+ */
+export type LLMProtocol = 'openai' | 'anthropic';
+
+/**
  * LLM Provider 配置
  */
 export interface LLMProviderConfig {
@@ -29,4 +37,6 @@ export interface LLMProviderConfig {
   maxTokens?: number;
   /** 温度参数（0-1） */
   temperature?: number;
+  /** 通信协议（可选，双协议服务商使用） */
+  protocol?: LLMProtocol;
 }

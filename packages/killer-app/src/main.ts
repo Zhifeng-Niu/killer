@@ -54,10 +54,11 @@ function showBanner(config: KillerConfig): void {
       gemini: 'Google Gemini',
     };
     const friendlyName = providerNames[provider] || provider;
+    const protocol = config.llm.protocol === 'anthropic' ? ' [Anthropic 协议]' : '';
 
     console.log('');
     console.log(`  ${B}${CYAN}Killer Agent${R} ${DIM}v0.1.0${R}`);
-    console.log(`  ${GREEN}${friendlyName}${R} ${DIM}|${R} ${DIM}${model}${R}`);
+    console.log(`  ${GREEN}${friendlyName}${R} ${DIM}|${R} ${DIM}${model}${R}${DIM}${protocol}${R}`);
     console.log('');
   }
 }
@@ -91,6 +92,7 @@ Environment Variables:
   KILLER_API_KEY           API key (or provider-specific env var)
   KILLER_MODEL             Model name override
   KILLER_BASE_URL          Custom API endpoint (for openai-compatible)
+  KILLER_PROTOCOL          Communication protocol: openai | anthropic [default: openai]
   KILLER_DEBUG             Enable debug logging (true/false)
 
 Supported Providers:
@@ -166,7 +168,7 @@ function parseArgs(): { debug: boolean; help: boolean; api: boolean; port: numbe
 }
 
 /**
- * 验证配置 — 无 API key 时自动引导或 fallback 到 mock provider
+ * 验证配置 — 无 API key 时引导用户配置或 fallback 到 mock provider
  */
 async function validateConfig(config: KillerConfig): Promise<void> {
   const validProviders = [
@@ -181,8 +183,35 @@ async function validateConfig(config: KillerConfig): Promise<void> {
   }
 
   if (!config.llm.apiKey && config.llm.provider !== 'mock') {
-    // 无 API Key → 直接以体验模式启动，零交互
-    // 先让用户进入产品，再在 banner 中提示如何连接真实 AI
+    // 检查是否是首次运行（没有任何配置文件）
+    const isFirstRun = !process.env.KILLER_LLM_PROVIDER
+      && !process.env.KILLER_API_KEY
+      && !process.env.ANTHROPIC_API_KEY
+      && !process.env.OPENAI_API_KEY
+      && !process.env.DEEPSEEK_API_KEY
+      && !process.env.GLM_API_KEY
+      && !process.env.MINIMAX_API_KEY;
+
+    if (isFirstRun) {
+      console.log('');
+      console.log('  欢迎使用 Killer Agent！');
+      console.log('  粘贴你的 API Key 即可连接 AI (支持 DeepSeek / GLM / MiniMax / OpenAI 等)');
+      console.log('');
+      // 直接启动 init wizard
+      await runInitWizard();
+      // wizard 保存配置后，重新加载
+      const newConfig = loadConfig();
+      if (newConfig.llm.apiKey) {
+        config.llm.provider = newConfig.llm.provider;
+        config.llm.apiKey = newConfig.llm.apiKey;
+        config.llm.model = newConfig.llm.model;
+        config.llm.baseUrl = newConfig.llm.baseUrl;
+        config.llm.protocol = newConfig.llm.protocol;
+        return;
+      }
+    }
+
+    // 仍然没有 key → 体验模式
     (config.llm as { provider: string; apiKey: string }).provider = 'mock';
     (config.llm as { provider: string; apiKey: string }).apiKey = '';
   }
@@ -197,6 +226,8 @@ function createAgentConfig(config: KillerConfig, fresh: boolean): AgentConfig {
     apiKey: config.llm.apiKey,
     model: config.llm.model,
     baseUrl: config.llm.baseUrl,
+    maxTokens: config.llm.maxTokens,
+    protocol: config.llm.protocol as 'openai' | 'anthropic' | undefined,
   });
 
   return {

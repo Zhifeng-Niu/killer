@@ -9,8 +9,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import type { KillerAgent } from '../orchestrator/index.js';
+import { Cerebellum } from '@killer/core';
 import { c, kv, divider, renderMarkdown } from './format.js';
 import { generateBootGreeting } from './greeting.js';
+
+/** Lazy-initialized cerebellum instance shared across CLI commands */
+let cliCerebellum: Cerebellum | null = null;
 
 /**
  * Readline 内部接口 — history 和 addHistory 不在公开类型中，
@@ -745,6 +749,116 @@ const CLI_COMMANDS: CLICommand[] = [
         console.log(c.error(`  Save failed: ${err}`));
       }
       console.log('');
+    },
+  },
+  {
+    name: 'mission',
+    description: 'Manage experiment missions (Cerebellum)',
+    handler: async (args, _agent) => {
+      // Lazy-init cerebellum
+      if (!cliCerebellum) {
+        cliCerebellum = new Cerebellum();
+      }
+      const cerebellum = cliCerebellum;
+
+      const parts = args.trim().split(/\s+/);
+      const sub = parts[0];
+
+      if (!sub || sub === 'help') {
+        console.log(`\n${c.header('Mission Commands')}`);
+        console.log(`  ${c.label('/mission create <goal>')}        Start a new experiment mission`);
+        console.log(`  ${c.label('/mission start [--orientation <mode>]}')}  Activate with orientation`);
+        console.log(`  ${c.label('/mission status')}               Show current mission progress`);
+        console.log(`  ${c.label('/mission history')}              Show attempt history`);
+        console.log(`  ${c.label('/mission stop')}                 Deactivate current mission`);
+        console.log(`\n  Orientations: ${c.value('engineer')} (safe) | ${c.value('creative')} (explore) | ${c.value('production')} (ship)`);
+        console.log('');
+        return;
+      }
+
+      if (sub === 'create' || sub === 'start') {
+        const goal = parts.slice(1).join(' ').trim();
+        if (!goal) {
+          console.log(c.error('\n  Usage: /mission create <goal>'));
+          return;
+        }
+
+        // Parse optional --orientation flag
+        const orientationIdx = parts.indexOf('--orientation');
+        const orientation = orientationIdx >= 0 && parts[orientationIdx + 1]
+          ? parts[orientationIdx + 1] as 'engineer' | 'creative' | 'production'
+          : 'engineer';
+
+        const mission = cerebellum.createMission({ goal, orientation });
+        cerebellum.activateMission(mission);
+        console.log(`\n  ${c.success('Mission created and activated!')}`);
+        console.log(`  ${kv('ID', mission.id)}`);
+        console.log(`  ${kv('Goal', mission.goal)}`);
+        console.log(`  ${kv('Orientation', mission.orientation)}`);
+        console.log(`  ${kv('Max waypoints', String(mission.termination.find((t: { type: string }) => t.type === 'max_waypoints')?.value ?? 50))}`);
+        console.log('');
+        return;
+      }
+
+      if (sub === 'status') {
+        const mission = cerebellum.getActiveMission();
+        if (!mission) {
+          console.log(`\n  ${c.muted('No active mission. Use /mission create <goal>')}`);
+          return;
+        }
+        const history = cerebellum.getHistory();
+        const term = cerebellum.checkTermination();
+        console.log(`\n${c.header('Mission Status')}`);
+        console.log(`  ${kv('Goal', mission.goal)}`);
+        console.log(`  ${kv('Orientation', mission.orientation)}`);
+        console.log(`  ${kv('Waypoints', `${history.totalWaypoints} (${history.wins.length} kept, ${history.deadEnds.length} discarded)`)}`);
+        console.log(`  ${kv('Consecutive fails', String(history.consecutiveDiscards))}`);
+        console.log(`  ${kv('Terminated', term.terminated ? c.error(term.reason ?? 'yes') : c.success('no'))}`);
+        if (history.surprises.length > 0) {
+          console.log(`  ${kv('Surprises', c.value(String(history.surprises.length)))}`);
+        }
+        console.log('');
+        return;
+      }
+
+      if (sub === 'history') {
+        const history = cerebellum.getHistory();
+        if (history.totalWaypoints === 0) {
+          console.log(`\n  ${c.muted('No experiments recorded yet.')}`);
+          return;
+        }
+        console.log(`\n${c.header('Experiment History')}`);
+        const recent = [...history.wins.slice(-5), ...history.deadEnds.slice(-5)]
+          .sort((a, b) => a.waypoint - b.waypoint)
+          .slice(-10);
+        for (const r of recent) {
+          const icon = r.decision === 'keep' ? c.success('KEEP') : c.error('DISC');
+          console.log(`  ${icon} #${r.waypoint} ${c.muted(`[${r.orientation}]`)} ${r.hypothesis.slice(0, 60)}`);
+        }
+        if (history.surprises.length > 0) {
+          console.log(`\n  ${c.header('Surprises')}`);
+          for (const s of history.surprises.slice(-3)) {
+            console.log(`  ${c.value('!')} ${s.contradiction}`);
+            console.log(`    ${c.muted(s.insight.slice(0, 80))}`);
+          }
+        }
+        console.log('');
+        return;
+      }
+
+      if (sub === 'stop') {
+        const mission = cerebellum.getActiveMission();
+        if (!mission) {
+          console.log(`\n  ${c.muted('No active mission.')}`);
+          return;
+        }
+        cerebellum.activateMission(null as unknown as Parameters<typeof cerebellum.activateMission>[0]);
+        console.log(`\n  ${c.success('Mission deactivated.')}`);
+        console.log('');
+        return;
+      }
+
+      console.log(c.error(`\n  Unknown sub-command: ${sub}. Use /mission help`));
     },
   },
   {
