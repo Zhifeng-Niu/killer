@@ -1,18 +1,18 @@
 ---
-orientation: [engineer]
+orientation: [production]
 status: active
-started_at: 2026-05-26T13:07:47Z
-expedition_branch: odyssey/20260526-210747
+started_at: 2026-05-26T17:13:06Z
+expedition_branch: odyssey/20260527-011306
 baseline_metric: null
 best_metric: null
 total_waypoints: 0
 consecutive_discards: 0
 ---
 
-# Mission: Phase 5: Cerebellum API/CLI integration - expose mission lifecycle through HTTP 
+# Mission: CLI单命令启动 — 让Killer Agent像Hermes一样，一条命令就能在终
 
 ## Goal
-Phase 5: Cerebellum API/CLI integration - expose mission lifecycle through HTTP API and CLI commands
+CLI单命令启动 — 让Killer Agent像Hermes一样，一条命令就能在终端里跑起来（npx/全局安装/bin link）
 
 ## Context
 Project type: typescript. Auto-detected guard: npm test 2>&1.
