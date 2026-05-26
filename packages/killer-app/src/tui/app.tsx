@@ -172,19 +172,31 @@ export function KillerTUI({ agent }: KillerTUIProps) {
 
     try {
       let fullResponse = '';
+      let lastFlush = 0;
+      let statusSet = false;
+      const FLUSH_MS = 60;
       await agent.processInput(input, 'cli', (token) => {
         if (ac.signal.aborted) return;
         fullResponse += token;
-        setAgentStatus('streaming');
-        setMessages(prev => prev.map(m =>
-          m.id === agentMsgId ? { ...m, content: fullResponse } : m
-        ));
+        if (!statusSet) {
+          statusSet = true;
+          setAgentStatus('streaming');
+        }
+        const now = Date.now();
+        if (now - lastFlush >= FLUSH_MS) {
+          lastFlush = now;
+          const snapshot = fullResponse;
+          setMessages(prev => prev.map(m =>
+            m.id === agentMsgId ? { ...m, content: snapshot } : m
+          ));
+        }
       });
 
       if (!ac.signal.aborted) {
         const elapsed = Date.now() - startTime;
+        const finalContent = fullResponse;
         setMessages(prev => prev.map(m =>
-          m.id === agentMsgId ? { ...m, streaming: false, duration: elapsed } : m
+          m.id === agentMsgId ? { ...m, content: finalContent, streaming: false, duration: elapsed } : m
         ));
       }
     } catch (error) {
@@ -322,6 +334,8 @@ async function handleCommand(input: string, agent: KillerAgent): Promise<string>
         '  /save        — 保存会话',
         '  /load        — 加载会话',
         '  /key <key>   — 热更新 API Key',
+        '  /approve <t> — 批准工具执行',
+        '  /deny <t>    — 禁止工具执行',
         '  /mission     — Cerebellum 任务管理',
         '  /exit        — 退出',
       ].join('\n');
@@ -465,6 +479,21 @@ async function handleCommand(input: string, agent: KillerAgent): Promise<string>
     case 'save': {
       agent.saveSession('tui-session');
       return '✓ 会话已保存';
+    }
+    case 'approve': {
+      if (!args) return '用法: /approve <tool> | /approve all';
+      if (args === 'all') {
+        const rules = agent.toolPermissions.getRules();
+        for (const r of rules) agent.toolPermissions.approve(r.tool);
+        return '✓ 所有已知工具已批准';
+      }
+      agent.toolPermissions.approve(args);
+      return `✓ ${args} 已批准（本次会话有效）`;
+    }
+    case 'deny': {
+      if (!args) return '用法: /deny <tool>';
+      agent.toolPermissions.deny(args);
+      return `✓ ${args} 已禁止`;
     }
     case 'exit':
     case 'quit': {

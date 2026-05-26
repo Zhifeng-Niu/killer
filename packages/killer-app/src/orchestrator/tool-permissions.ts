@@ -56,6 +56,8 @@ export class ToolPermissions {
     const autoTools = [
       'time', 'agent_status', 'memory_recall',
       'calculate', 'plan_goal',
+      'web_search', 'web_fetch',
+      'read_file', 'list_files',
     ];
     for (const tool of autoTools) {
       this.rules.set(tool, { tool, permission: 'auto', reason: 'Read-only, no side effects' });
