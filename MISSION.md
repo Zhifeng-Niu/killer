@@ -1,12 +1,13 @@
 ---
 orientation: [creative]
-status: active
+status: complete
 started_at: 2026-05-26T18:43:04Z
 expedition_branch: odyssey/20260527-024304
 baseline_metric: null
-best_metric: null
-total_waypoints: 1
+best_metric: 0 type errors
+total_waypoints: 2
 consecutive_discards: 0
+completed_at: 2026-05-27T03:05:00Z
 ---
 
 # Mission: TUI Live Feel: Parse tool calls/results as distinct visual elements (not mixed t
