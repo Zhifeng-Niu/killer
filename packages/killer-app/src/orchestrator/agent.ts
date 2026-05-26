@@ -925,10 +925,12 @@ export class KillerAgent {
     // 主循环事件 → 输出管理器
     // Mock 模式：完全跳过 action 输出（mock LLM 的响应会被误解析为 tool_call，产生大量噪音）
     // 正常模式：跳过 noop 动作（LLM 纯文本响应没有工具调用时产生的占位 action）
+    // 后台循环：跳过输出（dream cycle / auto-evolve 的 tool call 不应打印到终端）
     const llmModel = typeof this.config.llm?.getModel === 'function' ? this.config.llm.getModel() : '';
     const isMockMode = llmModel.includes('mock');
     this.brainstem.on('actionExecuted', (state: LoopState) => {
       if (isMockMode) return;
+      if (!this.processing) return;
       if (state.currentAction) {
         const payload = state.currentAction.payload as { tool?: string } | undefined;
         const isNoop = state.currentAction.type === 'tool_call' && (!payload?.tool || payload.tool === 'noop');
