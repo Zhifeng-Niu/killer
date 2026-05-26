@@ -1,6 +1,6 @@
 ---
 orientation: [production]
-status: active
+status: completed
 started_at: 2026-05-26T11:27:01Z
 expedition_branch: odyssey/20260526-192701
 baseline_metric: null
