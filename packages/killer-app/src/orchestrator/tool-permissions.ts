@@ -40,6 +40,7 @@ export interface PermissionCheck {
 export class ToolPermissions {
   private rules: Map<string, PermissionRule> = new Map();
   private approvedSessions: Set<string> = new Set();
+  private defaultPolicy: PermissionLevel = 'auto';
 
   constructor() {
     // 内置工具的默认权限规则
@@ -102,11 +103,11 @@ export class ToolPermissions {
     const rule = this.rules.get(toolName);
 
     if (!rule) {
-      // 未注册的工具默认允许 — 本地运行的 agent 应充分自主
+      const policy = this.defaultPolicy;
       return {
-        allowed: true,
-        level: 'auto',
-        reason: 'Auto-approved (no explicit rule)',
+        allowed: policy === 'auto',
+        level: policy,
+        reason: policy === 'auto' ? 'Auto-approved (no explicit rule)' : `Blocked by default policy (${policy})`,
       };
     }
 
@@ -176,6 +177,20 @@ export class ToolPermissions {
    */
   clearApprovals(): void {
     this.approvedSessions.clear();
+  }
+
+  /**
+   * 设置未知工具的默认权限策略
+   */
+  setDefaultPolicy(policy: PermissionLevel): void {
+    this.defaultPolicy = policy;
+  }
+
+  /**
+   * 获取当前默认权限策略
+   */
+  getDefaultPolicy(): PermissionLevel {
+    return this.defaultPolicy;
   }
 
   /**

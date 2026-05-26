@@ -77,6 +77,12 @@ export class ResilientLLMProvider implements LLMProvider {
     return this.inner.getModel();
   }
 
+  setModel(model: string): void {
+    if ('setModel' in this.inner && typeof this.inner.setModel === 'function') {
+      this.inner.setModel(model);
+    }
+  }
+
   async complete(prompt: string, context?: string): Promise<LLMCompletion> {
     return this.executeWithResilience(() => this.inner.complete(prompt, context));
   }

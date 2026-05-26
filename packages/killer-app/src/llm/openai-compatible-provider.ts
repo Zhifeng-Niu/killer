@@ -146,7 +146,7 @@ interface ErrorResponse {
  */
 export class OpenAICompatibleProvider implements LLMProvider {
   private readonly apiKey: string;
-  private readonly model: string;
+  private model: string;
   private readonly maxTokens: number;
   private readonly baseUrl: string;
   private readonly providerName: string;
@@ -241,6 +241,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
   getModel(): string {
     return this.model;
+  }
+
+  setModel(model: string): void {
+    this.model = model;
   }
 
   private buildMessages(prompt: string, context?: string): ChatMessage[] {

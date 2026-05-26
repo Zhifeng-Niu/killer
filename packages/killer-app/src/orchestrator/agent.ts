@@ -1429,6 +1429,19 @@ export class KillerAgent {
     return null;
   }
 
+  getModel(): string {
+    return typeof this.config.llm?.getModel === 'function' ? this.config.llm.getModel() : 'unknown';
+  }
+
+  setModel(model: string): boolean {
+    const llm = this.config.llm as unknown;
+    if (typeof (llm as Record<string, unknown>).setModel === 'function') {
+      (llm as { setModel: (m: string) => void }).setModel(model);
+      return true;
+    }
+    return false;
+  }
+
   /**
    * 获取 Skills 列表（供 CLI 使用）
    */

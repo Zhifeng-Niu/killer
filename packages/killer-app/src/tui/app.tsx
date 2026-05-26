@@ -20,6 +20,15 @@ interface KillerTUIProps {
 
 let msgCounter = 0;
 
+const KNOWN_TUI_COMMANDS = new Set([
+  'help', 'status', 'cells', 'spawn', 'goals', 'memory',
+  'persona', 'emotions', 'narrative', 'predictions',
+  'dream', 'think', 'evolve', 'delegate', 'diagnostics',
+  'health', 'metrics', 'sessions', 'save', 'load',
+  'mission', 'key', 'approve', 'deny', 'model', 'mode',
+  'find', 'retry', 'clear', 'exit', 'quit',
+]);
+
 function createMessage(role: ChatMessage['role'], content: string, streaming = false): ChatMessage {
   return { id: `msg-${++msgCounter}`, role, content, streaming, timestamp: Date.now() };
 }
@@ -131,19 +140,22 @@ export function KillerTUI({ agent }: KillerTUIProps) {
       return;
     }
 
-    // 命令处理
+    // 命令处理 — 只匹配已知命令（文件路径如 /Users/... 不拦截）
     if (input.startsWith('/')) {
-      const output = await handleCommand(input, agent);
-      if (output) {
-        if (output.startsWith('__EXIT__')) {
-          setMessages(prev => [...prev, createMessage('agent', output.slice(8))]);
-          await agent.shutdown();
-          exit();
-          return;
+      const cmd = input.slice(1).split(/\s/)[0].toLowerCase();
+      if (KNOWN_TUI_COMMANDS.has(cmd)) {
+        const output = await handleCommand(input, agent);
+        if (output) {
+          if (output.startsWith('__EXIT__')) {
+            setMessages(prev => [...prev, createMessage('agent', output.slice(8))]);
+            await agent.shutdown();
+            exit();
+            return;
+          }
+          setMessages(prev => [...prev, createMessage('system', output)]);
         }
-        setMessages(prev => [...prev, createMessage('system', output)]);
+        return;
       }
-      return;
     }
 
     // API Key 智能检测 — 用户直接粘贴 Key
@@ -336,6 +348,8 @@ async function handleCommand(input: string, agent: KillerAgent): Promise<string>
         '  /key <key>   — 热更新 API Key',
         '  /approve <t> — 批准工具执行',
         '  /deny <t>    — 禁止工具执行',
+        '  /model [n]   — 查看/切换模型',
+        '  /mode [m]    — 权限策略 auto|confirm|deny',
         '  /mission     — Cerebellum 任务管理',
         '  /exit        — 退出',
       ].join('\n');
@@ -387,6 +401,22 @@ async function handleCommand(input: string, agent: KillerAgent): Promise<string>
       const metrics = MetricsCollector.getInstance();
       const report = metrics.healthCheck();
       return `LLM: ${report.llm.calls} calls, ${report.llm.errors} errors, avg ${report.llm.avgLatency}s`;
+    }
+    case 'model': {
+      const current = agent.getModel();
+      if (!args) return `Current: ${current}\nSwitch: /model <name>`;
+      if (agent.setModel(args.trim())) {
+        return `Model switched: ${current} → ${args.trim()}`;
+      }
+      return `Cannot switch model (provider does not support hot-swap). Current: ${current}`;
+    }
+    case 'mode': {
+      const cur = agent.toolPermissions.getDefaultPolicy();
+      if (!args) return `Permission mode: ${cur}\nSwitch: /mode auto | confirm | deny`;
+      const mode = args.trim().toLowerCase();
+      if (!['auto', 'confirm', 'deny'].includes(mode)) return 'Usage: /mode auto | confirm | deny';
+      agent.toolPermissions.setDefaultPolicy(mode as 'auto' | 'confirm' | 'deny');
+      return `Permission mode: ${cur} → ${mode}`;
     }
     case 'narrative': {
       const n = agent.hippocampus.getNarrative();

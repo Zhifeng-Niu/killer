@@ -17,7 +17,7 @@ const COMMANDS = [
   '/persona', '/emotions', '/narrative', '/predictions',
   '/dream', '/think', '/evolve', '/delegate', '/diagnostics',
   '/health', '/metrics', '/sessions', '/save', '/load',
-  '/mission', '/key', '/approve', '/deny',
+  '/mission', '/key', '/approve', '/deny', '/model', '/mode',
   '/find', '/retry', '/clear',
   '/exit', '/quit',
 ];
