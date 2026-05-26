@@ -39,6 +39,7 @@ export type {
 export type {
   DreamResult,
   DreamingConfig,
+  CounterfactualBranch,
 } from './dreaming.js';
 
 export type {

@@ -330,4 +330,157 @@ describe('DreamEngine', () => {
       expect(result.episodesReplayed).toBe(5);
     });
   });
+
+  describe('counterfactual dreaming', () => {
+    it('should not generate branches when disabled', () => {
+      const engine = new DreamEngine({ ...DEFAULT_DREAMING_CONFIG, counterfactualEnabled: false });
+      const episodicStore = new Map<string, Episode>();
+      const semanticGraph = new Map<string, SemanticNode>();
+      const now = Date.now();
+
+      const ep = createEpisode({ id: 'ep-low', timestamp: now - 1000, emotionalWeight: 0.2 });
+      episodicStore.set('ep-low', ep);
+
+      const result = engine.executeDreamCycle(episodicStore, semanticGraph, now);
+
+      expect(result.counterfactualBranches).toEqual([]);
+    });
+
+    it('should generate branches for low-emotion episodes when enabled', () => {
+      const engine = new DreamEngine({
+        ...DEFAULT_DREAMING_CONFIG,
+        counterfactualEnabled: true,
+        counterfactualDepth: 3,
+      });
+      const episodicStore = new Map<string, Episode>();
+      const semanticGraph = new Map<string, SemanticNode>();
+      const now = Date.now();
+
+      // Low-emotion episode with tag matching a semantic node
+      const ep = createEpisode({
+        id: 'ep-regret',
+        timestamp: now - 1000,
+        emotionalWeight: 0.2,
+        tags: ['coding'],
+        associations: [],
+      });
+      episodicStore.set('ep-regret', ep);
+
+      // Semantic node for 'coding' with unexplored relations
+      const codingNode = createSemanticNode('sem-coding', 'coding', 0.7);
+      const betterPath = createSemanticNode('sem-testing', 'testing', 0.8);
+      codingNode.relations.push({ to: 'sem-testing', type: 'leads_to', weight: 0.6 });
+
+      semanticGraph.set('sem-coding', codingNode);
+      semanticGraph.set('sem-testing', betterPath);
+
+      const result = engine.executeDreamCycle(episodicStore, semanticGraph, now);
+
+      expect(result.counterfactualBranches.length).toBeGreaterThan(0);
+      expect(result.counterfactualBranches[0]!.sourceEpisodeId).toBe('ep-regret');
+      expect(result.counterfactualBranches[0]!.improvement).toBe(true);
+    });
+
+    it('should produce empty branches when no low-emotion episodes exist', () => {
+      const engine = new DreamEngine({
+        ...DEFAULT_DREAMING_CONFIG,
+        counterfactualEnabled: true,
+      });
+      const episodicStore = new Map<string, Episode>();
+      const semanticGraph = new Map<string, SemanticNode>();
+      const now = Date.now();
+
+      // All high-emotion episodes
+      const ep = createEpisode({ id: 'ep-good', timestamp: now - 1000, emotionalWeight: 0.9 });
+      episodicStore.set('ep-good', ep);
+
+      const result = engine.executeDreamCycle(episodicStore, semanticGraph, now);
+
+      expect(result.counterfactualBranches).toEqual([]);
+    });
+
+    it('should inject counterfactual insights into main insights', () => {
+      const engine = new DreamEngine({
+        ...DEFAULT_DREAMING_CONFIG,
+        counterfactualEnabled: true,
+        maxInsights: 5,
+      });
+      const episodicStore = new Map<string, Episode>();
+      const semanticGraph = new Map<string, SemanticNode>();
+      const now = Date.now();
+
+      const ep = createEpisode({
+        id: 'ep-low',
+        timestamp: now - 1000,
+        emotionalWeight: 0.1,
+        tags: ['debugging'],
+      });
+      episodicStore.set('ep-low', ep);
+
+      const debugNode = createSemanticNode('sem-debug', 'debugging', 0.6);
+      const testNode = createSemanticNode('sem-test', 'testing', 0.9);
+      debugNode.relations.push({ to: 'sem-test', type: 'improves', weight: 0.7 });
+      semanticGraph.set('sem-debug', debugNode);
+      semanticGraph.set('sem-test', testNode);
+
+      const result = engine.executeDreamCycle(episodicStore, semanticGraph, now);
+
+      const counterfactualInsights = result.insights.filter((i) => i.startsWith('Counterfactual:'));
+      expect(counterfactualInsights.length).toBeGreaterThan(0);
+    });
+
+    it('should respect counterfactualDepth config', () => {
+      const engine = new DreamEngine({
+        ...DEFAULT_DREAMING_CONFIG,
+        counterfactualEnabled: true,
+        counterfactualDepth: 1,
+      });
+      const episodicStore = new Map<string, Episode>();
+      const semanticGraph = new Map<string, SemanticNode>();
+      const now = Date.now();
+
+      for (let i = 0; i < 5; i++) {
+        const ep = createEpisode({
+          id: `ep-low-${i}`,
+          timestamp: now - (i + 1) * 1000,
+          emotionalWeight: 0.1,
+          tags: ['test'],
+        });
+        episodicStore.set(`ep-low-${i}`, ep);
+      }
+
+      const tagNode = createSemanticNode('sem-test', 'test', 0.5);
+      const altNode = createSemanticNode('sem-alt', 'alternative', 0.6);
+      tagNode.relations.push({ to: 'sem-alt', type: 'alt', weight: 0.5 });
+      semanticGraph.set('sem-test', tagNode);
+      semanticGraph.set('sem-alt', altNode);
+
+      const result = engine.executeDreamCycle(episodicStore, semanticGraph, now);
+
+      // Should generate at most 1 branch (depth=1)
+      expect(result.counterfactualBranches.length).toBeLessThanOrEqual(1);
+    });
+
+    it('should handle empty semantic graph gracefully', () => {
+      const engine = new DreamEngine({
+        ...DEFAULT_DREAMING_CONFIG,
+        counterfactualEnabled: true,
+      });
+      const episodicStore = new Map<string, Episode>();
+      const now = Date.now();
+
+      const ep = createEpisode({
+        id: 'ep-low',
+        timestamp: now - 1000,
+        emotionalWeight: 0.1,
+        tags: ['orphan'],
+      });
+      episodicStore.set('ep-low', ep);
+
+      // Empty graph — no nodes to explore
+      const result = engine.executeDreamCycle(episodicStore, new Map(), now);
+
+      expect(result.counterfactualBranches).toEqual([]);
+    });
+  });
 });

@@ -18,6 +18,31 @@ export interface DreamResult {
   memoriesDecayed: number;
   insights: string[];
   narrativeSynthesized: boolean;
+  /** 反事实梦境分支 */
+  counterfactualBranches: CounterfactualBranch[];
+}
+
+/**
+ * 反事实梦境分支
+ *
+ * 对一个已发生的情节，模拟"如果当时做了不同选择会怎样"。
+ * 通过语义图谱的关联展开替代路径，评估哪条路径可能更好。
+ */
+export interface CounterfactualBranch {
+  /** 原始情节 ID */
+  sourceEpisodeId: string;
+  /** 原始情节标题 */
+  originalOutcome: string;
+  /** 假设的替代行动 */
+  alternativeAction: string;
+  /** 预测的替代结果 */
+  projectedOutcome: string;
+  /** 替代路径上的语义节点 */
+  projectedPath: string[];
+  /** 替代结果的可信度 [0, 1] */
+  confidence: number;
+  /** 替代结果是否优于原始 */
+  improvement: boolean;
 }
 
 /**
@@ -48,6 +73,16 @@ export interface DreamingConfig {
    * 最大洞察数量
    */
   maxInsights: number;
+
+  /**
+   * 反事实梦境开关
+   */
+  counterfactualEnabled: boolean;
+
+  /**
+   * 反事实分支最大深度
+   */
+  counterfactualDepth: number;
 }
 
 /**
@@ -59,6 +94,8 @@ export const DEFAULT_DREAMING_CONFIG: DreamingConfig = {
   patternThreshold: 0.5,
   decayThreshold: 0.2,
   maxInsights: 3,
+  counterfactualEnabled: false,
+  counterfactualDepth: 3,
 };
 
 /**
@@ -110,6 +147,7 @@ export class DreamEngine {
       memoriesDecayed: 0,
       insights: [],
       narrativeSynthesized: false,
+      counterfactualBranches: [],
     };
 
     // 1. 选取近期情节进行重播
@@ -151,6 +189,27 @@ export class DreamEngine {
       result.insights = this.generateInsights(patterns, semanticGraph, recentEpisodes);
     } catch {
       // 洞察生成失败不阻断
+    }
+
+    // 5.5 反事实梦境：对不满意情节模拟替代路径
+    if (this.config.counterfactualEnabled && recentEpisodes.length > 0) {
+      try {
+        result.counterfactualBranches = this.dreamCounterfactual(
+          recentEpisodes,
+          semanticGraph
+        );
+        // 将反事实洞察注入主洞察列表
+        for (const branch of result.counterfactualBranches) {
+          if (branch.improvement) {
+            result.insights.push(
+              `Counterfactual: "${branch.originalOutcome}" → if "${branch.alternativeAction}" then "${branch.projectedOutcome}"`
+            );
+          }
+        }
+        result.insights = result.insights.slice(0, this.config.maxInsights);
+      } catch {
+        // 反事实梦境失败不阻断
+      }
     }
 
     // 6. 合成叙事（如果提供了回调）
@@ -388,6 +447,119 @@ export class DreamEngine {
     }
 
     return null;
+  }
+
+  /**
+   * 反事实梦境
+   *
+   * 对情感权重偏低（< 0.5）的情节，沿语义图谱展开替代分支，
+   * 模拟"如果当时做了不同选择会怎样"。
+   */
+  private dreamCounterfactual(
+    episodes: Episode[],
+    semanticGraph: Map<string, SemanticNode>
+  ): CounterfactualBranch[] {
+    const branches: CounterfactualBranch[] = [];
+
+    // 筛选不满意的情节（低情感权重 = 不太成功的经历）
+    const candidates = episodes.filter((e) => e.emotionalWeight < 0.5);
+    if (candidates.length === 0) return branches;
+
+    for (const episode of candidates.slice(0, this.config.counterfactualDepth)) {
+      const branch = this.exploreAlternative(episode, semanticGraph);
+      if (branch) {
+        branches.push(branch);
+      }
+    }
+
+    return branches;
+  }
+
+  /**
+   * 为单个情节探索替代路径
+   *
+   * 沿情节的标签和关联在语义图谱中寻找未走的路。
+   */
+  private exploreAlternative(
+    episode: Episode,
+    semanticGraph: Map<string, SemanticNode>
+  ): CounterfactualBranch | null {
+    // 找到该情节标签对应的语义节点
+    const tagNodes = episode.tags
+      .map((tag) =>
+        Array.from(semanticGraph.values()).find((n) => n.label === tag)
+      )
+      .filter((n): n is SemanticNode => n !== undefined);
+
+    if (tagNodes.length === 0) return null;
+
+    // 沿语义关联展开，寻找当前情节未走的路径
+    const unexploredRelations: SemanticRelation[] = [];
+    for (const node of tagNodes) {
+      for (const relation of node.relations) {
+        // 排除情节本身已关联的路径
+        if (!episode.associations.includes(relation.to) && relation.weight > 0.3) {
+          unexploredRelations.push(relation);
+        }
+      }
+    }
+
+    if (unexploredRelations.length === 0) return null;
+
+    // 选择权重最高的未探索路径作为替代行动
+    const bestAlternative = unexploredRelations.sort((a, b) => b.weight - a.weight)[0]!;
+    const targetNode = semanticGraph.get(bestAlternative.to);
+    if (!targetNode) return null;
+
+    // 沿替代路径展开，收集投影路径
+    const projectedPath = this.projectPath(targetNode, semanticGraph, 2);
+
+    // 评估替代结果
+    const projectedWeight = bestAlternative.weight;
+    const improvement = projectedWeight > episode.emotionalWeight;
+    const confidence = Math.min(
+      bestAlternative.weight * 0.8,
+      targetNode.strength * 0.6
+    );
+
+    return {
+      sourceEpisodeId: episode.id,
+      originalOutcome: episode.title,
+      alternativeAction: `explore ${targetNode.label} (${targetNode.type})`,
+      projectedOutcome: projectedPath.join(' → ') || targetNode.label,
+      projectedPath,
+      confidence,
+      improvement,
+    };
+  }
+
+  /**
+   * 从起始节点沿语义图谱投影路径
+   */
+  private projectPath(
+    startNode: SemanticNode,
+    semanticGraph: Map<string, SemanticNode>,
+    depth: number
+  ): string[] {
+    const path = [startNode.label];
+    let current = startNode;
+
+    for (let i = 0; i < depth; i++) {
+      const strongRelations = current.relations
+        .filter((r) => r.weight > 0.4)
+        .sort((a, b) => b.weight - a.weight);
+
+      if (strongRelations.length === 0) break;
+
+      const nextRelation = strongRelations[0]!;
+      const nextNode = semanticGraph.get(nextRelation.to);
+      if (!nextNode || path.includes(nextNode.label)) break;
+
+      path.push(nextNode.label);
+      current = nextNode;
+    }
+
+    return path;
   }
 
   /**
