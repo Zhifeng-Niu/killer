@@ -38,6 +38,9 @@ An AGI-level autonomous agent framework inspired by Samantha from "Her", built w
 # Build both packages (cross-platform)
 pnpm build
 
+# Bundle into self-contained CLI (esbuild — inlines @killer/core)
+pnpm bundle
+
 # Type-check only
 cd packages/killer-app && npx tsc --noEmit
 
@@ -115,6 +118,10 @@ cd packages/killer-app && npx tsc --watch
 28. **TUI keyboard shortcuts**: ↑↓ input history (200 items, draft preserved), Tab command completion (27 commands), Esc cancel streaming, Ctrl+C graceful shutdown (saves session). All handled via ink's `useInput` hook.
 
 29. **TUI viewport awareness**: ChatPanel uses `useStdout()` to get terminal dimensions, estimates message height, trims old messages to keep input area visible. Shows "↑ 还有 N 条更早的消息" truncation indicator.
+
+30. **Self-contained CLI bundle**: `pnpm bundle` uses esbuild to inline `@killer/core` into a single `dist/cli.js` (682KB). External deps: `react`, `ink`, `ink-spinner`, `ink-text-input` (runtime deps), `better-sqlite3` (optional native addon). `@killer/app`'s bin points to `dist/cli.js`. Root `killer.mjs` auto-detects and prefers the bundle. After `npm link`, `killer` command works globally from any directory.
+
+31. **npm publishing**: `@killer/app` is the publishable package. `prepublishOnly` runs esbuild bundle. `@killer/core` is a devDependency (only needed for types/tests during development). Users install via `npm i -g @killer/app` or run ad-hoc via `npx @killer/app`. `publishConfig.access: "public"` for scoped package.
 
 ## Code Conventions
 

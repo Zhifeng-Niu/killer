@@ -21,6 +21,7 @@ import type {
 import { MemoryLayer } from './types.js';
 import { AssociationEngine } from './association.js';
 import { DreamEngine } from './dreaming.js';
+import type { DreamResult, CounterfactualBranch } from './dreaming.js';
 import { NarrativeSynthesisEngine } from './narrative-synthesis.js';
 import {
   calculateRetention,
@@ -44,6 +45,7 @@ export interface DreamingResult {
   memoriesDecayed: number;
   insights: string[];
   narrativeSynthesized: boolean;
+  counterfactualBranches?: CounterfactualBranch[];
 }
 
 /**
@@ -755,7 +757,7 @@ export class HippocampusEngine {
   /**
    * 梦境周期
    */
-  async dreamCycle(): Promise<DreamingResult> {
+  async dreamCycle(): Promise<DreamResult> {
     const now = Date.now();
 
     const result = this.dreamEngine.executeDreamCycle(

@@ -5,6 +5,7 @@
   "description": "Killer Agent Framework — A Samantha-level autonomous AI agent with brain-inspired architecture, emotional intelligence, and persistent memory",
   "scripts": {
     "build": "node build.mjs",
+    "bundle": "node scripts/bundle.mjs",
     "prepare": "pnpm run build",
     "start": "node killer.mjs",
     "killer": "node killer.mjs",
@@ -51,6 +52,7 @@
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
     "@vitest/coverage-v8": "^1.6.1",
+    "esbuild": "^0.28.0",
     "eslint": "^8.54.0",
     "typescript": "^5.3.2",
     "vitest": "^1.0.0"

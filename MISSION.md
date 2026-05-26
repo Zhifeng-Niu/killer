@@ -4,8 +4,8 @@ status: active
 started_at: 2026-05-26T17:13:06Z
 expedition_branch: odyssey/20260527-011306
 baseline_metric: null
-best_metric: null
-total_waypoints: 0
+best_metric: "1911 tests pass, 0 type errors, killer command works globally"
+total_waypoints: 1
 consecutive_discards: 0
 ---
 
@@ -45,7 +45,10 @@ npm test 2>&1
 ## What's Been Tried
 
 ### Wins
-{Auto-updated by engine.}
+1. **esbuild bundle** — 682KB single-file CLI, inlines @killer/core, 14ms build time. External: react, ink, better-sqlite3.
+2. **npm link** — `killer` and `killer-agent` commands work globally from any directory.
+3. **Package.json refactor** — @killer/core moved to devDependency (only needed for types/tests), better-sqlite3 as optionalDependency.
+4. **Type fix** — DreamingResult/DreamResult counterfactualBranches mismatch resolved.
 
 ### Dead Ends
 {Auto-updated by engine.}

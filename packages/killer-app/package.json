@@ -6,7 +6,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "killer": "./dist/main.js"
+    "killer": "./dist/cli.js",
+    "killer-agent": "./dist/cli.js"
   },
   "exports": {
     ".": {
@@ -19,13 +20,15 @@
   ],
   "scripts": {
     "build": "tsc && node -e \"const f='dist/main.js',fs=require('fs'),c=fs.readFileSync(f,'utf8');fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c)\"",
+    "bundle": "node ../../scripts/bundle.mjs",
     "dev": "tsc --watch",
     "test": "vitest",
     "test:coverage": "vitest run --coverage",
     "start": "tsc && node dist/main.js",
     "start:dev": "npx tsx src/main.ts",
-    "quickstart": "node dist/main.js",
-    "init": "node dist/main.js --init"
+    "quickstart": "node dist/cli.js",
+    "init": "node dist/cli.js --init",
+    "prepublishOnly": "node ../../scripts/bundle.mjs"
   },
   "keywords": [
     "agent",
@@ -46,17 +49,23 @@
     "directory": "packages/killer-app"
   },
   "engines": {
-    "node": ">=20.0.0",
-    "pnpm": ">=8.0.0"
+    "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "@killer/core": "workspace:*",
     "ink": "^7.0.4",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
     "react": "^19.2.6"
   },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.9.0"
+  },
   "devDependencies": {
+    "@killer/core": "workspace:*",
     "@types/react": "^19.2.15",
     "vitest": "^1.0.0"
   }

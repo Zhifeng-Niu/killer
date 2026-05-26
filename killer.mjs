@@ -20,6 +20,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const CLI_JS = join(__dirname, 'packages', 'killer-app', 'dist', 'cli.js');
 const MAIN_JS = join(__dirname, 'packages', 'killer-app', 'dist', 'main.js');
 
 // ── 辅助函数 ──
@@ -85,6 +86,8 @@ if (!hasPnpm) {
 }
 
 // ── 检测并自动构建 ──
+const entryPoint = existsSync(CLI_JS) ? CLI_JS : MAIN_JS;
+
 if (!existsSync(MAIN_JS)) {
   console.log('');
   console.log('  🧠 首次运行，正在准备...');
@@ -143,7 +146,7 @@ if (args.includes('--demo') || args.includes('--quickstart') || args.includes('-
 const launchArgs = args.filter(a => !a.startsWith('--demo') && !a.startsWith('--quickstart') && !a.startsWith('-q'));
 
 function launch() {
-  const child = spawn('node', [MAIN_JS, ...launchArgs], {
+  const child = spawn('node', [entryPoint, ...launchArgs], {
     stdio: 'inherit',
     env: { ...process.env },
     cwd: __dirname,
