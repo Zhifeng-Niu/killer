@@ -5,7 +5,7 @@ started_at: 2026-05-26T11:27:01Z
 expedition_branch: odyssey/20260526-192701
 baseline_metric: null
 best_metric: null
-total_waypoints: 1
+total_waypoints: 2
 consecutive_discards: 0
 ---
 
@@ -45,7 +45,8 @@ npm test 2>&1
 ## What's Been Tried
 
 ### Wins
-- Waypoint 1: 生产级日志清理 — 定义 KernelLogger 接口 + SILENT_LOGGER 默认实现，注入 LoopConfig，消除全部 3 处 console 语句；ConsciousnessStream handler error 改为静默隔离。700+1176=1876 测试零回归，零类型错误，全量构建通过。
+- Waypoint 1: 生产级日志清理 — 定义 KernelLogger 接口 + SILENT_LOGGER 默认实现，注入 LoopConfig，消除全部 3 处 console 语句；ConsciousnessStream handler error 改为静默隔离。1876 测试零回归。
+- Waypoint 2: 全量工作成果提交 — 将先前 Odyssey 探索成果整理为 3 个逻辑提交：Cerebellum 脑区（2196 行新增）、双协议+消费级体验（381 行）、Mission API+文档（605 行）。工作树干净，1876 测试全通过。
 
 ### Dead Ends
 {None yet.}
