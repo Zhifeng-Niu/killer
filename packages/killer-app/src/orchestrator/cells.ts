@@ -44,6 +44,8 @@ export class CellManager {
       artisan: CellType.Artisan,
       negotiator: CellType.Negotiator,
       evolver: CellType.Evolver,
+      critic: CellType.Critic,
+      explorer: CellType.Explorer,
     };
 
     const cellType = typeMap[type.toLowerCase()];
@@ -82,6 +84,10 @@ export class CellManager {
         return ['negotiation', 'coordination', 'communication'];
       case CellType.Evolver:
         return ['evolution', 'optimization', 'learning'];
+      case CellType.Critic:
+        return ['evaluation', 'verification', 'risk-assessment', 'quality-gate'];
+      case CellType.Explorer:
+        return ['hypothesis-generation', 'novelty-detection', 'divergent-thinking'];
       default:
         return [];
     }

@@ -346,5 +346,25 @@ describe('CellRuntimePool', () => {
 
       pool.stopAll();
     });
+
+    it('should spawn critic and explorer with correct capabilities', () => {
+      const pool = new CellRuntimePool(synapse, llm, {}, (msg) => logs.push(msg));
+      pool.spawn(CellType.Critic);
+      pool.spawn(CellType.Explorer);
+
+      const cells = synapse.getAllCells();
+      const critic = cells.find((c) => c.id.type === CellType.Critic);
+      const explorer = cells.find((c) => c.id.type === CellType.Explorer);
+
+      expect(critic).toBeDefined();
+      expect(critic?.config.capabilities).toContain('evaluation');
+      expect(critic?.config.capabilities).toContain('verification');
+
+      expect(explorer).toBeDefined();
+      expect(explorer?.config.capabilities).toContain('hypothesis-generation');
+      expect(explorer?.config.capabilities).toContain('novelty-detection');
+
+      pool.stopAll();
+    });
   });
 });

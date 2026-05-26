@@ -25,6 +25,8 @@ const CELL_SYSTEM_PROMPTS: Record<string, string> = {
   [CellType.Negotiator]: `You are a Negotiator Cell. Coordinate between parties, find consensus, and manage communication diplomatically.`,
   [CellType.Evolver]: `You are an Evolver Cell. Optimize, improve, and evolve systems. Focus on measurable improvements.`,
   [CellType.Prime]: `You are the Prime Cell. You coordinate other cells and synthesize their work.`,
+  [CellType.Critic]: `You are a Critic Cell. Evaluate results rigorously against criteria. Distinguish signal from noise, identify weaknesses, and provide structured assessments. Output format: VERDICT (keep/discard/surprise), CONFIDENCE (0-1), REASONING, and RISKS.`,
+  [CellType.Explorer]: `You are an Explorer Cell. Generate novel hypotheses and explore orthogonal directions. Prioritize diversity over safety. Propose unconventional approaches that others might miss. Output format: HYPOTHESIS, NOVELTY_SCORE (0-1), APPROACH, and POTENTIAL_RISKS.`,
 };
 
 /**
@@ -375,6 +377,10 @@ export class CellRuntimePool {
         return ['coordination', 'communication', 'diplomacy'];
       case CellType.Evolver:
         return ['optimization', 'evolution', 'improvement'];
+      case CellType.Critic:
+        return ['evaluation', 'verification', 'risk-assessment'];
+      case CellType.Explorer:
+        return ['hypothesis-generation', 'novelty-detection', 'divergent-thinking'];
       default:
         return ['general'];
     }

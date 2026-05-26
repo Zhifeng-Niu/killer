@@ -182,4 +182,63 @@ describe('CellManager', () => {
       expect(stats.types).toEqual([]);
     });
   });
+
+  describe('critic and explorer cells', () => {
+    it('should spawn a critic cell', () => {
+      const { manager, synapse } = createManager();
+      const cellId = manager.spawnCell('critic', 'Evaluate experiment result');
+
+      expect(cellId).not.toBeNull();
+      expect(cellId!.type).toBe(CellType.Critic);
+      expect(cellId!.id).toContain('critic');
+
+      const cells = synapse.getAllCells();
+      expect(cells).toHaveLength(1);
+      expect(cells[0].config.capabilities).toContain('evaluation');
+      expect(cells[0].config.capabilities).toContain('verification');
+      expect(cells[0].config.capabilities).toContain('risk-assessment');
+      expect(cells[0].config.capabilities).toContain('quality-gate');
+    });
+
+    it('should spawn an explorer cell', () => {
+      const { manager, synapse } = createManager();
+      const cellId = manager.spawnCell('explorer', 'Generate novel hypotheses');
+
+      expect(cellId).not.toBeNull();
+      expect(cellId!.type).toBe(CellType.Explorer);
+      expect(cellId!.id).toContain('explorer');
+
+      const cells = synapse.getAllCells();
+      expect(cells).toHaveLength(1);
+      expect(cells[0].config.capabilities).toContain('hypothesis-generation');
+      expect(cells[0].config.capabilities).toContain('novelty-detection');
+      expect(cells[0].config.capabilities).toContain('divergent-thinking');
+    });
+
+    it('should spawn both critic and explorer for Cerebellum collaboration', () => {
+      const { manager, synapse } = createManager();
+
+      const critic = manager.spawnCell('critic', 'Evaluate');
+      const explorer = manager.spawnCell('explorer', 'Explore');
+
+      expect(critic).not.toBeNull();
+      expect(explorer).not.toBeNull();
+      expect(critic!.type).toBe(CellType.Critic);
+      expect(explorer!.type).toBe(CellType.Explorer);
+
+      const cells = synapse.getAllCells();
+      expect(cells).toHaveLength(2);
+    });
+
+    it('should include critic and explorer in cell stats', () => {
+      const { manager } = createManager();
+      manager.spawnCell('critic', 'C1');
+      manager.spawnCell('explorer', 'E1');
+
+      const stats = manager.getCellStats();
+      expect(stats.count).toBe(2);
+      expect(stats.types).toContain('critic');
+      expect(stats.types).toContain('explorer');
+    });
+  });
 });
