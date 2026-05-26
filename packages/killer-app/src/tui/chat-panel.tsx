@@ -295,6 +295,19 @@ export function ChatPanel({ messages, isThinking }: ChatPanelProps) {
   );
 }
 
+/** 流式输出光标 — 脉冲闪烁 */
+function StreamingCursor() {
+  const frames = spinners.streaming;
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setFrame(f => (f + 1) % frames.length), 350);
+    return () => clearInterval(timer);
+  }, [frames.length]);
+
+  return <Text color={colors.primary}> {frames[frame]}</Text>;
+}
+
 /** 思考中动画 — 月相旋转 */
 function ThinkingIndicator() {
   const frames = spinners.thinking;
@@ -377,9 +390,7 @@ const MessageBubble = React.memo(function MessageBubble({ message }: { message: 
         {message.duration != null && !message.streaming && (
           <Text color={colors.dimmed}> {formatDuration(message.duration)}</Text>
         )}
-        {message.streaming && (
-          <Text color={colors.primary}> ▊</Text>
-        )}
+        {message.streaming && <StreamingCursor />}
       </Box>
       <Box marginLeft={3} flexDirection="column">
         {renderContent(message.content)}
