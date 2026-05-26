@@ -4,7 +4,48 @@
  * 永不停止的决策主循环
  */
 
-import type { LoopState } from './types.js';
+import type { LoopState, KernelLogger } from './types.js';
+import { SILENT_LOGGER } from './types.js';
+
+/**
+ * 实验航点结果 — BrainstemLoop 与 Cerebellum 的集成接口
+ */
+export interface ExperimentWaypointResult {
+  waypoint: number;
+  hypothesis: string;
+  decision: 'keep' | 'discard' | 'surprise';
+  terminated: boolean;
+  terminationReason?: string;
+}
+
+/**
+ * 实验编排器接口 — BrainstemLoop 通过此接口与 Cerebellum 交互
+ *
+ * 使用接口而非具体类，避免循环依赖。
+ * Cerebellum 类实现了此接口。
+ */
+export interface IExperimentOrchestrator {
+  hasActiveMission(): boolean;
+  beginExperiment(hypothesis: string): Promise<import('../cerebellum/types.js').Experiment>;
+  verify(experiment: import('../cerebellum/types.js').Experiment): Promise<import('../cerebellum/types.js').VerificationResult>;
+  decide(
+    experiment: import('../cerebellum/types.js').Experiment,
+    verification: import('../cerebellum/types.js').VerificationResult,
+    history: import('../cerebellum/types.js').AttemptHistory,
+  ): 'keep' | 'discard' | 'surprise';
+  recordOutcome(
+    experiment: import('../cerebellum/types.js').Experiment,
+    decision: 'keep' | 'discard' | 'surprise',
+    verification: import('../cerebellum/types.js').VerificationResult,
+  ): void;
+  readCompass(history: import('../cerebellum/types.js').AttemptHistory): import('../cerebellum/types.js').CompassReading;
+  getHistory(missionId?: string): import('../cerebellum/types.js').AttemptHistory;
+  checkTermination(
+    history?: import('../cerebellum/types.js').AttemptHistory,
+    mission?: import('../cerebellum/types.js').Mission,
+  ): { terminated: boolean; reason?: string };
+  getActiveMission(): import('../cerebellum/types.js').Mission | null;
+}
 
 /**
  * 主循环接口
@@ -16,32 +57,17 @@ import type { LoopState } from './types.js';
  *   ④ REFLECT — 反思结果，提取经验
  *   ⑤ EVOLVE — 演化 Skill/Prompt/策略
  *   → 回到 ①
+ *
+ * 当实验编排器（Cerebellum）激活时，EVOLVE 阶段变为：
+ *   compass → checkpoint → act → verify → decide → record
  */
 export interface IBrainstemLoop {
-  /**
-   * 启动永不停止的主循环
-   */
   start(): Promise<void>;
-
-  /**
-   * 停止主循环（仅当人类显式中断）
-   */
   stop(): Promise<void>;
-
-  /**
-   * 获取当前循环状态
-   */
   getState(): LoopState;
-
-  /**
-   * 注入感知输入
-   */
   injectPerception(perception: import('./types.js').Perception): void;
-
-  /**
-   * 订阅循环事件
-   */
   on(event: LoopEvent, callback: (state: LoopState) => void): void;
+  runExperimentWaypoint(hypothesis: string): Promise<ExperimentWaypointResult | null>;
 }
 
 export type LoopEvent =
@@ -50,37 +76,20 @@ export type LoopEvent =
   | 'reasoningComplete'
   | 'actionExecuted'
   | 'reflectionComplete'
-  | 'evolutionComplete';
+  | 'evolutionComplete'
+  | 'experimentWaypoint';
 
 /**
  * 主循环配置
  */
 export interface LoopConfig {
-  /**
-   * 感知轮询间隔（毫秒）
-   */
   perceptionInterval: number;
-
-  /**
-   * 是否启用梦境模式
-   */
   dreamingMode: boolean;
-
-  /**
-   * 最大并发行动数
-   */
   maxConcurrentActions: number;
-
-  /**
-   * 是否启用调试日志
-   */
   debugLogging: boolean;
-
-  /**
-   * 是否启用深度反思（LLM 驱动的结构化内省）
-   * 关闭时使用轻量反思，开启时额外调用 LLM
-   */
   deepReflection: boolean;
+  /** 可注入的日志接口，默认静默 */
+  logger?: KernelLogger;
 }
 
 /**
@@ -92,4 +101,5 @@ export const DEFAULT_LOOP_CONFIG: LoopConfig = {
   maxConcurrentActions: 5,
   debugLogging: false,
   deepReflection: false,
+  logger: SILENT_LOGGER,
 };

@@ -460,9 +460,8 @@ export class ConsciousnessStream {
       if (shouldNotify) {
         try {
           sub.handler(event);
-        } catch (error) {
+        } catch {
           // 处理器错误不影响其他订阅者
-          console.error('Event handler error:', error);
         }
       }
     }

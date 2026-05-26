@@ -13,16 +13,20 @@ import type {
   Evolution,
   LoopState,
   LoopPhase,
+  KernelLogger,
   EmotionalImpact,
   SelfAssessment,
   BehavioralAdjustment,
 } from './types.js';
 import type {
   IBrainstemLoop,
+  IExperimentOrchestrator,
   LoopConfig,
   LoopEvent,
+  ExperimentWaypointResult,
 } from './loop-interface.js';
 import { DEFAULT_LOOP_CONFIG } from './loop-interface.js';
+import { SILENT_LOGGER } from './types.js';
 import type { LLMProvider } from './llm.js';
 import type { ToolExecutor } from './tools.js';
 
@@ -40,6 +44,8 @@ export class BrainstemLoop implements IBrainstemLoop {
   private readonly llm: LLMProvider;
   private readonly tools: ToolExecutor;
   private readonly config: LoopConfig;
+  private readonly orchestrator?: IExperimentOrchestrator;
+  private readonly logger: KernelLogger;
 
   // 循环状态
   private state: LoopState;
@@ -56,14 +62,20 @@ export class BrainstemLoop implements IBrainstemLoop {
   private loopTimer: ReturnType<typeof setInterval> | null = null;
   private currentLoopPromise: Promise<void> | null = null;
 
+  // 实验计数器
+  private waypointCounter: number = 0;
+
   constructor(
     llm: LLMProvider,
     tools: ToolExecutor,
     config: LoopConfig = DEFAULT_LOOP_CONFIG,
+    orchestrator?: IExperimentOrchestrator,
   ) {
     this.llm = llm;
     this.tools = tools;
     this.config = config;
+    this.orchestrator = orchestrator;
+    this.logger = config.logger ?? SILENT_LOGGER;
 
     // 初始化状态
     this.state = this.createInitialState();
@@ -493,10 +505,24 @@ Respond in this exact JSON format:
 
   /**
    * 演化阶段：基于反思触发变异
+   *
+   * 当实验编排器（Cerebellum）激活时，执行实验航点而非简单变异。
+   * 否则执行原有的策略强化/剪枝逻辑。
    */
   private async evolve(reflection: Reflection): Promise<void> {
     this.updatePhase('evolve');
 
+    // 实验编排器激活 → 运行实验航点
+    if (this.orchestrator?.hasActiveMission()) {
+      const hypothesis = this.generateHypothesis(reflection);
+      const result = await this.runExperimentWaypoint(hypothesis);
+      if (result) {
+        this.log(`Experiment waypoint ${result.waypoint}: ${result.decision}`);
+      }
+      return;
+    }
+
+    // 简单演化：策略强化/剪枝
     const evolution: Evolution = {
       id: generateId('evolution'),
       timestamp: Date.now(),
@@ -504,7 +530,6 @@ Respond in this exact JSON format:
       mutations: [],
     };
 
-    // 根据反思结果决定是否触发变异
     if (reflection.adaptability > 0.7) {
       evolution.mutations.push({
         target: 'strategy',
@@ -524,6 +549,81 @@ Respond in this exact JSON format:
     this.state.currentEvolution = evolution;
     this.emit('evolutionComplete', this.state);
     this.log(`Evolved: ${evolution.mutations.length} mutations`);
+  }
+
+  /**
+   * 运行一次实验航点
+   *
+   * 流程: begin → verify → decide → record
+   * 这是 BrainstemLoop 与 Cerebellum 的核心集成点。
+   */
+  async runExperimentWaypoint(hypothesis: string): Promise<ExperimentWaypointResult | null> {
+    if (!this.orchestrator?.hasActiveMission()) {
+      return null;
+    }
+
+    this.waypointCounter++;
+    const waypoint = this.waypointCounter;
+
+    try {
+      // begin — 创建实验，建立 checkpoint
+      const experiment = await this.orchestrator.beginExperiment(hypothesis);
+
+      // verify — 执行4层验证管道
+      const verification = await this.orchestrator.verify(experiment);
+
+      // decide — 根据验证结果和 orientation 决策
+      const history = this.orchestrator.getHistory();
+      const decision = this.orchestrator.decide(experiment, verification, history);
+
+      // record — 记录结果到尝试历史
+      this.orchestrator.recordOutcome(experiment, decision, verification);
+
+      // 检查终止条件
+      const termination = this.orchestrator.checkTermination();
+
+      const result: ExperimentWaypointResult = {
+        waypoint,
+        hypothesis,
+        decision,
+        terminated: termination.terminated,
+        terminationReason: termination.reason,
+      };
+
+      this.emit('experimentWaypoint', this.state);
+      return result;
+    } catch (error) {
+      this.logError(`Experiment waypoint ${waypoint} failed:`, error);
+      return {
+        waypoint,
+        hypothesis,
+        decision: 'discard',
+        terminated: false,
+      };
+    }
+  }
+
+  /**
+   * 基于反思生成实验假设
+   */
+  private generateHypothesis(reflection: Reflection): string {
+    const compass = this.orchestrator?.readCompass(
+      this.orchestrator.getHistory(),
+    );
+
+    if (compass?.stuckLevel && compass.stuckLevel >= 3) {
+      return `Break stuck pattern: try radically different approach after ${compass.stuckLevel} consecutive failures`;
+    }
+
+    if (compass?.recommendedStrategy.forceDivergence) {
+      return `Forced divergence: explore orthogonal direction (novelty=${compass.noveltyScore.toFixed(2)})`;
+    }
+
+    if (reflection.outcome === 'failure') {
+      return `Recover from failure: analyze root cause of ${reflection.lessons.join('; ')}`;
+    }
+
+    return `Extend success: reinforce approach with adaptability=${reflection.adaptability.toFixed(2)}`;
   }
 
   /**
@@ -642,6 +742,7 @@ Available tools: ${this.tools.list().join(', ')}
       'actionExecuted',
       'reflectionComplete',
       'evolutionComplete',
+      'experimentWaypoint',
     ];
   }
 
@@ -650,7 +751,7 @@ Available tools: ${this.tools.list().join(', ')}
    */
   private log(message: string): void {
     if (this.config.debugLogging) {
-      console.log(`[Brainstem] ${message}`);
+      this.logger.info(`[Brainstem] ${message}`);
     }
   }
 
@@ -658,9 +759,7 @@ Available tools: ${this.tools.list().join(', ')}
    * 错误日志
    */
   private logError(message: string, error: unknown): void {
-    if (this.config.debugLogging) {
-      console.error(`[Brainstem] ${message}`, error);
-    }
+    this.logger.error(`[Brainstem] ${message}`, error);
   }
 
   /**

@@ -152,3 +152,22 @@ export interface LoopState {
 }
 
 export type LoopPhase = 'perceive' | 'reason' | 'act' | 'reflect' | 'evolve';
+
+/**
+ * Kernel 日志接口 — killer-core 不依赖任何外部 Logger，
+ * 消费者（killer-app）在创建时注入真正的实现
+ */
+export interface KernelLogger {
+  debug(message: string): void;
+  info(message: string): void;
+  warn(message: string, error?: unknown): void;
+  error(message: string, error?: unknown): void;
+}
+
+/** 静默 Logger — 默认不输出任何日志 */
+export const SILENT_LOGGER: KernelLogger = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+};
