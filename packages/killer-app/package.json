@@ -6,8 +6,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "killer": "./dist/cli.js",
-    "killer-agent": "./dist/cli.js"
+    "killer": "dist/cli.js",
+    "killer-agent": "dist/cli.js"
   },
   "exports": {
     ".": {
@@ -45,7 +45,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Zhifeng-Niu/killer.git",
+    "url": "git+https://github.com/Zhifeng-Niu/killer.git",
     "directory": "packages/killer-app"
   },
   "engines": {
