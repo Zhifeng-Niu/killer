@@ -102,11 +102,11 @@ export class ToolPermissions {
     const rule = this.rules.get(toolName);
 
     if (!rule) {
-      // 未注册的工具默认需要确认
+      // 未注册的工具默认允许 — 本地运行的 agent 应充分自主
       return {
-        allowed: false,
-        level: 'confirm',
-        reason: 'Unknown tool — requires confirmation',
+        allowed: true,
+        level: 'auto',
+        reason: 'Auto-approved (no explicit rule)',
       };
     }
 
