@@ -3426,115 +3426,135 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
             status: 'pending',
           }))
         : undefined,
-      conversationalPhase: (() => {
-        const phase = this.computeConversationalPhase();
-        if (phase.confidence > 0.6) {
-          this.contextWindow.setPhase(phase.phase);
-        }
-        return phase;
-      })(),
+      conversationalPhase: this.computeConversationalPhaseForPrompt(),
       goalConflicts: this.goalConflicts.length > 0 ? [...this.goalConflicts] : undefined,
       toolFailurePatterns: getFailurePatterns().length > 0 ? getFailurePatterns() : undefined,
-      temporalContext: (() => {
-        const eventNodes = this.hippocampus.getSemanticNodesByType('event');
-        const ctx = generateTemporalContext(this.previousInteractionTimestamp, eventNodes);
-        return ctx.formatted || undefined;
-      })(),
-      flowPrediction: (() => {
-        const pred = predictConversationFlow(this.conversationHistory);
-        if (pred.currentPattern === 'casual-chat' && pred.confidence < 0.5) return undefined;
-        const lines = [
-          `Pattern: ${pred.currentPattern} (confidence: ${(pred.confidence * 100).toFixed(0)}%)`,
-          pred.flowDescription,
-        ];
-        if (pred.predictedNextSteps.length > 0) {
-          lines.push(`Likely next: ${pred.predictedNextSteps.join(', ')}`);
-        }
-        if (pred.suggestedTools.length > 0) {
-          lines.push(`Prepare tools: ${pred.suggestedTools.join(', ')}`);
-        }
-        return lines.join('. ');
-      })(),
+      temporalContext: this.computeTemporalContext(),
+      flowPrediction: this.computeFlowPrediction(),
       lengthPreference: Math.abs(this.lengthPreference.score - 0.5) > 0.15
         ? `${this.lengthPreference.recommendation} (target ~${this.lengthPreference.suggestedMaxLength} chars)`
         : undefined,
-      toolPriority: (() => {
-        const flow = predictConversationFlow(this.conversationHistory);
-        const phase = this.contextWindow.getCurrentPhase();
-        const eventNodes = this.hippocampus.getSemanticNodesByType('event');
-        const temporal = generateTemporalContext(this.previousInteractionTimestamp, eventNodes);
-        if (flow.currentPattern === 'casual-chat' && phase === 'idle') return undefined;
-        const suggestion = suggestToolPriority(flow.currentPattern, phase, temporal.urgencyLevel);
-        if (suggestion.preferredTools.length === 0) return undefined;
-        return `Prefer: ${suggestion.preferredTools.join(', ')}. ${suggestion.reason}`;
-      })(),
-      conversationHealth: (() => {
-        const health = monitorConversationHealth(this.conversationHistory, this.recentTopics);
-        if (health.score >= 0.8) return undefined;
-        const parts = [`Health: ${(health.score * 100).toFixed(0)}%`];
-        if (health.issues.length > 0) parts.push(`Issues: ${health.issues.join('; ')}`);
-        parts.push(health.recommendation);
-        return parts.join('. ');
-      })(),
-      multiIntents: (() => {
-        if (!this.conversationHistory.length) return undefined;
-        const lastUser = this.conversationHistory.filter(m => m.role === 'user').slice(-1)[0];
-        if (!lastUser) return undefined;
-        const intents = detectMultiIntent(lastUser.content);
-        return intents.length > 1 ? intents.map(i => i.text) : undefined;
-      })(),
-      ambiguityWarnings: (() => {
-        if (!this.conversationHistory.length) return undefined;
-        const lastUser = this.conversationHistory.filter(m => m.role === 'user').slice(-1)[0];
-        if (!lastUser) return undefined;
-        const ambiguities = detectAmbiguity(lastUser.content);
-        return ambiguities.length > 0 ? ambiguities.map(a => a.clarification) : undefined;
-      })(),
-      goalDependencies: (() => {
-        const goals = this.listGoals();
-        if (goals.length < 2) return undefined;
-        const deps = buildGoalDependencyGraph(goals.map(g => ({
-          id: g.id, description: g.description, status: g.status,
-        })));
-        if (deps.length === 0) return undefined;
-        return deps.map(d => `${d.type}: ${d.description}`);
-      })(),
-      topicTransition: (() => {
-        if (this.recentTopics.length < 2) return undefined;
-        const lastUser = this.conversationHistory.filter(m => m.role === 'user').slice(-1)[0];
-        if (!lastUser) return undefined;
-        const prev = this.recentTopics[this.recentTopics.length - 2];
-        const topicHistory = this.recentTopics.map((t, i) => ({
-          topic: t, turnStart: i, turnEnd: i + 1,
-        }));
-        const transition = detectTopicTransition(lastUser.content, prev, this.conversationHistory.length, topicHistory);
-        if (!transition.transitioned) return undefined;
-        const parts = [`Topic shifted to "${transition.currentTopic}"`];
-        if (transition.returnedTo) parts.push(`(returned to "${transition.returnedTo}")`);
-        return parts.join(' ');
-      })(),
-      autonomousActions: (() => {
-        const flow = predictConversationFlow(this.conversationHistory);
-        const phase = this.contextWindow.getCurrentPhase();
-        const health = monitorConversationHealth(this.conversationHistory, this.recentTopics);
-        const lastUser = this.conversationHistory.filter(m => m.role === 'user').slice(-1)[0];
-        const intents = lastUser ? detectMultiIntent(lastUser.content) : [];
-        const ambiguities = lastUser ? detectAmbiguity(lastUser.content) : [];
-        const actions = decideAutonomousActions({
-          flowPattern: flow.currentPattern,
-          phase: phase.phase,
-          healthScore: health.score,
-          intentCount: intents.length,
-          hasAmbiguity: ambiguities.length > 0,
-          topicTransition: this.recentTopics.length >= 2 && this.recentTopics[this.recentTopics.length - 1] !== this.recentTopics[this.recentTopics.length - 2],
-          turnCount: this.conversationHistory.filter(m => m.role === 'user').length,
-          recentTopics: [...new Set(this.recentTopics)].slice(-5),
-          hasActiveGoals: this.listGoals().length > 0,
-        });
-        if (actions.length === 0) return undefined;
-        return actions.map(a => `- [${a.urgency}] ${a.type}: ${a.reason}${a.query ? ` (query: "${a.query}")` : ''}`);
-      })(),
+      toolPriority: this.computeToolPriority(),
+      conversationHealth: this.computeConversationHealth(),
+      multiIntents: this.computeMultiIntents(),
+      ambiguityWarnings: this.computeAmbiguityWarnings(),
+      goalDependencies: this.computeGoalDependencies(),
+      topicTransition: this.computeTopicTransition(),
+      autonomousActions: this.computeAutonomousActions(),
     });
+  }
+
+  private computeConversationalPhaseForPrompt() {
+    const phase = this.computeConversationalPhase();
+    if (phase.confidence > 0.6) {
+      this.contextWindow.setPhase(phase.phase);
+    }
+    return phase;
+  }
+
+  private computeTemporalContext(): string | undefined {
+    const eventNodes = this.hippocampus.getSemanticNodesByType('event');
+    const ctx = generateTemporalContext(this.previousInteractionTimestamp, eventNodes);
+    return ctx.formatted || undefined;
+  }
+
+  private computeFlowPrediction(): string | undefined {
+    const pred = predictConversationFlow(this.conversationHistory);
+    if (pred.currentPattern === 'casual-chat' && pred.confidence < 0.5) return undefined;
+    const lines = [
+      `Pattern: ${pred.currentPattern} (confidence: ${(pred.confidence * 100).toFixed(0)}%)`,
+      pred.flowDescription,
+    ];
+    if (pred.predictedNextSteps.length > 0) {
+      lines.push(`Likely next: ${pred.predictedNextSteps.join(', ')}`);
+    }
+    if (pred.suggestedTools.length > 0) {
+      lines.push(`Prepare tools: ${pred.suggestedTools.join(', ')}`);
+    }
+    return lines.join('. ');
+  }
+
+  private computeToolPriority(): string | undefined {
+    const flow = predictConversationFlow(this.conversationHistory);
+    const phase = this.contextWindow.getCurrentPhase();
+    const eventNodes = this.hippocampus.getSemanticNodesByType('event');
+    const temporal = generateTemporalContext(this.previousInteractionTimestamp, eventNodes);
+    if (flow.currentPattern === 'casual-chat' && phase === 'idle') return undefined;
+    const suggestion = suggestToolPriority(flow.currentPattern, phase, temporal.urgencyLevel);
+    if (suggestion.preferredTools.length === 0) return undefined;
+    return `Prefer: ${suggestion.preferredTools.join(', ')}. ${suggestion.reason}`;
+  }
+
+  private computeConversationHealth(): string | undefined {
+    const health = monitorConversationHealth(this.conversationHistory, this.recentTopics);
+    if (health.score >= 0.8) return undefined;
+    const parts = [`Health: ${(health.score * 100).toFixed(0)}%`];
+    if (health.issues.length > 0) parts.push(`Issues: ${health.issues.join('; ')}`);
+    parts.push(health.recommendation);
+    return parts.join('. ');
+  }
+
+  private computeMultiIntents(): string[] | undefined {
+    if (!this.conversationHistory.length) return undefined;
+    const lastUser = this.conversationHistory.filter(m => m.role === 'user').slice(-1)[0];
+    if (!lastUser) return undefined;
+    const intents = detectMultiIntent(lastUser.content);
+    return intents.length > 1 ? intents.map(i => i.text) : undefined;
+  }
+
+  private computeAmbiguityWarnings(): string[] | undefined {
+    if (!this.conversationHistory.length) return undefined;
+    const lastUser = this.conversationHistory.filter(m => m.role === 'user').slice(-1)[0];
+    if (!lastUser) return undefined;
+    const ambiguities = detectAmbiguity(lastUser.content);
+    return ambiguities.length > 0 ? ambiguities.map(a => a.clarification) : undefined;
+  }
+
+  private computeGoalDependencies(): string[] | undefined {
+    const goals = this.listGoals();
+    if (goals.length < 2) return undefined;
+    const deps = buildGoalDependencyGraph(goals.map(g => ({
+      id: g.id, description: g.description, status: g.status,
+    })));
+    if (deps.length === 0) return undefined;
+    return deps.map(d => `${d.type}: ${d.description}`);
+  }
+
+  private computeTopicTransition(): string | undefined {
+    if (this.recentTopics.length < 2) return undefined;
+    const lastUser = this.conversationHistory.filter(m => m.role === 'user').slice(-1)[0];
+    if (!lastUser) return undefined;
+    const prev = this.recentTopics[this.recentTopics.length - 2];
+    const topicHistory = this.recentTopics.map((t, i) => ({
+      topic: t, turnStart: i, turnEnd: i + 1,
+    }));
+    const transition = detectTopicTransition(lastUser.content, prev, this.conversationHistory.length, topicHistory);
+    if (!transition.transitioned) return undefined;
+    const parts = [`Topic shifted to "${transition.currentTopic}"`];
+    if (transition.returnedTo) parts.push(`(returned to "${transition.returnedTo}")`);
+    return parts.join(' ');
+  }
+
+  private computeAutonomousActions(): string[] | undefined {
+    const flow = predictConversationFlow(this.conversationHistory);
+    const phase = this.contextWindow.getCurrentPhase();
+    const health = monitorConversationHealth(this.conversationHistory, this.recentTopics);
+    const lastUser = this.conversationHistory.filter(m => m.role === 'user').slice(-1)[0];
+    const intents = lastUser ? detectMultiIntent(lastUser.content) : [];
+    const ambiguities = lastUser ? detectAmbiguity(lastUser.content) : [];
+    const actions = decideAutonomousActions({
+      flowPattern: flow.currentPattern,
+      phase: phase.phase,
+      healthScore: health.score,
+      intentCount: intents.length,
+      hasAmbiguity: ambiguities.length > 0,
+      topicTransition: this.recentTopics.length >= 2 && this.recentTopics[this.recentTopics.length - 1] !== this.recentTopics[this.recentTopics.length - 2],
+      turnCount: this.conversationHistory.filter(m => m.role === 'user').length,
+      recentTopics: [...new Set(this.recentTopics)].slice(-5),
+      hasActiveGoals: this.listGoals().length > 0,
+    });
+    if (actions.length === 0) return undefined;
+    return actions.map(a => `- [${a.urgency}] ${a.type}: ${a.reason}${a.query ? ` (query: "${a.query}")` : ''}`);
   }
 
   /**
