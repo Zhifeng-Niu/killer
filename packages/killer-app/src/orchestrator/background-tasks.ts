@@ -2195,3 +2195,85 @@ function extractKeywords(text: string): string[] {
   // 去重
   return [...new Set(words)];
 }
+
+// ============================================================
+// 回复去重 (Response Deduplication via N-gram Similarity)
+// ============================================================
+
+/** 相似度检测结果 */
+export interface SimilarityResult {
+  /** 与最相似回复的 Jaccard 相似度 (0-1) */
+  maxSimilarity: number;
+  /** 是否超过重复阈值 */
+  isRepetitive: boolean;
+  /** 相似回复的索引（在历史中） */
+  similarIndex: number;
+  /** 使用的 n-gram 大小 */
+  ngramSize: number;
+}
+
+/**
+ * 提取文本的 trigram 集合
+ */
+function extractTrigrams(text: string): Set<string> {
+  const normalized = text.toLowerCase().replace(/\s+/g, ' ').trim();
+  const trigrams = new Set<string>();
+  for (let i = 0; i <= normalized.length - 3; i++) {
+    trigrams.add(normalized.slice(i, i + 3));
+  }
+  return trigrams;
+}
+
+/**
+ * 计算 Set 的 Jaccard 相似度
+ */
+function setJaccard(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 0;
+  let intersection = 0;
+  for (const item of a) {
+    if (b.has(item)) intersection++;
+  }
+  const union = a.size + b.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+const REPETITION_THRESHOLD = 0.35;
+
+/**
+ * 检测新回复是否与历史回复重复
+ * 使用 trigram Jaccard 相似度比较
+ */
+export function detectResponseRepetition(
+  newResponse: string,
+  recentResponses: string[],
+  threshold: number = REPETITION_THRESHOLD,
+): SimilarityResult {
+  if (recentResponses.length === 0) {
+    return {
+      maxSimilarity: 0,
+      isRepetitive: false,
+      similarIndex: -1,
+      ngramSize: 3,
+    };
+  }
+
+  const newTrigrams = extractTrigrams(newResponse);
+  let maxSim = 0;
+  let maxIdx = -1;
+
+  for (let i = 0; i < recentResponses.length; i++) {
+    const histTrigrams = extractTrigrams(recentResponses[i]!);
+    const sim = setJaccard(newTrigrams, histTrigrams);
+    if (sim > maxSim) {
+      maxSim = sim;
+      maxIdx = i;
+    }
+  }
+
+  return {
+    maxSimilarity: maxSim,
+    isRepetitive: maxSim >= threshold,
+    similarIndex: maxIdx,
+    ngramSize: 3,
+  };
+}

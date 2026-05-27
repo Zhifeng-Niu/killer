@@ -32,6 +32,7 @@ import {
   generateTemporalContext,
   predictConversationFlow,
   evaluateResponseQuality,
+  detectResponseRepetition,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -1465,6 +1466,63 @@ describe('background-tasks', () => {
       expect(score).toHaveProperty('tags');
       expect(score.overall).toBeGreaterThanOrEqual(0);
       expect(score.overall).toBeLessThanOrEqual(1);
+    });
+  });
+
+  describe('detectResponseRepetition', () => {
+    it('should return no repetition for empty history', () => {
+      const result = detectResponseRepetition('Hello world', []);
+      expect(result.isRepetitive).toBe(false);
+      expect(result.maxSimilarity).toBe(0);
+    });
+
+    it('should detect identical responses as repetitive', () => {
+      const result = detectResponseRepetition(
+        'You should check the configuration file for errors.',
+        ['You should check the configuration file for errors.'],
+      );
+      expect(result.isRepetitive).toBe(true);
+      expect(result.maxSimilarity).toBeGreaterThan(0.9);
+    });
+
+    it('should detect similar responses as repetitive', () => {
+      const result = detectResponseRepetition(
+        'Please check the configuration file for any errors or issues.',
+        ['You should check the config file for errors and problems.'],
+      );
+      expect(result.isRepetitive).toBe(true);
+      expect(result.similarIndex).toBe(0);
+    });
+
+    it('should not flag different responses', () => {
+      const result = detectResponseRepetition(
+        'The API returns a JSON object with user data.',
+        ['You should restart the server to apply changes.'],
+      );
+      expect(result.isRepetitive).toBe(false);
+      expect(result.maxSimilarity).toBeLessThan(0.5);
+    });
+
+    it('should find most similar response across multiple', () => {
+      const result = detectResponseRepetition(
+        'Run npm install to add the dependency.',
+        [
+          'The database connection was lost. Try reconnecting.',
+          'Use npm install to add the package.',
+          'Click the button to submit the form.',
+        ],
+      );
+      expect(result.isRepetitive).toBe(true);
+      expect(result.similarIndex).toBe(1);
+    });
+
+    it('should respect custom threshold', () => {
+      const result = detectResponseRepetition(
+        'Install the package with npm.',
+        ['Add the package using npm install.'],
+        0.9, // very high threshold
+      );
+      expect(result.isRepetitive).toBe(false);
     });
   });
 });

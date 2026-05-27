@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 1969
-total_waypoints: 41
+total_waypoints: 42
 consecutive_discards: 0
 ---
 
@@ -85,6 +85,7 @@ npm test 2>&1
 38. **Flow Prediction in System Prompt** (waypoint 39): predictConversationFlow() wired into prompt builder as CONVERSATION FLOW section — LLM now sees current pattern, confidence, predicted next steps, and suggested tools for proactive response preparation
 39. **Response Quality Self-Evaluation** (waypoint 40): evaluateResponseQuality() scores responses on 4 dimensions (relevance, completeness, conciseness, actionability) with keyword overlap, multi-intent coverage, length appropriateness, and code/step/link detection
 40. **Quality Feedback Loop** (waypoint 41): evaluateAndAdjustQuality() runs after each response — verbose/over-explained tags push strategy towards concise, high actionability reinforces current direction, low relevance nudges towards intuitive mode. Slow alpha=0.1 prevents over-correction
+41. **Response Deduplication** (waypoint 42): detectResponseRepetition() uses trigram Jaccard similarity to compare new responses against recent history. Threshold 0.35 catches semantically similar responses, flagging them to avoid repetitive advice loops
 
 ### Dead Ends
 {Auto-updated by engine.}
