@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 1222
-total_waypoints: 15
+total_waypoints: 16
 consecutive_discards: 0
 ---
 
@@ -60,6 +60,7 @@ npm test 2>&1
 13. **Adaptive Response Strategy** (waypoint 13): StrategyScores tracks detail/concise, analytical/intuitive, proactive/reactive effectiveness via EMA, biases system prompt after 3+ interactions, persists via persona genome
 14. **Goal Auto-Generation** (waypoint 14, verified existing): handleGoalInInput + analyzeInputForGoal already auto-detect multi-step tasks from conversation via LLM and create tracked goals with plans
 15. **Tool Success Rate Tracking** (waypoint 15): Track tool execution outcomes per tool, inject TOOL PERFORMANCE into system prompt (✓/~ rating), persist across sessions, LLM adapts tool selection based on historical reliability
+16. **Predictive Context Preloading** (waypoint 16): High-confidence (>70%) predicted needs trigger proactive episodic memory retrieval, injected as PRELOADED CONTEXT — agent anticipates needs before user mentions them
 
 ### Dead Ends
 {Auto-updated by engine.}
