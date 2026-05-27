@@ -312,6 +312,52 @@
     eventRateEl.textContent = eventsPerMin + ' evt/s';
   }
 
+  // ── SSE event handler ──
+  function handleSSEEvent(e) {
+    let payload;
+    try {
+      payload = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+
+    // Normalize: named SSE events carry {type, source, data, ...}
+    // Hook events (cycle:start, llm:call, etc.) carry the payload directly
+    const sseType = e.type || '';  // the SSE event name (e.g. "consciousness", "cycle:start")
+    const eventType = payload.type || sseType;
+    const eventData = payload.data || payload;
+
+    const event = { type: eventType, data: eventData };
+
+    eventCount++;
+    eventTimestamps.push(Date.now());
+    pulseHistory[pulseHistory.length - 1] = Math.min(1, pulseHistory[pulseHistory.length - 1] + 0.15);
+
+    if (eventType.startsWith('tool')) {
+      toolCallCount++;
+    }
+    if (eventType.startsWith('memory') || eventType.startsWith('hippocampus')) {
+      memoryOps++;
+    }
+    if (eventType.startsWith('error') || eventType.startsWith('circuit')) {
+      errorCount++;
+    }
+    if (eventType.startsWith('emotion') || eventType === 'persona.update') {
+      handleEmotionEvent(eventData);
+    }
+    if (sseType.startsWith('cycle') || eventType.startsWith('cycle')) {
+      agentState.phase = eventData?.phase || eventData?.data?.phase || agentState.phase;
+      agentState.loops = eventData?.loopCount || agentState.loops;
+    }
+    // Consciousness events carry brainstem phase info
+    if (eventType === 'phase_change') {
+      agentState.phase = eventData?.phase || agentState.phase;
+    }
+
+    renderEvent(event);
+    updateMetrics();
+  }
+
   // ── SSE Connection ──
   function connectSSE() {
     const es = new EventSource(SSE_PATH);
@@ -321,41 +367,32 @@
       statusDot.classList.remove('disconnected');
     };
 
-    es.onmessage = function (e) {
-      let event;
-      try {
-        event = JSON.parse(e.data);
-      } catch {
-        return;
-      }
+    // Catch unnamed events (data-only, no event: prefix)
+    es.onmessage = handleSSEEvent;
 
-      eventCount++;
-      eventTimestamps.push(Date.now());
-      pulseHistory[pulseHistory.length - 1] = Math.min(1, pulseHistory[pulseHistory.length - 1] + 0.15);
-
-      // Route by event type
-      const type = event.type || '';
-
-      if (type.startsWith('tool')) {
-        toolCallCount++;
-      }
-      if (type.startsWith('memory') || type.startsWith('hippocampus')) {
-        memoryOps++;
-      }
-      if (type.startsWith('error') || type.startsWith('circuit')) {
-        errorCount++;
-      }
-      if (type.startsWith('emotion') || type === 'persona.update') {
-        handleEmotionEvent(event.data);
-      }
-      if (type.startsWith('cycle')) {
-        agentState.phase = event.data?.phase || agentState.phase;
-        agentState.loops = event.data?.loopCount || agentState.loops;
-      }
-
-      renderEvent(event);
-      updateMetrics();
-    };
+    // Listen for all named SSE event types from the agent
+    var namedEvents = [
+      'consciousness',
+      'cycle:start', 'cycle:end',
+      'llm:call', 'llm:response',
+      'tool:execute', 'tool:result',
+      'memory:store',
+      'cell:spawn',
+      'goal:created',
+      'delegate:start', 'delegate:complete',
+      'plugin:loaded', 'plugin:unloaded',
+      'input:received', 'input:processed',
+      'error:pipeline',
+      'emotion:update', 'persona.update',
+      'prediction.update', 'narrative.update',
+      'proactive.suggestion',
+      'experiment:begin', 'experiment:verified',
+      'experiment:decided', 'experiment:recorded',
+      'mission:started', 'mission:stopped',
+    ];
+    for (var i = 0; i < namedEvents.length; i++) {
+      es.addEventListener(namedEvents[i], handleSSEEvent);
+    }
 
     es.onerror = function () {
       connected = false;
