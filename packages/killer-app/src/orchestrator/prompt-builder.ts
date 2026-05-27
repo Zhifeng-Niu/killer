@@ -9,6 +9,7 @@ import type { PersonaEngine } from '../persona/engine.js';
 import type { HippocampusEngine, Episode } from '@killer/core';
 import type { ToolExecutor, EssenceForge, Plan } from '@killer/core';
 import type { ContextWindowManager, ContextMessage } from './context.js';
+import { scoreSectionRelevance } from './background-tasks.js';
 
 /**
  * 系统提示构建所需的依赖
@@ -813,61 +814,31 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   const totalChars = parts.reduce((sum, p) => sum + p.length, 0);
 
   if (totalChars > MAX_PROMPT_CHARS) {
-    // 根据对话阶段动态排序优先级（先裁剪的 = 低优先级）
-    const phase = deps.conversationalPhase?.phase ?? 'exploration';
-    const phasePriorityOrder: Record<string, string[]> = {
-      'deep-work': [
-        'You have ',           // memory stats — least useful in focused work
-        'DREAM INSIGHTS',      // dream learning
-        'META-COGNITION',      // self-awareness
-        'RESPONSE STRATEGY',   // adaptive strategy
-        'ATTENTION STATE',     // priority tracking
-        'PRELOADED CONTEXT',   // predictive preloading
-        'TOOL PERFORMANCE',    // tool tracking
-        'LEARNED BEHAVIORS',   // experiment insights
-      ],
-      'exploration': [
-        'You have ',
-        'TOOL PERFORMANCE',
-        'TOOL FAILURE PATTERNS',
-        'DREAM INSIGHTS',
-        'META-COGNITION',
-        'ATTENTION STATE',
-        'RESPONSE STRATEGY',
-        'PRELOADED CONTEXT',
-        'LEARNED BEHAVIORS',   // keep behaviors in exploration
-      ],
-      'wrap-up': [
-        'You have ',
-        'DREAM INSIGHTS',
-        'META-COGNITION',
-        'ATTENTION STATE',
-        'RESPONSE STRATEGY',
-        'PRELOADED CONTEXT',
-        'TOOL FAILURE PATTERNS',
-        'TOOL PERFORMANCE',
-        'LEARNED BEHAVIORS',
-      ],
-      'review': [
-        'You have ',
-        'DREAM INSIGHTS',
-        'ATTENTION STATE',
-        'RESPONSE STRATEGY',
-        'PRELOADED CONTEXT',
-        'META-COGNITION',
-        'TOOL FAILURE PATTERNS',
-        'LEARNED BEHAVIORS',
-        'TOOL PERFORMANCE',
-      ],
-    };
-    const lowPriorityPrefixes = phasePriorityOrder[phase] ?? phasePriorityOrder['exploration']!;
+    // 动态评分裁剪：基于当前对话上下文评估每个 section 的相关性
+    const allPrefixes = [
+      'You have ', 'DREAM INSIGHTS', 'META-COGNITION', 'ATTENTION STATE',
+      'RESPONSE STRATEGY', 'PRELOADED CONTEXT', 'TOOL PERFORMANCE',
+      'TOOL FAILURE PATTERNS', 'LEARNED BEHAVIORS', 'TEMPORAL CONTEXT',
+      'CONVERSATION FLOW', 'LENGTH PREFERENCE', 'TOOL PRIORITY',
+      'CONVERSATION HEALTH', 'MULTI-INTENT', 'INPUT AMBIGUITY',
+      'GOAL DEPENDENCIES', 'TOPIC TRANSITION', 'SUGGESTED ACTIONS',
+    ];
 
-    // 从低优先级 section 开始裁剪，直到满足预算
-    for (const prefix of lowPriorityPrefixes) {
+    const scored = allPrefixes
+      .map(prefix => scoreSectionRelevance(prefix, {
+        phase: deps.conversationalPhase?.phase ?? 'exploration',
+        flowPattern: deps.flowPrediction ? 'detected' : 'question-answer',
+        healthScore: deps.conversationHealth ? 0.5 : 0.9,
+        recentTopics: deps.conversationMeta?.recentTopics ?? [],
+        hasActiveGoals: (deps.goalDependencyTree?.length ?? 0) > 0,
+        turnCount: deps.conversationMeta?.turnCount ?? 0,
+      }))
+      .sort((a, b) => a.score - b.score); // lowest relevance first
+
+    for (const { prefix } of scored) {
       if (parts.reduce((s, p) => s + p.length, 0) <= MAX_PROMPT_CHARS) break;
       const idx = parts.findIndex(p => p.includes(prefix));
       if (idx >= 0) {
-        // 移除该 section 及其后续子行（缩进的 bullet points）
         parts.splice(idx, 1);
         while (idx < parts.length && parts[idx]?.startsWith('  ')) {
           parts.splice(idx, 1);

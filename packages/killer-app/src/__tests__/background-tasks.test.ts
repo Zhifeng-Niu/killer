@@ -41,6 +41,7 @@ import {
   decideAutonomousActions,
   classifyInteractionOutcome,
   suggestStrategyAdjustment,
+  scoreSectionRelevance,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -1941,6 +1942,63 @@ describe('background-tasks', () => {
         context: { flowPattern: '', phase: '', strategyUsed: '' },
       });
       expect(adjustment).toBeNull();
+    });
+  });
+
+  describe('scoreSectionRelevance', () => {
+    const baseCtx = {
+      phase: 'exploration',
+      flowPattern: 'question-answer',
+      healthScore: 0.8,
+      recentTopics: ['testing'],
+      hasActiveGoals: false,
+      turnCount: 5,
+    };
+
+    it('should give low score to memory stats', () => {
+      const result = scoreSectionRelevance('You have ', baseCtx);
+      expect(result.score).toBeLessThan(0.3);
+    });
+
+    it('should boost tool sections in deep-work', () => {
+      const result = scoreSectionRelevance('TOOL PERFORMANCE', { ...baseCtx, phase: 'deep-work' });
+      const base = scoreSectionRelevance('TOOL PERFORMANCE', baseCtx);
+      expect(result.score).toBeGreaterThan(base.score);
+    });
+
+    it('should penalize tools in idle', () => {
+      const result = scoreSectionRelevance('TOOL PERFORMANCE', { ...baseCtx, phase: 'idle' });
+      const base = scoreSectionRelevance('TOOL PERFORMANCE', baseCtx);
+      expect(result.score).toBeLessThan(base.score);
+    });
+
+    it('should boost meta-cognition in low health', () => {
+      const result = scoreSectionRelevance('META-COGNITION', { ...baseCtx, healthScore: 0.3 });
+      const base = scoreSectionRelevance('META-COGNITION', baseCtx);
+      expect(result.score).toBeGreaterThan(base.score);
+    });
+
+    it('should boost tools in debug flow', () => {
+      const result = scoreSectionRelevance('TOOL PRIORITY', { ...baseCtx, flowPattern: 'debug-diagnose-fix' });
+      const base = scoreSectionRelevance('TOOL PRIORITY', baseCtx);
+      expect(result.score).toBeGreaterThan(base.score);
+    });
+
+    it('should boost goal sections with active goals', () => {
+      const result = scoreSectionRelevance('GOAL DEPENDENCIES', { ...baseCtx, hasActiveGoals: true });
+      const base = scoreSectionRelevance('GOAL DEPENDENCIES', baseCtx);
+      expect(result.score).toBeGreaterThan(base.score);
+    });
+
+    it('should return default 0.5 for unknown sections', () => {
+      const result = scoreSectionRelevance('UNKNOWN_SECTION', baseCtx);
+      expect(result.score).toBe(0.5);
+    });
+
+    it('should clamp score to [0, 1]', () => {
+      const result = scoreSectionRelevance('DREAM INSIGHTS', { ...baseCtx, phase: 'deep-work', healthScore: 0.9 });
+      expect(result.score).toBeGreaterThanOrEqual(0);
+      expect(result.score).toBeLessThanOrEqual(1);
     });
   });
 });

@@ -2780,3 +2780,103 @@ export function suggestStrategyAdjustment(outcome: OutcomeRecord): StrategyAdjus
       return null;
   }
 }
+
+/**
+ * Prompt section 相关性评分 — 动态评估每个 section 对当前对话的价值
+ */
+export interface SectionScore {
+  prefix: string;
+  score: number;
+  reason: string;
+}
+
+export function scoreSectionRelevance(
+  sectionPrefix: string,
+  context: {
+    phase: string;
+    flowPattern: string;
+    healthScore: number;
+    recentTopics: string[];
+    hasActiveGoals: boolean;
+    turnCount: number;
+  },
+): SectionScore {
+  const baseScores: Record<string, number> = {
+    'You have ': 0.2,
+    'DREAM INSIGHTS': 0.3,
+    'META-COGNITION': 0.35,
+    'ATTENTION STATE': 0.4,
+    'RESPONSE STRATEGY': 0.45,
+    'PRELOADED CONTEXT': 0.5,
+    'TOOL PERFORMANCE': 0.45,
+    'TOOL FAILURE PATTERNS': 0.5,
+    'LEARNED BEHAVIORS': 0.5,
+    'TEMPORAL CONTEXT': 0.55,
+    'CONVERSATION FLOW': 0.5,
+    'LENGTH PREFERENCE': 0.4,
+    'TOOL PRIORITY': 0.55,
+    'CONVERSATION HEALTH': 0.6,
+    'MULTI-INTENT': 0.65,
+    'INPUT AMBIGUITY': 0.7,
+    'GOAL DEPENDENCIES': 0.6,
+    'TOPIC TRANSITION': 0.55,
+    'SUGGESTED ACTIONS': 0.6,
+  };
+
+  let score = baseScores[sectionPrefix] ?? 0.5;
+  const reason: string[] = [`base: ${score.toFixed(2)}`];
+
+  if (context.phase === 'deep-work') {
+    if (['TOOL PERFORMANCE', 'TOOL PRIORITY', 'TOOL FAILURE PATTERNS'].includes(sectionPrefix)) {
+      score += 0.15;
+      reason.push('deep-work boost (tools)');
+    }
+    if (['DREAM INSIGHTS', 'META-COGNITION', 'ATTENTION STATE'].includes(sectionPrefix)) {
+      score -= 0.1;
+      reason.push('deep-work penalty (distraction)');
+    }
+  }
+
+  if (context.phase === 'exploration') {
+    if (['LEARNED BEHAVIORS', 'TEMPORAL CONTEXT', 'CONVERSATION FLOW'].includes(sectionPrefix)) {
+      score += 0.1;
+      reason.push('exploration boost (context)');
+    }
+  }
+
+  if (context.phase === 'idle') {
+    if (['DREAM INSIGHTS', 'LEARNED BEHAVIORS', 'ATTENTION STATE'].includes(sectionPrefix)) {
+      score += 0.1;
+      reason.push('idle boost (background)');
+    }
+    if (['TOOL PERFORMANCE', 'TOOL PRIORITY', 'TOOL FAILURE PATTERNS'].includes(sectionPrefix)) {
+      score -= 0.15;
+      reason.push('idle penalty (tools)');
+    }
+  }
+
+  if (context.healthScore < 0.5) {
+    if (['CONVERSATION HEALTH', 'META-COGNITION', 'INPUT AMBIGUITY'].includes(sectionPrefix)) {
+      score += 0.2;
+      reason.push('low-health boost');
+    }
+  }
+
+  if (context.flowPattern === 'debug-diagnose-fix') {
+    if (['TOOL PERFORMANCE', 'TOOL FAILURE PATTERNS', 'TOOL PRIORITY', 'SUGGESTED ACTIONS'].includes(sectionPrefix)) {
+      score += 0.1;
+      reason.push('debug flow boost');
+    }
+  }
+
+  if (context.hasActiveGoals) {
+    if (['GOAL DEPENDENCIES', 'SUGGESTED ACTIONS'].includes(sectionPrefix)) {
+      score += 0.1;
+      reason.push('active-goals boost');
+    }
+  }
+
+  score = Math.max(0, Math.min(1, score));
+
+  return { prefix: sectionPrefix, score, reason: reason.join(', ') };
+}
