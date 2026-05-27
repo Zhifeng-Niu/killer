@@ -906,7 +906,7 @@ Examples:
       avgRecentMessageLength: avgLen,
       hasActiveGoals: activePlans.length > 0,
       secondsSinceLastMessage: lastUserMsg
-        ? (Date.now() - (lastUserMsg as any).timestamp) / 1000
+        ? (Date.now() - lastUserMsg.timestamp) / 1000
         : 9999,
       hasWrapUpSignals: WRAP_UP.test(lastContent),
       hasTechnicalContent: TECHNICAL.test(lastContent),
