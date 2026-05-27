@@ -37,6 +37,28 @@ export interface DelegationResult {
 }
 
 /**
+ * 委派历史记录
+ */
+interface DelegationRecord {
+  task: string;
+  cellType: CellType;
+  description: string;
+  success: boolean;
+  durationMs: number;
+  timestamp: number;
+}
+
+/**
+ * Cell 能力画像
+ */
+interface CellProfile {
+  totalTasks: number;
+  successes: number;
+  avgDurationMs: number;
+  lastUsed: number;
+}
+
+/**
  * 任务委派器
  *
  * 管理子任务的创建、分发、收集和综合
@@ -46,6 +68,10 @@ export class TaskDelegate {
   private readonly llm: LLMProvider;
   private readonly primeCellId: CellId;
   private readonly onLog?: (message: string) => void;
+
+  private readonly history: DelegationRecord[] = [];
+  private readonly cellProfiles: Map<string, CellProfile> = new Map();
+  private static readonly MAX_HISTORY = 200;
 
   constructor(
     synapse: SynapseProtocol,
@@ -85,18 +111,29 @@ export class TaskDelegate {
     // 4. 综合结果
     const synthesis = await this.synthesizeResults(task, subtasks);
 
-    // 5. 清理临时 Cell
+    // 5. 记录委派历史
+    const elapsedMs = Date.now() - startedAt;
+    for (const st of subtasks) {
+      this.recordDelegation({
+        task: st.description,
+        cellType: st.cellType,
+        description: st.description,
+        success: st.status === 'completed',
+        durationMs: st.status !== 'pending' ? Math.round(elapsedMs / subtasks.length) : 0,
+      });
+    }
+
+    // 6. 清理临时 Cell
     this.cleanupCells(subtasks);
 
-    const durationMs = Date.now() - startedAt;
-    this.log(`Task completed in ${durationMs}ms using ${subtasks.length} cells`);
+    this.log(`Task completed in ${elapsedMs}ms using ${subtasks.length} cells`);
 
     return {
       taskId,
       subtasks,
       synthesis,
       totalCellsUsed: subtasks.filter(st => st.assignedCellId).length,
-      durationMs,
+      durationMs: elapsedMs,
     };
   }
 
@@ -104,6 +141,11 @@ export class TaskDelegate {
    * 使用 LLM 分解任务为子任务
    */
   private async decomposeTask(task: string, taskId: string): Promise<SubTask[]> {
+    const profileSection = this.getProfileSummary();
+    const profileHint = profileSection
+      ? `\n\nHistorical cell performance (prefer higher success rates):\n${profileSection}`
+      : '';
+
     const decomposePrompt = `Given this task: "${task}"
 
 Break it down into 1-4 focused subtasks. For each subtask, assign the most appropriate cell type:
@@ -111,7 +153,7 @@ Break it down into 1-4 focused subtasks. For each subtask, assign the most appro
 - artisan: for coding, building, implementing
 - negotiator: for coordination, communication
 - evolver: for optimization, improvement
-
+${profileHint}
 Respond in this exact format (one subtask per line):
 CELL_TYPE | description of subtask
 
@@ -314,6 +356,50 @@ Please provide a coherent, unified response that integrates all findings. Be con
       default:
         return ['general'];
     }
+  }
+
+  /**
+   * 记录委派历史并更新 Cell 能力画像
+   */
+  private recordDelegation(record: Omit<DelegationRecord, 'timestamp'>): void {
+    const entry: DelegationRecord = { ...record, timestamp: Date.now() };
+    this.history.push(entry);
+    if (this.history.length > TaskDelegate.MAX_HISTORY) {
+      this.history.shift();
+    }
+
+    const key = record.cellType as string;
+    const profile = this.cellProfiles.get(key) ?? {
+      totalTasks: 0, successes: 0, avgDurationMs: 0, lastUsed: 0,
+    };
+    const totalMs = profile.avgDurationMs * profile.totalTasks + record.durationMs;
+    profile.totalTasks += 1;
+    profile.successes += record.success ? 1 : 0;
+    profile.avgDurationMs = totalMs / profile.totalTasks;
+    profile.lastUsed = Date.now();
+    this.cellProfiles.set(key, profile);
+  }
+
+  /**
+   * 获取某 Cell 类型的成功率（0-1）
+   */
+  getSuccessRate(cellType: CellType): number {
+    const profile = this.cellProfiles.get(cellType as string);
+    if (!profile || profile.totalTasks === 0) return 0.5;
+    return profile.successes / profile.totalTasks;
+  }
+
+  /**
+   * 获取所有 Cell 的能力画像摘要（用于 LLM 提示）
+   */
+  private getProfileSummary(): string {
+    if (this.cellProfiles.size === 0) return '';
+    const lines: string[] = [];
+    for (const [type, p] of this.cellProfiles) {
+      const rate = p.totalTasks > 0 ? `${Math.round((p.successes / p.totalTasks) * 100)}%` : 'N/A';
+      lines.push(`- ${type}: ${p.totalTasks} tasks, ${rate} success, avg ${Math.round(p.avgDurationMs)}ms`);
+    }
+    return lines.join('\n');
   }
 
   /**
