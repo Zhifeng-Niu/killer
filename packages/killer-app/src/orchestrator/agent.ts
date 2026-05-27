@@ -3579,7 +3579,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
   private computeAutonomousActions(): string[] | undefined {
     const flow = predictConversationFlow(this.conversationHistory);
-    const phase = this.contextWindow.getCurrentPhase();
+    const phase = this.computeConversationalPhase();
     const health = monitorConversationHealth(this.conversationHistory, this.recentTopics);
     const lastUser = this.conversationHistory.filter(m => m.role === 'user').slice(-1)[0];
     const intents = lastUser ? detectMultiIntent(lastUser.content) : [];
@@ -3588,7 +3588,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     const hasGoals = this.listGoals().length > 0;
     const actions = decideAutonomousActions({
       flowPattern: flow.currentPattern,
-      phase: phase,
+      phase: phase.phase,
       healthScore: health.score,
       intentCount: intents.length,
       hasAmbiguity: ambiguities.length > 0,
@@ -3656,7 +3656,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     if (userMessages.length < 3) return undefined;
 
     const flow = predictConversationFlow(this.conversationHistory);
-    const phase = this.contextWindow.getCurrentPhase();
+    const phase = this.computeConversationalPhase();
     const health = monitorConversationHealth(this.conversationHistory, this.recentTopics);
     const es = this.persona.emotionalState.getState();
     const rhythm = analyzeConversationRhythm(
@@ -3666,7 +3666,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
     const pv = fusePerceptionSignals({
       flowConfidence: flow.confidence,
-      phaseConfidence: 0.7,
+      phaseConfidence: phase.confidence,
       rhythmConfidence: rhythm.confidence,
       emotionalIntensity: es.intensity,
       emotionalValence: es.current.valence,
@@ -3742,7 +3742,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     if (userMsgs.length < 3) return undefined;
 
     const flow = predictConversationFlow(this.conversationHistory);
-    const phase = this.contextWindow.getCurrentPhase();
+    const phase = this.computeConversationalPhase();
     const health = monitorConversationHealth(this.conversationHistory, this.recentTopics);
     const es = this.persona.emotionalState.getState();
     const rhythm = analyzeConversationRhythm(
@@ -3751,8 +3751,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     const expertise = buildUserExpertiseProfile(userMsgs.map(m => m.content));
 
     const summary = generateCognitiveStateSummary({
-      phase: phase,
-      phaseConfidence: 0.7,
+      phase: phase.phase,
+      phaseConfidence: phase.confidence,
       flowPattern: flow.currentPattern,
       flowConfidence: flow.confidence,
       rhythm: rhythm.rhythm,
