@@ -150,7 +150,7 @@ export class KillerAgent {
   readonly contextWindow: ContextWindowManager = new ContextWindowManager();
 
   // 对话上下文（工作记忆窗口）
-  private conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  private conversationHistory: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }> = [];
   private readonly maxConversationTurns = 20;
   private readonly sessionDir: string;
   private readonly toolTimeoutMs = 30000; // 30s default timeout
@@ -1923,8 +1923,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       });
 
       // 存储到对话历史
-      this.conversationHistory.push({ role: 'user', content: `/think ${topic}` });
-      this.conversationHistory.push({ role: 'assistant', content: conclusion });
+      this.conversationHistory.push({ role: 'user', content: `/think ${topic}`, timestamp: Date.now() });
+      this.conversationHistory.push({ role: 'assistant', content: conclusion, timestamp: Date.now() });
 
       return { conclusion, confidence, suggestedActions };
     } catch {
@@ -2344,7 +2344,11 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       data = this.migrateSessionData(data);
 
       if (data.conversationHistory && Array.isArray(data.conversationHistory)) {
-        this.conversationHistory = data.conversationHistory;
+        this.conversationHistory = data.conversationHistory.map((m: { role: string; content: string; timestamp?: number }) => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+          timestamp: m.timestamp ?? Date.now(),
+        }));
       }
       // Restore persona genome
       if (data.personaGenome) {
@@ -2558,8 +2562,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         }
 
         // 记录到对话历史（工具链循环已在 runNativeToolLoop 中完成）
-        this.conversationHistory.push({ role: 'user', content: innerCtx.input });
-        this.conversationHistory.push({ role: 'assistant', content: response });
+        this.conversationHistory.push({ role: 'user', content: innerCtx.input, timestamp: Date.now() });
+        this.conversationHistory.push({ role: 'assistant', content: response, timestamp: Date.now() });
         if (this.conversationHistory.length > this.maxConversationTurns * 2) {
           this.conversationHistory = this.conversationHistory.slice(-this.maxConversationTurns * 2);
         }
@@ -3064,8 +3068,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     onToken?.(result.synthesis);
 
     // 记录到对话历史
-    this.conversationHistory.push({ role: 'user', content: `[delegate] ${task}` });
-    this.conversationHistory.push({ role: 'assistant', content: result.synthesis });
+    this.conversationHistory.push({ role: 'user', content: `[delegate] ${task}`, timestamp: Date.now() });
+    this.conversationHistory.push({ role: 'assistant', content: result.synthesis, timestamp: Date.now() });
     if (this.conversationHistory.length > this.maxConversationTurns * 2) {
       this.conversationHistory = this.conversationHistory.slice(-this.maxConversationTurns * 2);
     }
@@ -3584,7 +3588,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     const hasGoals = this.listGoals().length > 0;
     const actions = decideAutonomousActions({
       flowPattern: flow.currentPattern,
-      phase: phase.phase,
+      phase: phase,
       healthScore: health.score,
       intentCount: intents.length,
       hasAmbiguity: ambiguities.length > 0,
@@ -3662,7 +3666,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
     const pv = fusePerceptionSignals({
       flowConfidence: flow.confidence,
-      phaseConfidence: phase.confidence,
+      phaseConfidence: 0.7,
       rhythmConfidence: rhythm.confidence,
       emotionalIntensity: es.intensity,
       emotionalValence: es.current.valence,
@@ -3747,8 +3751,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     const expertise = buildUserExpertiseProfile(userMsgs.map(m => m.content));
 
     const summary = generateCognitiveStateSummary({
-      phase: phase.phase,
-      phaseConfidence: phase.confidence,
+      phase: phase,
+      phaseConfidence: 0.7,
       flowPattern: flow.currentPattern,
       flowConfidence: flow.confidence,
       rhythm: rhythm.rhythm,
@@ -3859,8 +3863,12 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
   /**
    * 恢复对话历史（用于会话恢复）
    */
-  restoreConversationHistory(history: Array<{ role: 'user' | 'assistant'; content: string }>): void {
-    this.conversationHistory = history;
+  restoreConversationHistory(history: Array<{ role: 'user' | 'assistant'; content: string; timestamp?: number }>): void {
+    this.conversationHistory = history.map(m => ({
+      role: m.role,
+      content: m.content,
+      timestamp: m.timestamp ?? Date.now(),
+    }));
     this.logger.info(`Restored ${history.length} conversation turns`);
   }
 

@@ -20,7 +20,7 @@ export interface PromptBuilderDeps {
   readonly tools: ToolExecutor;
   readonly contextWindow: ContextWindowManager;
   readonly essenceForge?: EssenceForge;
-  conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
+  conversationHistory: Array<{ role: 'user' | 'assistant'; content: string; timestamp?: number }>;
   /** 当前用户输入（用于关联记忆检索） */
   currentInput?: string;
   /** 首次启动（无记忆、无交互历史） */
