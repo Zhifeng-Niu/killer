@@ -1132,6 +1132,53 @@ Examples:
         completedAt: Date.now(),
       });
       this.updatePrefrontalStatus();
+
+      // 如果步骤失败，考虑用 Cerebellum 做实验
+      this.triggerExperimentForFailedStep(planId, step).catch(() => {});
+    }
+  }
+
+  /**
+   * 当计划步骤失败时，尝试用 Cerebellum 做实验寻找替代方案
+   */
+  private async triggerExperimentForFailedStep(
+    planId: string,
+    step: PlanStep,
+  ): Promise<void> {
+    const plan = this.planExecutor.getPlan(planId);
+    if (!plan) return;
+
+    // 检查是否已有活跃的 cerebellum mission
+    if (this.cerebellum.hasActiveMission()) return;
+
+    // 用 LLM 生成实验假设
+    const prompt = `A plan step failed. Generate a different approach hypothesis.
+
+Failed step: "${step.description}"
+Plan goal: ${plan.steps.map(s => s.description).join(' → ')}
+
+What alternative approach should we try? One sentence only.`;
+
+    try {
+      const hypothesis = await this.callLLMWithRetry(prompt, '');
+      const mission = this.cerebellum.createMission({
+        goal: `Find alternative for: ${step.description}`,
+        context: `Original plan step failed. Trying: ${hypothesis.trim()}`,
+        orientation: 'creative',
+        maxWaypoints: 3,
+      });
+
+      this.cerebellum.activateMission(mission);
+
+      this.consciousness.emit({
+        type: 'mission.created',
+        source: 'prefrontal',
+        data: { missionId: mission.id, reason: 'plan step failed', hypothesis: hypothesis.trim() },
+      });
+
+      this.logger.info(`Created Cerebellum mission for failed step: ${hypothesis.trim().slice(0, 60)}`);
+    } catch {
+      // Experiment trigger should never disrupt main flow
     }
   }
 
