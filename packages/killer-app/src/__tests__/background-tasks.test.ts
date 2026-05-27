@@ -48,6 +48,7 @@ import {
   analyzeConversationRhythm,
   buildUserExpertiseProfile,
   mapEmotionToResponseStrategy,
+  fusePerceptionSignals,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -2307,6 +2308,73 @@ describe('background-tasks', () => {
         valence: 0.1, arousal: 0.2, intensity: 0.1, primaryEmotion: 'neutral',
       });
       expect(strategy.toneHint).toContain('Natural');
+    });
+  });
+
+  describe('fusePerceptionSignals', () => {
+    const base = {
+      flowConfidence: 0.5,
+      phaseConfidence: 0.5,
+      rhythmConfidence: 0.5,
+      emotionalIntensity: 0.3,
+      emotionalValence: 0.0,
+      conversationHealth: 0.8,
+      expertiseDomainCount: 1,
+    };
+
+    it('should return balanced mode for normal context', () => {
+      const pv = fusePerceptionSignals(base);
+      expect(pv.behaviorMode).toBe('balanced');
+      expect(pv.overallAttention).toBeGreaterThan(0);
+      expect(pv.fusedHint).toBeTruthy();
+    });
+
+    it('should return urgent mode for low health + high emotion', () => {
+      const pv = fusePerceptionSignals({
+        ...base,
+        conversationHealth: 0.2,
+        emotionalIntensity: 0.7,
+        emotionalValence: -0.5,
+      });
+      expect(pv.behaviorMode).toBe('urgent');
+      expect(pv.overallAttention).toBeGreaterThan(0.5);
+    });
+
+    it('should return supportive mode for negative emotion', () => {
+      const pv = fusePerceptionSignals({
+        ...base,
+        emotionalIntensity: 0.6,
+        emotionalValence: -0.5,
+        conversationHealth: 0.7,
+      });
+      expect(pv.behaviorMode).toBe('supportive');
+    });
+
+    it('should return focused mode for high confidence + expertise', () => {
+      const pv = fusePerceptionSignals({
+        ...base,
+        flowConfidence: 0.8,
+        phaseConfidence: 0.8,
+        rhythmConfidence: 0.8,
+        expertiseDomainCount: 3,
+      });
+      expect(pv.behaviorMode).toBe('focused');
+    });
+
+    it('should return exploratory mode for low confidence', () => {
+      const pv = fusePerceptionSignals({
+        ...base,
+        flowConfidence: 0.1,
+        phaseConfidence: 0.1,
+        emotionalIntensity: 0.1,
+      });
+      expect(pv.behaviorMode).toBe('exploratory');
+    });
+
+    it('should compute overallAttention from all dimensions', () => {
+      const pv = fusePerceptionSignals(base);
+      expect(pv.overallAttention).toBeGreaterThanOrEqual(0);
+      expect(pv.overallAttention).toBeLessThanOrEqual(1);
     });
   });
 });

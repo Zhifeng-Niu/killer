@@ -3329,3 +3329,97 @@ export function mapEmotionToResponseStrategy(context: {
     empathyAction: 'Be attentive to emotional cues.',
   };
 }
+
+/**
+ * 综合感知状态向量
+ */
+export interface PerceptionVector {
+  /** 流模式置信度 0-1 */
+  flowConfidence: number;
+  /** 对话阶段置信度 0-1 */
+  phaseConfidence: number;
+  /** 节奏置信度 0-1 */
+  rhythmConfidence: number;
+  /** 情感强度 0-1 */
+  emotionalIntensity: number;
+  /** 情感效价 -1 到 1 */
+  emotionalValence: number;
+  /** 对话健康度 0-1 */
+  conversationHealth: number;
+  /** 专长领域数 */
+  expertiseDomainCount: number;
+  /** 综合优先级 — 高值表示需要更多关注 */
+  overallAttention: number;
+  /** 推荐的 agent 行为模式 */
+  behaviorMode: 'focused' | 'exploratory' | 'supportive' | 'urgent' | 'balanced';
+  /** 融合建议 */
+  fusedHint: string;
+}
+
+/**
+ * 融合所有感知信号为综合状态向量
+ *
+ * 将 flow、phase、rhythm、emotion、expertise、health 六个维度
+ * 融合为一个向量，推导出 agent 的行为模式和优先级。
+ */
+export function fusePerceptionSignals(context: {
+  flowConfidence: number;
+  phaseConfidence: number;
+  rhythmConfidence: number;
+  emotionalIntensity: number;
+  emotionalValence: number;
+  conversationHealth: number;
+  expertiseDomainCount: number;
+}): PerceptionVector {
+  const {
+    flowConfidence,
+    phaseConfidence,
+    rhythmConfidence,
+    emotionalIntensity,
+    emotionalValence,
+    conversationHealth,
+    expertiseDomainCount,
+  } = context;
+
+  // 综合注意力：低健康 + 高情感 + 高置信度 → 高注意力
+  const signalStrength = (flowConfidence + phaseConfidence + rhythmConfidence) / 3;
+  const healthPressure = 1 - conversationHealth;
+  const emotionalPressure = emotionalIntensity;
+  const overallAttention = Math.min(1,
+    0.3 * signalStrength + 0.35 * healthPressure + 0.35 * emotionalPressure,
+  );
+
+  // 行为模式推导
+  let behaviorMode: PerceptionVector['behaviorMode'];
+  let fusedHint: string;
+
+  if (healthPressure > 0.6 && emotionalPressure > 0.5) {
+    behaviorMode = 'urgent';
+    fusedHint = 'User is frustrated and conversation is stuck. Prioritize fixing the immediate issue. Be direct and empathetic.';
+  } else if (emotionalIntensity > 0.4 && emotionalValence < -0.3) {
+    behaviorMode = 'supportive';
+    fusedHint = 'User shows negative emotion. Be patient, thorough, and reassuring. Prioritize clarity over speed.';
+  } else if (signalStrength > 0.7 && expertiseDomainCount >= 2) {
+    behaviorMode = 'focused';
+    fusedHint = 'High-confidence context with knowledgeable user. Be precise, technical, and efficient. Skip basics.';
+  } else if (flowConfidence < 0.3 && phaseConfidence < 0.3) {
+    behaviorMode = 'exploratory';
+    fusedHint = 'Uncertain context. Ask clarifying questions, explore the problem space before committing to a direction.';
+  } else {
+    behaviorMode = 'balanced';
+    fusedHint = 'Normal interaction. Balance detail with brevity, respond to the specific question.';
+  }
+
+  return {
+    flowConfidence,
+    phaseConfidence,
+    rhythmConfidence,
+    emotionalIntensity,
+    emotionalValence,
+    conversationHealth,
+    expertiseDomainCount,
+    overallAttention,
+    behaviorMode,
+    fusedHint,
+  };
+}

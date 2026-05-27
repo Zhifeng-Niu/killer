@@ -100,6 +100,8 @@ export interface PromptBuilderDeps {
   userExpertise?: string;
   /** 情感驱动的响应策略 */
   emotionalStrategy?: string;
+  /** 综合感知融合 */
+  perceptionFusion?: string;
 }
 
 /**
@@ -329,6 +331,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 情感响应策略 ===
   if (deps.emotionalStrategy) {
     parts.push(`\nEMOTIONAL RESPONSE STRATEGY — ${deps.emotionalStrategy}`);
+  }
+
+  // === 综合感知融合 ===
+  if (deps.perceptionFusion) {
+    parts.push(`\nPERCEPTION FUSION — ${deps.perceptionFusion}`);
   }
 
   // === 自主行动建议 ===
