@@ -2350,6 +2350,9 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           this.recentTopics.push(...detectedTopics);
           if (this.recentTopics.length > 30) this.recentTopics = this.recentTopics.slice(-30);
 
+          // 自适应策略追踪 — 评估上一轮策略效果
+          this.updateStrategyEffectiveness(innerCtx.input, estimatedSatisfaction);
+
           // 4. 存储 episodic memory
           this.hippocampus.storeEpisode({
             title: innerCtx.input.slice(0, 50),
@@ -2914,6 +2917,51 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     return last3[0] === last3[1] || last3[1] === last3[2];
   }
 
+  /**
+   * 更新策略效果追踪
+   *
+   * 基于用户对上一轮回复的反应，评估当前策略组合的效果。
+   * 正面信号：满意度高、用户继续话题
+   * 负面信号：用户追问澄清、满意度低
+   */
+  private updateStrategyEffectiveness(userInput: string, satisfaction: number): void {
+    try {
+      const profile = this.persona.getUserModel().preferenceProfile;
+      const scores = profile.strategyScores ?? {
+        detailVsConcise: 0.5,
+        analyticalVsIntuitive: 0.5,
+        proactiveVsReactive: 0.5,
+        sampleCount: 0,
+      };
+
+      const isClarification = /\b(what do you mean|clarify|explain more|I don't understand|我不明白|能再说清楚|什么意思)\b/i.test(userInput);
+      const isTopicContinuation = this.recentTopics.length > 1 &&
+        this.recentTopics[this.recentTopics.length - 1] === this.recentTopics[this.recentTopics.length - 2];
+
+      // 效果信号：满意度 + 话题延续 - 澄清需求
+      const signal = Math.max(0, Math.min(1,
+        satisfaction + (isTopicContinuation ? 0.1 : 0) - (isClarification ? 0.2 : 0),
+      ));
+
+      // 用指数移动平均更新（alpha = 0.2，对新信号适度响应）
+      const alpha = 0.2;
+      const currentVerbosity = profile.verbosity === 'detailed' ? 1 : profile.verbosity === 'concise' ? 0 : 0.5;
+      const currentFormality = profile.formality === 'formal' ? 1 : profile.formality === 'casual' ? 0 : 0.5;
+      const currentProactivity = profile.proactivity === 'autonomous' ? 1 : profile.proactivity === 'reactive' ? 0 : 0.5;
+
+      // 如果信号好且当前策略偏向某个方向，加强该方向
+      scores.detailVsConcise = scores.detailVsConcise * (1 - alpha) + (signal * currentVerbosity + (1 - signal) * (1 - currentVerbosity)) * alpha;
+      scores.analyticalVsIntuitive = scores.analyticalVsIntuitive * (1 - alpha) + (signal * currentFormality + (1 - signal) * (1 - currentFormality)) * alpha;
+      scores.proactiveVsReactive = scores.proactiveVsReactive * (1 - alpha) + (signal * currentProactivity + (1 - signal) * (1 - currentProactivity)) * alpha;
+      scores.sampleCount++;
+
+      // 写回（不可变更新）
+      profile.strategyScores = scores;
+    } catch {
+      // 策略追踪失败不影响主循环
+    }
+  }
+
   private detectTopics(input: string): string[] {
     const topics: string[] = [];
     const topicPatterns: Array<[RegExp, string]> = [
@@ -3031,6 +3079,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       },
       attentionState: this.lastAttentionState ?? undefined,
       behavioralInsights: this.behavioralInsights.length > 0 ? [...this.behavioralInsights] : undefined,
+      strategyScores: this.persona.getUserModel().preferenceProfile.strategyScores,
     });
   }
 

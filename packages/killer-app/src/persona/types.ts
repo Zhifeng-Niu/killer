@@ -114,6 +114,25 @@ export interface PreferenceProfile {
   formality: 'casual' | 'neutral' | 'formal';
   proactivity: 'reactive' | 'suggested' | 'autonomous';
   humor: number; // [0, 1]
+  /** 策略效果追踪 — 记录哪种策略组合效果更好 */
+  strategyScores?: StrategyScores;
+}
+
+/**
+ * 策略效果评分
+ *
+ * 追踪不同响应策略的效果，用运行平均更新。
+ * 分数范围 [0, 1]，越高表示效果越好。
+ */
+export interface StrategyScores {
+  /** 详细 vs 简洁 的效果分数 */
+  detailVsConcise: number;
+  /** 分析性 vs 直觉性 的效果分数 */
+  analyticalVsIntuitive: number;
+  /** 主动 vs 被动 的效果分数 */
+  proactiveVsReactive: number;
+  /** 样本数（用于置信度判断） */
+  sampleCount: number;
 }
 
 /**

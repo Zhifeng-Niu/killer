@@ -44,6 +44,13 @@ export interface PromptBuilderDeps {
   };
   /** 实验驱动的行为洞察（成功的实验模式） */
   behavioralInsights?: string[];
+  /** 策略效果评分（自适应响应策略） */
+  strategyScores?: {
+    detailVsConcise: number;
+    analyticalVsIntuitive: number;
+    proactiveVsReactive: number;
+    sampleCount: number;
+  };
 }
 
 /**
@@ -309,6 +316,15 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
       parts.push(`  • ${insight}`);
     }
     parts.push('Apply these insights when relevant. They represent what actually works, not theory.');
+  }
+
+  // === 自适应策略评分 ===
+  if (deps.strategyScores && deps.strategyScores.sampleCount >= 3) {
+    const s = deps.strategyScores;
+    const detailBias = s.detailVsConcise > 0.6 ? 'Prefer detailed explanations' : s.detailVsConcise < 0.4 ? 'Keep responses concise' : 'Balance detail and brevity';
+    const analyticalBias = s.analyticalVsIntuitive > 0.6 ? 'Use analytical, structured reasoning' : s.analyticalVsIntuitive < 0.4 ? 'Use intuitive, conversational reasoning' : 'Mix analytical and intuitive approaches';
+    const proactiveBias = s.proactiveVsReactive > 0.6 ? 'Be proactive — anticipate needs' : s.proactiveVsReactive < 0.4 ? 'Stay reactive — respond to what is asked' : 'Balance proactive suggestions with direct answers';
+    parts.push(`\nRESPONSE STRATEGY (learned from ${s.sampleCount} interactions): ${detailBias}. ${analyticalBias}. ${proactiveBias}.`);
   }
 
   // === 活跃计划（前额叶皮层） ===
