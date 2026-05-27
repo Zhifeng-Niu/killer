@@ -79,6 +79,10 @@ import {
   updateStyleEvolution,
   generateStyleGuidance,
   compressHistory,
+  mineToolPatterns,
+  suggestNextTool,
+  formatToolPatterns,
+  type ToolUsageRecord,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -3099,6 +3103,85 @@ describe('background-tasks', () => {
       const result = compressHistory([], 1000);
       expect(result.messages).toHaveLength(0);
       expect(result.compressionSummary).toBe('empty');
+    });
+  });
+
+  describe('Tool Usage Pattern Miner', () => {
+    const now = Date.now();
+
+    it('should return empty patterns for insufficient history', () => {
+      expect(mineToolPatterns([])).toHaveLength(0);
+      expect(mineToolPatterns([
+        { tool: 'code_search', success: true, timestamp: now, context: 'test' },
+      ])).toHaveLength(0);
+    });
+
+    it('should detect successful tool pair patterns', () => {
+      const history: ToolUsageRecord[] = [
+        { tool: 'code_search', success: true, timestamp: now, context: 'find bug' },
+        { tool: 'shell_exec', success: true, timestamp: now + 1000, context: 'run test' },
+        { tool: 'code_search', success: true, timestamp: now + 60000, context: 'find fix' },
+        { tool: 'shell_exec', success: true, timestamp: now + 61000, context: 'verify fix' },
+        { tool: 'code_search', success: true, timestamp: now + 120000, context: 'review' },
+        { tool: 'shell_exec', success: false, timestamp: now + 121000, context: 'broken' },
+      ];
+      const patterns = mineToolPatterns(history, 2);
+      expect(patterns.length).toBeGreaterThan(0);
+      expect(patterns[0].sequence).toEqual(['code_search', 'shell_exec']);
+      expect(patterns[0].occurrences).toBe(3);
+    });
+
+    it('should filter patterns below minimum occurrences', () => {
+      const history: ToolUsageRecord[] = [
+        { tool: 'web_search', success: true, timestamp: now, context: 'lookup' },
+        { tool: 'memory_recall', success: true, timestamp: now + 1000, context: 'recall' },
+      ];
+      const patterns = mineToolPatterns(history, 3);
+      expect(patterns).toHaveLength(0);
+    });
+
+    it('should skip pairs outside time window', () => {
+      const history: ToolUsageRecord[] = [
+        { tool: 'code_search', success: true, timestamp: now, context: 'search' },
+        { tool: 'shell_exec', success: true, timestamp: now + 600000, context: '10min later' },
+      ];
+      const patterns = mineToolPatterns(history, 1);
+      expect(patterns).toHaveLength(0);
+    });
+
+    it('should suggest next tool based on patterns', () => {
+      const history: ToolUsageRecord[] = [];
+      for (let i = 0; i < 5; i++) {
+        history.push({ tool: 'code_search', success: true, timestamp: now + i * 120000, context: 'find' });
+        history.push({ tool: 'shell_exec', success: true, timestamp: now + i * 120000 + 1000, context: 'run' });
+      }
+      const patterns = mineToolPatterns(history, 2);
+      const suggested = suggestNextTool(patterns, 'code_search');
+      expect(suggested).toContain('shell_exec');
+    });
+
+    it('should not suggest tools from failed patterns', () => {
+      const history: ToolUsageRecord[] = [
+        { tool: 'code_search', success: true, timestamp: now, context: 'search' },
+        { tool: 'bad_tool', success: false, timestamp: now + 1000, context: 'fail' },
+        { tool: 'code_search', success: true, timestamp: now + 60000, context: 'search' },
+        { tool: 'bad_tool', success: false, timestamp: now + 61000, context: 'fail' },
+      ];
+      const patterns = mineToolPatterns(history, 2);
+      const suggested = suggestNextTool(patterns, 'code_search');
+      expect(suggested).not.toContain('bad_tool');
+    });
+
+    it('should format tool patterns', () => {
+      const history: ToolUsageRecord[] = [];
+      for (let i = 0; i < 3; i++) {
+        history.push({ tool: 'code_search', success: true, timestamp: now + i * 60000, context: 'find' });
+        history.push({ tool: 'shell_exec', success: true, timestamp: now + i * 60000 + 1000, context: 'run' });
+      }
+      const patterns = mineToolPatterns(history, 2);
+      const formatted = formatToolPatterns(patterns);
+      expect(formatted).toContain('code_search→shell_exec');
+      expect(formatted).toContain('100%');
     });
   });
 });

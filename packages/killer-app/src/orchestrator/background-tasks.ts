@@ -4605,3 +4605,115 @@ function summarizeChunk(messages: Array<{ role: string; content: string }>): str
   }
   return `topics: ${keywords.join(', ')}`;
 }
+
+// ============================================================
+// Tool Usage Pattern Miner — 工具使用模式挖掘
+// ============================================================
+
+export interface ToolUsageRecord {
+  tool: string;
+  success: boolean;
+  timestamp: number;
+  context: string; // brief context description
+}
+
+export interface ToolPattern {
+  /** 工具序列 (e.g., ['code_search', 'shell_exec']) */
+  sequence: string[];
+  /** 成功率 */
+  successRate: number;
+  /** 出现次数 */
+  occurrences: number;
+  /** 典型上下文 */
+  typicalContext: string;
+}
+
+export interface ToolPatternStats {
+  /** 二元组模式 (A→B) */
+  pairs: Record<string, ToolPattern>;
+  /** 总记录数 */
+  totalRecords: number;
+}
+
+export function createDefaultToolPatternStats(): ToolPatternStats {
+  return { pairs: {}, totalRecords: 0 };
+}
+
+export function recordToolUsage(
+  stats: ToolPatternStats,
+  record: ToolUsageRecord,
+): ToolPatternStats {
+  return {
+    pairs: stats.pairs,
+    totalRecords: stats.totalRecords + 1,
+  };
+}
+
+/**
+ * 从工具使用历史中挖掘模式
+ *
+ * 分析连续工具调用序列，找出成功率高的工具组合模式。
+ */
+export function mineToolPatterns(
+  history: ToolUsageRecord[],
+  minOccurrences: number = 2,
+): ToolPattern[] {
+  if (history.length < 2) return [];
+
+  const pairStats: Record<string, { successes: number; failures: number; contexts: string[] }> = {};
+
+  // 分析相邻工具调用（时间窗口 5 分钟内）
+  const WINDOW_MS = 5 * 60 * 1000;
+  for (let i = 1; i < history.length; i++) {
+    const prev = history[i - 1];
+    const curr = history[i];
+    if (curr.timestamp - prev.timestamp > WINDOW_MS) continue;
+    if (prev.tool === curr.tool) continue; // 跳过相同工具
+
+    const key = `${prev.tool}→${curr.tool}`;
+    if (!pairStats[key]) {
+      pairStats[key] = { successes: 0, failures: 0, contexts: [] };
+    }
+    if (curr.success) pairStats[key].successes++;
+    else pairStats[key].failures++;
+    pairStats[key].contexts.push(curr.context);
+  }
+
+  // 转换为 ToolPattern 并过滤
+  const patterns: ToolPattern[] = [];
+  for (const [key, stats] of Object.entries(pairStats)) {
+    const total = stats.successes + stats.failures;
+    if (total < minOccurrences) continue;
+    const successRate = stats.successes / total;
+    patterns.push({
+      sequence: key.split('→'),
+      successRate,
+      occurrences: total,
+      typicalContext: stats.contexts[stats.contexts.length - 1] ?? '',
+    });
+  }
+
+  return patterns.sort((a, b) => (b.successRate * b.occurrences) - (a.successRate * a.occurrences));
+}
+
+/**
+ * 基于最后一个使用的工具推荐下一个工具
+ */
+export function suggestNextTool(
+  patterns: ToolPattern[],
+  lastTool: string,
+  topN: number = 3,
+): string[] {
+  return patterns
+    .filter(p => p.sequence[0] === lastTool && p.successRate > 0.5)
+    .sort((a, b) => (b.successRate * b.occurrences) - (a.successRate * a.occurrences))
+    .slice(0, topN)
+    .map(p => p.sequence[1]);
+}
+
+export function formatToolPatterns(patterns: ToolPattern[]): string {
+  if (patterns.length === 0) return '';
+  return patterns.slice(0, 5).map(p =>
+    `${p.sequence.join('→')} (success: ${(p.successRate * 100).toFixed(0)}%, used ${p.occurrences}x)`,
+  ).join('; ');
+}
