@@ -841,3 +841,102 @@ export function storeExtractedFacts(
 
   return stored;
 }
+
+// ============================================================
+// Cross-Goal Conflict Detection
+// ============================================================
+
+/**
+ * 目标冲突类型
+ */
+export type GoalConflictType = 'overlap' | 'contradiction' | 'duplicate';
+
+/**
+ * 检测到的冲突
+ */
+export interface GoalConflict {
+  /** 冲突类型 */
+  type: GoalConflictType;
+  /** 涉及的目标 ID */
+  goalIds: [string, string];
+  /** 冲突描述 */
+  description: string;
+  /** 建议操作 */
+  suggestion: string;
+  /** 相似度 [0, 1] */
+  similarity: number;
+}
+
+/**
+ * 关键词重叠度计算（Jaccard 系数）
+ */
+function jaccardSimilarity(a: string, b: string): number {
+  const wordsA = new Set(a.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+  const wordsB = new Set(b.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+  if (wordsA.size === 0 && wordsB.size === 0) return 0;
+
+  const intersection = new Set([...wordsA].filter(w => wordsB.has(w)));
+  const union = new Set([...wordsA, ...wordsB]);
+  return union.size > 0 ? intersection.size / union.size : 0;
+}
+
+/**
+ * 检测新目标与现有目标之间的冲突
+ */
+export function detectGoalConflicts(
+  newGoalDescription: string,
+  newGoalId: string,
+  existingGoals: Array<{ id: string; description: string }>,
+): GoalConflict[] {
+  const conflicts: GoalConflict[] = [];
+
+  for (const existing of existingGoals) {
+    const similarity = jaccardSimilarity(newGoalDescription, existing.description);
+
+    if (similarity > 0.7) {
+      // 高度重叠 — 可能是重复目标
+      conflicts.push({
+        type: 'duplicate',
+        goalIds: [newGoalId, existing.id],
+        description: `"${newGoalDescription.slice(0, 50)}" overlaps with "${existing.description.slice(0, 50)}"`,
+        suggestion: 'Consider merging these goals or treating the new one as a sub-goal of the existing one.',
+        similarity,
+      });
+    } else if (similarity >= 0.25) {
+      // 中度重叠 — 可能相关但方向不同
+      conflicts.push({
+        type: 'overlap',
+        goalIds: [newGoalId, existing.id],
+        description: `"${newGoalDescription.slice(0, 50)}" shares scope with "${existing.description.slice(0, 50)}"`,
+        suggestion: 'These goals have overlapping scope. Coordinate their execution to avoid duplicated effort.',
+        similarity,
+      });
+    }
+
+    // 检测矛盾关键词（不依赖 Jaccard 相似度，关键词矛盾本身就是信号）
+    const negationPairs: Array<[RegExp, RegExp]> = [
+      [/\b(add|create|enable|implement)\b/i, /\b(remove|delete|disable|deprecate)\b/i],
+      [/\b(speed up|optimize|faster)\b/i, /\b(slow down|throttle|limit)\b/i],
+      [/\b(simplify|minimize|reduce)\b/i, /\b(expand|extend|maximize)\b/i],
+    ];
+
+    const newLower = newGoalDescription.toLowerCase();
+    const existLower = existing.description.toLowerCase();
+    for (const [patternA, patternB] of negationPairs) {
+      const newHasA = patternA.test(newLower) && patternB.test(existLower);
+      const newHasB = patternB.test(newLower) && patternA.test(existLower);
+      if (newHasA || newHasB) {
+        conflicts.push({
+          type: 'contradiction',
+          goalIds: [newGoalId, existing.id],
+          description: `Potential contradiction between "${newGoalDescription.slice(0, 50)}" and "${existing.description.slice(0, 50)}"`,
+          suggestion: 'These goals may have conflicting directions. Clarify intent before proceeding.',
+          similarity,
+        });
+        break;
+      }
+    }
+  }
+
+  return conflicts;
+}

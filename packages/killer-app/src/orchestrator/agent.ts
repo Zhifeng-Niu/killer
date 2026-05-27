@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -188,6 +188,9 @@ export class KillerAgent {
 
   // 对话阶段缓存
   private lastConversationalPhase: { phase: string; confidence: number; turnsInPhase: number; guidance: string } | null = null;
+
+  // 目标冲突列表
+  private goalConflicts: Array<{ type: string; goalIds: [string, string]; description: string; suggestion: string }> = [];
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -687,6 +690,13 @@ export class KillerAgent {
         const goal = await this.createGoal(analysis.description, analysis.priority);
         if (goal) {
           this.logger.info(`Auto-created goal from input: ${goal.description.slice(0, 60)}`);
+          // Detect conflicts with existing goals
+          const existingGoals = this.listGoals().filter(g => g.id !== goal.id);
+          const conflicts = detectGoalConflicts(goal.description, goal.id, existingGoals);
+          if (conflicts.length > 0) {
+            this.goalConflicts.push(...conflicts);
+            this.logger.info(`Detected ${conflicts.length} goal conflict(s)`);
+          }
           // Attempt hierarchical decomposition for complex goals
           const subGoals = await this.decomposeGoal(goal);
           if (subGoals.length > 0) {
@@ -3337,6 +3347,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           }))
         : undefined,
       conversationalPhase: this.computeConversationalPhase(),
+      goalConflicts: this.goalConflicts.length > 0 ? [...this.goalConflicts] : undefined,
     });
   }
 

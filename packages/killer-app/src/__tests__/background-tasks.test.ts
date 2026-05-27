@@ -15,6 +15,7 @@ import {
   detectConversationalPhase,
   extractFactsFromMessage,
   storeExtractedFacts,
+  detectGoalConflicts,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -658,6 +659,61 @@ describe('background-tasks', () => {
 
       const stored = storeExtractedFacts(facts, mockHippocampus as never);
       expect(stored).toBe(5);
+    });
+  });
+
+  describe('detectGoalConflicts', () => {
+    it('should detect duplicate goals with high similarity', () => {
+      const conflicts = detectGoalConflicts(
+        'Build REST API with authentication',
+        'goal-2',
+        [{ id: 'goal-1', description: 'Build REST API with authentication and tests' }],
+      );
+      expect(conflicts.length).toBeGreaterThan(0);
+      expect(conflicts[0].type).toBe('duplicate');
+    });
+
+    it('should detect overlapping goals', () => {
+      const conflicts = detectGoalConflicts(
+        'Implement user authentication system',
+        'goal-2',
+        [{ id: 'goal-1', description: 'Build user authentication with OAuth support' }],
+      );
+      expect(conflicts.some(c => c.type === 'overlap')).toBe(true);
+    });
+
+    it('should not flag unrelated goals', () => {
+      const conflicts = detectGoalConflicts(
+        'Refactor database migration system',
+        'goal-2',
+        [{ id: 'goal-1', description: 'Design new landing page with animations' }],
+      );
+      expect(conflicts.length).toBe(0);
+    });
+
+    it('should detect contradiction patterns', () => {
+      const conflicts = detectGoalConflicts(
+        'Remove deprecated API endpoints',
+        'goal-2',
+        [{ id: 'goal-1', description: 'Add new API endpoints for user management' }],
+      );
+      expect(conflicts.some(c => c.type === 'contradiction')).toBe(true);
+    });
+
+    it('should return empty for no existing goals', () => {
+      const conflicts = detectGoalConflicts('New goal', 'goal-1', []);
+      expect(conflicts.length).toBe(0);
+    });
+
+    it('should always include suggestion for conflicts', () => {
+      const conflicts = detectGoalConflicts(
+        'Build REST API with authentication',
+        'goal-2',
+        [{ id: 'goal-1', description: 'Build REST API with auth and tests' }],
+      );
+      for (const c of conflicts) {
+        expect(c.suggestion.length).toBeGreaterThan(10);
+      }
     });
   });
 });

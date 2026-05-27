@@ -67,6 +67,8 @@ export interface PromptBuilderDeps {
     turnsInPhase: number;
     guidance: string;
   };
+  /** 目标冲突 */
+  goalConflicts?: Array<{ type: string; description: string; suggestion: string }>;
 }
 
 /**
@@ -463,6 +465,16 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
       }
     }
     parts.push('Execute sub-goals with no dependencies in parallel. Complete dependencies before starting dependent sub-goals.');
+  }
+
+  // === 目标冲突 ===
+  if (deps.goalConflicts && deps.goalConflicts.length > 0) {
+    parts.push('\nGOAL CONFLICTS — Active goals have overlapping or conflicting scope:');
+    for (const conflict of deps.goalConflicts) {
+      const icon = conflict.type === 'duplicate' ? '⚠' : conflict.type === 'contradiction' ? '✗' : '≈';
+      parts.push(`  ${icon} [${conflict.type}] ${conflict.description}`);
+      parts.push(`    → ${conflict.suggestion}`);
+    }
   }
 
   // === 对话阶段 ===
