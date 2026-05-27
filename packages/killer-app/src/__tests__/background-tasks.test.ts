@@ -2620,5 +2620,26 @@ describe('background-tasks', () => {
       });
       expect(summary.activeModules).toContain('expertise:frontend,backend');
     });
+
+    it('should include quality self-assessment when provided', () => {
+      const summary = generateCognitiveStateSummary({
+        phase: 'deep-work',
+        phaseConfidence: 0.8,
+        lastQualityOverall: 0.65,
+        lastQualityTags: ['actionable', 'verbose'],
+      });
+      expect(summary.activeModules).toContain('self-assessment');
+      expect(summary.metrics['quality']).toBe('65%');
+      expect(summary.metrics['quality_tags']).toBe('actionable,verbose');
+    });
+
+    it('should omit quality when not provided', () => {
+      const summary = generateCognitiveStateSummary({
+        phase: 'idle',
+        phaseConfidence: 0.9,
+      });
+      expect(summary.activeModules).not.toContain('self-assessment');
+      expect(summary.metrics['quality']).toBeUndefined();
+    });
   });
 });

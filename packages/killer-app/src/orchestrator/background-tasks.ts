@@ -3767,6 +3767,8 @@ export function generateCognitiveStateSummary(context: {
   overallAttention?: number;
   hasActiveGoals?: boolean;
   topicCount?: number;
+  lastQualityOverall?: number;
+  lastQualityTags?: string[];
 }): CognitiveStateSummary {
   const activeModules: string[] = [];
   const metrics: Record<string, string> = {};
@@ -3805,6 +3807,14 @@ export function generateCognitiveStateSummary(context: {
 
   if (context.topicCount && context.topicCount > 1) {
     metrics['topics'] = `${context.topicCount}`;
+  }
+
+  if (context.lastQualityOverall !== undefined) {
+    activeModules.push('self-assessment');
+    metrics['quality'] = `${(context.lastQualityOverall * 100).toFixed(0)}%`;
+    if (context.lastQualityTags && context.lastQualityTags.length > 0) {
+      metrics['quality_tags'] = context.lastQualityTags.slice(0, 3).join(',');
+    }
   }
 
   if (context.overallAttention !== undefined) {

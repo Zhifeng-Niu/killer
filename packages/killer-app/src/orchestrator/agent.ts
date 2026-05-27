@@ -184,6 +184,10 @@ export class KillerAgent {
   private moduleStats: Record<string, { triggers: number; conflicts: number; lastAdjustment: number }> = {};
   private lastTuningAdjustment = 0;
 
+  // 回复质量自评（上一轮评分，注入认知状态）
+  private lastQualityOverall: number | undefined;
+  private lastQualityTags: string[] = [];
+
   // 实验驱动的行为洞察（成功的实验模式，注入系统 prompt）
   private behavioralInsights: string[] = [];
   private readonly maxBehavioralInsights = 10;
@@ -3250,6 +3254,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
   private evaluateAndAdjustQuality(userInput: string, agentResponse: string): void {
     try {
       const score = evaluateResponseQuality(userInput, agentResponse);
+      this.lastQualityOverall = score.overall;
+      this.lastQualityTags = score.tags;
 
       // 只在有明显信号时调整（overall 偏离 0.5 超过 0.15）
       if (Math.abs(score.overall - 0.5) < 0.15) return;
@@ -3765,6 +3771,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       overallAttention: undefined,
       hasActiveGoals: this.listGoals().length > 0,
       topicCount: new Set(this.recentTopics).size,
+      lastQualityOverall: this.lastQualityOverall,
+      lastQualityTags: this.lastQualityTags.length > 0 ? this.lastQualityTags : undefined,
     });
 
     if (summary.activeModules.length < 2) return undefined;
