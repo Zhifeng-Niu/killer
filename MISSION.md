@@ -4,8 +4,8 @@ status: active
 started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
-best_metric: 2163
-total_waypoints: 53
+best_metric: 2169
+total_waypoints: 54
 consecutive_discards: 0
 ---
 
@@ -97,6 +97,7 @@ npm test 2>&1
 50. **Dynamic Prompt Section Scoring** (waypoint 51): scoreSectionRelevance() replaces static phase-based pruning with per-section relevance scoring. Each section gets base score + context-dependent adjustments (deep-work boosts tools, idle boosts dreams, low-health boosts meta-cognition). Pruning now removes lowest-scoring sections first regardless of phase — smarter context budget utilization
 51. **Topic Context Snapshots** (waypoint 52): extractTopicSnapshot() captures key decisions, active tools, and unresolved questions from conversation segments when topic shifts occur. formatTopicSnapshot() converts snapshots to injectable prompt text for context restoration when user returns to a previous topic
 52. **buildSystemPrompt Refactor** (waypoint 53): Extracted 10 IIFE blocks from buildSystemPrompt into named private methods (computeTemporalContext, computeFlowPrediction, computeToolPriority, computeConversationHealth, computeMultiIntents, computeAmbiguityWarnings, computeGoalDependencies, computeTopicTransition, computeAutonomousActions, computeConversationalPhaseForPrompt). Zero behavior change, pure readability improvement
+53. **Flow-Based Intent Preloading** (waypoint 54): generateIntentPreloads() maps conversation flow patterns to preload suggestions — debug flow preloads error patterns and memory, explore flow preloads architecture context, planning flow preloads goal review. Integrated into computeAutonomousActions as low-urgency preload hints
 
 ### Dead Ends
 {Auto-updated by engine.}

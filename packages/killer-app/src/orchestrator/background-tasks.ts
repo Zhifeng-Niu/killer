@@ -2963,3 +2963,61 @@ export function formatTopicSnapshot(snapshot: TopicContextSnapshot): string {
   }
   return parts.join('\n');
 }
+
+/**
+ * 基于对话流程的实时意图预加载建议
+ */
+export interface IntentPreloadSuggestion {
+  flowPattern: string;
+  preloadType: 'error_patterns' | 'tool_docs' | 'memory_search' | 'goal_review' | 'code_context';
+  query: string;
+  reason: string;
+}
+
+const FLOW_PRELOAD_MAP: Record<string, Array<{ type: IntentPreloadSuggestion['preloadType']; queries: string[] }>> = {
+  'debug-diagnose-fix': [
+    { type: 'error_patterns', queries: ['error', 'failure', 'stack trace', 'bug'] },
+    { type: 'memory_search', queries: ['debugging', 'previous fix', 'known issue'] },
+  ],
+  'explore-deepen-implement': [
+    { type: 'memory_search', queries: ['architecture', 'design', 'pattern'] },
+    { type: 'code_context', queries: ['implementation', 'code structure'] },
+  ],
+  'question-answer': [
+    { type: 'memory_search', queries: ['previous discussion', 'learned'] },
+  ],
+  'request-execute-verify': [
+    { type: 'tool_docs', queries: ['command', 'tool usage'] },
+    { type: 'goal_review', queries: ['task', 'progress'] },
+  ],
+  'planning-delegate-review': [
+    { type: 'goal_review', queries: ['goals', 'plans', 'milestones'] },
+  ],
+};
+
+export function generateIntentPreloads(
+  flowPattern: string,
+  recentTopics: string[],
+  hasActiveGoals: boolean,
+): IntentPreloadSuggestion[] {
+  const suggestions: IntentPreloadSuggestion[] = [];
+  const mapping = FLOW_PRELOAD_MAP[flowPattern];
+  if (!mapping) return suggestions;
+
+  for (const entry of mapping) {
+    const topicQuery = recentTopics.length > 0 ? recentTopics[recentTopics.length - 1] : '';
+    const query = topicQuery ? `${entry.queries.join(' ')} ${topicQuery}` : entry.queries.join(' ');
+
+    // Skip goal review if no active goals
+    if (entry.type === 'goal_review' && !hasActiveGoals) continue;
+
+    suggestions.push({
+      flowPattern,
+      preloadType: entry.type,
+      query,
+      reason: `${flowPattern} flow suggests ${entry.type} may be needed`,
+    });
+  }
+
+  return suggestions.slice(0, 3);
+}

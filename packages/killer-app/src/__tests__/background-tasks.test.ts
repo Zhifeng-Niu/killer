@@ -44,6 +44,7 @@ import {
   scoreSectionRelevance,
   extractTopicSnapshot,
   formatTopicSnapshot,
+  generateIntentPreloads,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -2083,6 +2084,40 @@ describe('background-tasks', () => {
       expect(text).toContain('Previous context on "test"');
       expect(text).not.toContain('Key points');
       expect(text).not.toContain('Unresolved');
+    });
+  });
+
+  describe('generateIntentPreloads', () => {
+    it('should suggest error patterns for debug flow', () => {
+      const suggestions = generateIntentPreloads('debug-diagnose-fix', ['authentication'], false);
+      expect(suggestions.length).toBeGreaterThan(0);
+      expect(suggestions.some(s => s.preloadType === 'error_patterns')).toBe(true);
+      expect(suggestions[0].query).toContain('authentication');
+    });
+
+    it('should suggest memory search for explore flow', () => {
+      const suggestions = generateIntentPreloads('explore-deepen-implement', ['testing'], false);
+      expect(suggestions.some(s => s.preloadType === 'memory_search')).toBe(true);
+    });
+
+    it('should skip goal review when no active goals', () => {
+      const suggestions = generateIntentPreloads('planning-delegate-review', ['project'], false);
+      expect(suggestions.every(s => s.preloadType !== 'goal_review')).toBe(true);
+    });
+
+    it('should include goal review when active goals exist', () => {
+      const suggestions = generateIntentPreloads('planning-delegate-review', ['project'], true);
+      expect(suggestions.some(s => s.preloadType === 'goal_review')).toBe(true);
+    });
+
+    it('should return empty for unknown flow', () => {
+      const suggestions = generateIntentPreloads('unknown-pattern', ['test'], false);
+      expect(suggestions).toEqual([]);
+    });
+
+    it('should cap at 3 suggestions', () => {
+      const suggestions = generateIntentPreloads('debug-diagnose-fix', ['topic1'], true);
+      expect(suggestions.length).toBeLessThanOrEqual(3);
     });
   });
 });
