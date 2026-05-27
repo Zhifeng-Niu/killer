@@ -3021,3 +3021,115 @@ export function generateIntentPreloads(
 
   return suggestions.slice(0, 3);
 }
+
+/**
+ * 对话节奏模式
+ */
+export type ConversationRhythm =
+  | 'rapid_fire'    // 连续短消息，快速问答
+  | 'thoughtful'    // 长消息，深思熟虑
+  | 'mixed'         // 长短交替
+  | 'idle'          // 长间隔，低频交互
+  | 'initial';      // 交互不足，无法判断
+
+export interface RhythmState {
+  /** 当前检测到的节奏 */
+  rhythm: ConversationRhythm;
+  /** 置信度 0-1 */
+  confidence: number;
+  /** 建议的响应策略 */
+  responseHint: string;
+  /** 平均消息间隔（秒），无足够数据时 undefined */
+  avgInterval?: number;
+  /** 平均消息长度 */
+  avgMessageLength: number;
+}
+
+interface MessageMeta {
+  length: number;
+  timestamp: number;
+}
+
+/**
+ * 分析对话节奏
+ *
+ * 基于最近消息的长度和时间间隔检测交互节奏模式，
+ * 输出响应策略建议以匹配用户的交互节奏。
+ */
+export function analyzeConversationRhythm(
+  recentMessages: MessageMeta[],
+): RhythmState {
+  const DEFAULT: RhythmState = {
+    rhythm: 'initial',
+    confidence: 0,
+    responseHint: 'Standard balanced response.',
+    avgMessageLength: 0,
+  };
+
+  if (recentMessages.length < 3) return DEFAULT;
+
+  const lengths = recentMessages.map(m => m.length);
+  const avgLen = lengths.reduce((a, b) => a + b, 0) / lengths.length;
+  const shortCount = lengths.filter(l => l < 20).length;
+  const shortRatio = shortCount / lengths.length;
+
+  // 计算时间间隔
+  const intervals: number[] = [];
+  for (let i = 1; i < recentMessages.length; i++) {
+    const gap = (recentMessages[i].timestamp - recentMessages[i - 1].timestamp) / 1000;
+    if (gap > 0) intervals.push(gap);
+  }
+  const avgInterval = intervals.length > 0
+    ? intervals.reduce((a, b) => a + b, 0) / intervals.length
+    : undefined;
+
+  // Rapid fire: 大量短消息 + 快速间隔
+  if (shortRatio >= 0.7 && avgInterval !== undefined && avgInterval < 30) {
+    return {
+      rhythm: 'rapid_fire',
+      confidence: Math.min(1, 0.5 + shortRatio * 0.3 + (1 - Math.min(avgInterval / 30, 1)) * 0.2),
+      responseHint: 'User is in quick-fire mode. Respond very concisely (1-2 sentences max). Match their speed.',
+      avgInterval,
+      avgMessageLength: Math.round(avgLen),
+    };
+  }
+
+  // Thoughtful: 长消息为主
+  if (avgLen > 80 && shortRatio <= 0.2) {
+    return {
+      rhythm: 'thoughtful',
+      confidence: Math.min(1, 0.5 + (avgLen / 300) * 0.3 + (1 - shortRatio) * 0.2),
+      responseHint: 'User is sending detailed messages. Respond with thorough analysis and structured explanations.',
+      avgInterval,
+      avgMessageLength: Math.round(avgLen),
+    };
+  }
+
+  // Idle: 长间隔
+  if (avgInterval !== undefined && avgInterval > 300) {
+    return {
+      rhythm: 'idle',
+      confidence: Math.min(1, 0.6 + (avgInterval / 3600) * 0.3),
+      responseHint: 'Long gaps between messages. Acknowledge the return, provide context recap if needed.',
+      avgInterval,
+      avgMessageLength: Math.round(avgLen),
+    };
+  }
+
+  // Mixed: 长短交替
+  if (shortRatio >= 0.2 && shortRatio < 0.7) {
+    return {
+      rhythm: 'mixed',
+      confidence: 0.5,
+      responseHint: 'Mixed message lengths. Adapt response length to match each message\'s depth.',
+      avgInterval,
+      avgMessageLength: Math.round(avgLen),
+    };
+  }
+
+  return {
+    ...DEFAULT,
+    avgMessageLength: Math.round(avgLen),
+    avgInterval,
+  };
+}

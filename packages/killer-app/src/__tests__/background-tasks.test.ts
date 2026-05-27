@@ -45,6 +45,7 @@ import {
   extractTopicSnapshot,
   formatTopicSnapshot,
   generateIntentPreloads,
+  analyzeConversationRhythm,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -2118,6 +2119,81 @@ describe('background-tasks', () => {
     it('should cap at 3 suggestions', () => {
       const suggestions = generateIntentPreloads('debug-diagnose-fix', ['topic1'], true);
       expect(suggestions.length).toBeLessThanOrEqual(3);
+    });
+  });
+
+  describe('analyzeConversationRhythm', () => {
+    const now = Date.now();
+
+    it('should return initial for fewer than 3 messages', () => {
+      const result = analyzeConversationRhythm([
+        { length: 10, timestamp: now },
+        { length: 20, timestamp: now + 1000 },
+      ]);
+      expect(result.rhythm).toBe('initial');
+      expect(result.confidence).toBe(0);
+    });
+
+    it('should detect rapid_fire pattern', () => {
+      const base = now - 30000;
+      const result = analyzeConversationRhythm([
+        { length: 8, timestamp: base },
+        { length: 12, timestamp: base + 5000 },
+        { length: 5, timestamp: base + 10000 },
+        { length: 15, timestamp: base + 15000 },
+        { length: 10, timestamp: base + 20000 },
+      ]);
+      expect(result.rhythm).toBe('rapid_fire');
+      expect(result.confidence).toBeGreaterThan(0.5);
+      expect(result.responseHint).toContain('concise');
+    });
+
+    it('should detect thoughtful pattern', () => {
+      const base = now - 300000;
+      const result = analyzeConversationRhythm([
+        { length: 150, timestamp: base },
+        { length: 200, timestamp: base + 60000 },
+        { length: 180, timestamp: base + 120000 },
+        { length: 250, timestamp: base + 180000 },
+        { length: 120, timestamp: base + 240000 },
+      ]);
+      expect(result.rhythm).toBe('thoughtful');
+      expect(result.confidence).toBeGreaterThan(0.5);
+      expect(result.responseHint).toContain('thorough');
+    });
+
+    it('should detect idle pattern', () => {
+      const base = now - 7200000;
+      const result = analyzeConversationRhythm([
+        { length: 50, timestamp: base },
+        { length: 60, timestamp: base + 1800000 },
+        { length: 40, timestamp: base + 3600000 },
+      ]);
+      expect(result.rhythm).toBe('idle');
+      expect(result.confidence).toBeGreaterThan(0.5);
+      expect(result.avgInterval).toBeGreaterThan(300);
+    });
+
+    it('should detect mixed pattern', () => {
+      const base = now - 120000;
+      const result = analyzeConversationRhythm([
+        { length: 10, timestamp: base },
+        { length: 200, timestamp: base + 30000 },
+        { length: 15, timestamp: base + 60000 },
+        { length: 150, timestamp: base + 90000 },
+        { length: 8, timestamp: base + 100000 },
+      ]);
+      expect(result.rhythm).toBe('mixed');
+      expect(result.avgMessageLength).toBeGreaterThan(0);
+    });
+
+    it('should compute avgMessageLength correctly', () => {
+      const result = analyzeConversationRhythm([
+        { length: 100, timestamp: now },
+        { length: 200, timestamp: now + 60000 },
+        { length: 300, timestamp: now + 120000 },
+      ]);
+      expect(result.avgMessageLength).toBe(200);
     });
   });
 });

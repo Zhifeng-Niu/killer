@@ -92,6 +92,10 @@ export interface PromptBuilderDeps {
   topicTransition?: string;
   /** 自主行动建议 */
   autonomousActions?: string[];
+  /** 恢复的话题上下文（用户返回旧话题时） */
+  restoredTopicContext?: string;
+  /** 对话节奏感知（快速/深思熟虑/混合/空闲） */
+  conversationRhythm?: string;
 }
 
 /**
@@ -301,6 +305,16 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 话题切换 ===
   if (deps.topicTransition) {
     parts.push(`\nTOPIC TRANSITION — ${deps.topicTransition}`);
+  }
+
+  // === 恢复的话题上下文 ===
+  if (deps.restoredTopicContext) {
+    parts.push(`\nRESTORED CONTEXT — ${deps.restoredTopicContext}`);
+  }
+
+  // === 对话节奏 ===
+  if (deps.conversationRhythm) {
+    parts.push(`\nCONVERSATION RHYTHM — ${deps.conversationRhythm}`);
   }
 
   // === 自主行动建议 ===
