@@ -119,6 +119,8 @@ export interface PromptBuilderDeps {
   knowledgeGraphSummary?: string;
   /** 认知疲劳指导 */
   fatigueGuidance?: string;
+  /** 对话中断恢复指导 */
+  gapRecoveryGuidance?: string;
 }
 
 /**
@@ -388,6 +390,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 认知疲劳 ===
   if (deps.fatigueGuidance) {
     parts.push(`\nCOGNITIVE FATIGUE — ${deps.fatigueGuidance}`);
+  }
+
+  // === 对话中断恢复 ===
+  if (deps.gapRecoveryGuidance) {
+    parts.push(`\nGAP RECOVERY — ${deps.gapRecoveryGuidance}`);
   }
 
   // === 自主行动建议 ===

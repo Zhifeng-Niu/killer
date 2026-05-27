@@ -92,6 +92,12 @@ import {
   computeToolEfficiency,
   assessCognitiveFatigue,
   formatFatigueGuidance,
+  classifyGapSeverity,
+  extractLastTopic,
+  extractPendingCommitments,
+  generateGapRecoveryStrategy,
+  formatGapRecoveryGuidance,
+  type GapContext,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -3410,6 +3416,133 @@ describe('background-tasks', () => {
         2,
       );
       expect(formatFatigueGuidance(fatigue)).toBeUndefined();
+    });
+  });
+
+  describe('Gap Recovery', () => {
+    it('should classify gap severity correctly', () => {
+      expect(classifyGapSeverity(2)).toBe('brief');
+      expect(classifyGapSeverity(10)).toBe('moderate');
+      expect(classifyGapSeverity(60)).toBe('extended');
+      expect(classifyGapSeverity(300)).toBe('long-absence');
+    });
+
+    it('should extract last topic from messages', () => {
+      const messages = [
+        { role: 'assistant', content: 'Sure!' },
+        { role: 'user', content: 'How do I implement auth middleware?' },
+      ];
+      expect(extractLastTopic(messages)).toBe('How do I implement auth middleware?');
+    });
+
+    it('should truncate long topics', () => {
+      const longMsg = 'a'.repeat(100);
+      const messages = [{ role: 'user', content: longMsg }];
+      const topic = extractLastTopic(messages);
+      expect(topic!.length).toBeLessThanOrEqual(60);
+      expect(topic).toContain('...');
+    });
+
+    it('should return undefined for no user messages', () => {
+      expect(extractLastTopic([{ role: 'assistant', content: 'hi' }])).toBeUndefined();
+    });
+
+    it('should extract pending commitments', () => {
+      const messages = [
+        { role: 'assistant', content: "I'll fix the bug in auth.ts and refactor the tests" },
+        { role: 'user', content: 'TODO: update the API docs' },
+      ];
+      const commitments = extractPendingCommitments(messages);
+      expect(commitments.length).toBeGreaterThan(0);
+      expect(commitments.some(c => c.includes('fix the bug'))).toBe(true);
+    });
+
+    it('should generate brief gap strategy with no proactive resume', () => {
+      const ctx: GapContext = {
+        gapMinutes: 2,
+        lastTopic: 'testing',
+        activeGoals: [],
+        lastEmotion: 'neutral',
+        topEntities: ['auth.ts'],
+        pendingCommitments: [],
+      };
+      const strategy = generateGapRecoveryStrategy(ctx);
+      expect(strategy.severity).toBe('brief');
+      expect(strategy.shouldProactivelyResume).toBe(false);
+    });
+
+    it('should generate moderate gap strategy with pickup style', () => {
+      const ctx: GapContext = {
+        gapMinutes: 15,
+        lastTopic: 'refactoring the agent loop',
+        activeGoals: [],
+        lastEmotion: undefined,
+        topEntities: [],
+        pendingCommitments: [],
+      };
+      const strategy = generateGapRecoveryStrategy(ctx);
+      expect(strategy.severity).toBe('moderate');
+      expect(strategy.resumeStyle).toBe('pickup');
+      expect(strategy.shouldProactivelyResume).toBe(true);
+      expect(strategy.suggestedDirections.length).toBeGreaterThan(0);
+    });
+
+    it('should generate extended gap strategy with summary style', () => {
+      const ctx: GapContext = {
+        gapMinutes: 120,
+        lastTopic: undefined,
+        activeGoals: [{ id: '1', description: 'Ship auth feature', priority: 1 }],
+        lastEmotion: 'focused',
+        topEntities: ['auth.ts', 'middleware'],
+        pendingCommitments: ['write tests for auth'],
+      };
+      const strategy = generateGapRecoveryStrategy(ctx);
+      expect(strategy.severity).toBe('extended');
+      expect(strategy.resumeStyle).toBe('summary');
+      expect(strategy.contextPoints.length).toBeGreaterThan(0);
+    });
+
+    it('should generate long-absence strategy with fresh-context', () => {
+      const ctx: GapContext = {
+        gapMinutes: 500,
+        lastTopic: 'old topic',
+        activeGoals: [{ id: '1', description: 'Big project', priority: 1 }],
+        lastEmotion: undefined,
+        topEntities: [],
+        pendingCommitments: [],
+      };
+      const strategy = generateGapRecoveryStrategy(ctx);
+      expect(strategy.severity).toBe('long-absence');
+      expect(strategy.resumeStyle).toBe('fresh-context');
+    });
+
+    it('should format recovery guidance for proactive strategies', () => {
+      const ctx: GapContext = {
+        gapMinutes: 20,
+        lastTopic: 'debug the API',
+        activeGoals: [],
+        lastEmotion: undefined,
+        topEntities: [],
+        pendingCommitments: [],
+      };
+      const strategy = generateGapRecoveryStrategy(ctx);
+      const guidance = formatGapRecoveryGuidance(strategy);
+      expect(guidance).toBeDefined();
+      expect(guidance).toContain('moderate');
+      expect(guidance).toContain('pickup');
+    });
+
+    it('should return undefined guidance for brief gaps', () => {
+      const ctx: GapContext = {
+        gapMinutes: 1,
+        lastTopic: 'test',
+        activeGoals: [],
+        lastEmotion: undefined,
+        topEntities: [],
+        pendingCommitments: [],
+      };
+      const strategy = generateGapRecoveryStrategy(ctx);
+      expect(formatGapRecoveryGuidance(strategy)).toBeUndefined();
     });
   });
 });

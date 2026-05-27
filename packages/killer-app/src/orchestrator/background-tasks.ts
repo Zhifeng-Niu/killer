@@ -2872,6 +2872,7 @@ export function scoreSectionRelevance(
     'STYLE GUIDANCE': 0.6,
     'KNOWLEDGE GRAPH': 0.5,
     'COGNITIVE FATIGUE': 0.65,
+    'GAP RECOVERY': 0.7,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -4997,6 +4998,180 @@ export function formatFatigueGuidance(fatigue: CognitiveFatigueState): string | 
     case 'suggest-break':
       parts.push('consider suggesting a brief pause or context summary; user may benefit from a mental reset');
       break;
+  }
+
+  return parts.join(' | ');
+}
+
+// ==================== 对话中断恢复 ====================
+
+export interface GapContext {
+  /** 间隔分钟数 */
+  gapMinutes: number;
+  /** 间隔前的最后话题 */
+  lastTopic: string | undefined;
+  /** 间隔前的活跃目标 */
+  activeGoals: Array<{ id: string; description: string; priority: number }>;
+  /** 间隔前的情感状态 */
+  lastEmotion: string | undefined;
+  /** 关键实体（从知识图谱提取） */
+  topEntities: string[];
+  /** 未完成的承诺/待办 */
+  pendingCommitments: string[];
+}
+
+export type GapSeverity = 'brief' | 'moderate' | 'extended' | 'long-absence';
+
+export interface GapRecoveryStrategy {
+  severity: GapSeverity;
+  /** 是否主动发起续接 */
+  shouldProactivelyResume: boolean;
+  /** 续接模板类型 */
+  resumeStyle: 'pickup' | 'summary' | 'fresh-context' | 'check-in';
+  /** 要提及的上下文要点 */
+  contextPoints: string[];
+  /** 建议的继续方向 */
+  suggestedDirections: string[];
+}
+
+const GAP_THRESHOLDS = {
+  brief: 5,        // < 5 min: seamless
+  moderate: 30,    // 5-30 min: pickup with context
+  extended: 240,   // 30 min - 4h: summary
+  // > 4h: long-absence / fresh-context
+} as const;
+
+/**
+ * 判断间隔严重程度
+ */
+export function classifyGapSeverity(gapMinutes: number): GapSeverity {
+  if (gapMinutes < GAP_THRESHOLDS.brief) return 'brief';
+  if (gapMinutes < GAP_THRESHOLDS.moderate) return 'moderate';
+  if (gapMinutes < GAP_THRESHOLDS.extended) return 'extended';
+  return 'long-absence';
+}
+
+/**
+ * 从最近对话历史提取最后话题
+ */
+export function extractLastTopic(
+  recentMessages: Array<{ role: string; content: string }>,
+  maxMessages: number = 6,
+): string | undefined {
+  const recent = recentMessages.slice(-maxMessages);
+  const userMessages = recent.filter(m => m.role === 'user');
+  if (userMessages.length === 0) return undefined;
+
+  const lastUser = userMessages[userMessages.length - 1].content;
+  const topic = lastUser.length > 60 ? lastUser.slice(0, 57) + '...' : lastUser;
+  return topic;
+}
+
+/**
+ * 从对话历史提取待办/承诺
+ */
+export function extractPendingCommitments(
+  recentMessages: Array<{ role: string; content: string }>,
+): string[] {
+  const commitments: string[] = [];
+  const patterns = [
+    /(?:I'll|I will|let me|让我|我来|待会儿|later|after this|接下来)\s+(.+?)(?:\.|。|$)/gi,
+    /(?:todo|TODO|fixme|FIXME|pending|待办|待处理)[：:]?\s*(.+?)(?:\.|。|$)/gi,
+    /(?:need to|应该|需要|must|should)\s+(.+?)(?:\.|。|$)/gi,
+  ];
+
+  for (const msg of recentMessages) {
+    for (const pattern of patterns) {
+      pattern.lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(msg.content)) !== null) {
+        const item = match[1]?.trim();
+        if (item && item.length > 3 && item.length < 100) {
+          commitments.push(item);
+        }
+      }
+    }
+  }
+
+  return [...new Set(commitments)].slice(-5);
+}
+
+/**
+ * 生成中断恢复策略
+ */
+export function generateGapRecoveryStrategy(ctx: GapContext): GapRecoveryStrategy {
+  const severity = classifyGapSeverity(ctx.gapMinutes);
+
+  const contextPoints: string[] = [];
+  const suggestedDirections: string[] = [];
+
+  if (ctx.lastTopic) contextPoints.push(`last topic: ${ctx.lastTopic}`);
+  if (ctx.topEntities.length > 0) {
+    contextPoints.push(`key entities: ${ctx.topEntities.slice(0, 5).join(', ')}`);
+  }
+  if (ctx.pendingCommitments.length > 0) {
+    contextPoints.push(`pending: ${ctx.pendingCommitments.slice(0, 3).join('; ')}`);
+  }
+  if (ctx.lastEmotion) {
+    contextPoints.push(`mood was: ${ctx.lastEmotion}`);
+  }
+
+  let resumeStyle: GapRecoveryStrategy['resumeStyle'] = 'pickup';
+  let shouldProactivelyResume = false;
+
+  switch (severity) {
+    case 'brief':
+      shouldProactivelyResume = false;
+      break;
+    case 'moderate':
+      shouldProactivelyResume = true;
+      resumeStyle = 'pickup';
+      if (ctx.lastTopic) suggestedDirections.push(`continue: ${ctx.lastTopic}`);
+      break;
+    case 'extended':
+      shouldProactivelyResume = true;
+      resumeStyle = 'summary';
+      if (ctx.activeGoals.length > 0) {
+        suggestedDirections.push(`goal: ${ctx.activeGoals[0].description}`);
+      }
+      if (ctx.pendingCommitments.length > 0) {
+        suggestedDirections.push(`pending: ${ctx.pendingCommitments[0]}`);
+      }
+      break;
+    case 'long-absence':
+      shouldProactivelyResume = true;
+      resumeStyle = 'fresh-context';
+      suggestedDirections.push('ask what they want to focus on now');
+      if (ctx.activeGoals.length > 0) {
+        suggestedDirections.push(`resume goal: ${ctx.activeGoals[0].description}`);
+      }
+      break;
+  }
+
+  return {
+    severity,
+    shouldProactivelyResume,
+    resumeStyle,
+    contextPoints,
+    suggestedDirections,
+  };
+}
+
+/**
+ * 生成恢复引导文本（注入 prompt）
+ */
+export function formatGapRecoveryGuidance(strategy: GapRecoveryStrategy): string | undefined {
+  if (!strategy.shouldProactivelyResume) return undefined;
+
+  const parts: string[] = [];
+  parts.push(`gap: ${strategy.severity}`);
+  parts.push(`style: ${strategy.resumeStyle}`);
+
+  if (strategy.contextPoints.length > 0) {
+    parts.push(`context: ${strategy.contextPoints.join(' | ')}`);
+  }
+  if (strategy.suggestedDirections.length > 0) {
+    parts.push(`suggested: ${strategy.suggestedDirections.join('; ')}`);
   }
 
   return parts.join(' | ');
