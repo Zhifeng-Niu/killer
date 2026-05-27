@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -96,6 +96,9 @@ import { Logger } from '../log/index.js';
 function generateId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
+
+const WRAP_UP = /\b(thanks?|thank you|bye|goodbye|see you|got it|that's all|done|完美|谢|再见|好了|差不多了|搞定)\b/i;
+const TECHNICAL = /\b(function|class|error|bug|fix|implement|test|deploy|code|api|debug|refactor|type|interface|import|export)\b/i;
 
 /**
  * Killer Agent - 主 Agent 类
@@ -182,6 +185,9 @@ export class KillerAgent {
 
   // 目标依赖树：父目标 ID → 子目标依赖关系
   private goalDependencies: Map<string, Array<{ subGoalId: string; dependsOn: string[] }>> = new Map();
+
+  // 对话阶段缓存
+  private lastConversationalPhase: { phase: string; confidence: number; turnsInPhase: number; guidance: string } | null = null;
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -864,6 +870,34 @@ Examples:
   /**
    * 更新前额叶皮层状态
    */
+  private computeConversationalPhase(): { phase: string; confidence: number; turnsInPhase: number; guidance: string } {
+    const userMessages = this.conversationHistory.filter(m => m.role === 'user');
+    const recentUserMsgs = userMessages.slice(-3);
+    const avgLen = recentUserMsgs.length > 0
+      ? recentUserMsgs.reduce((s, m) => s + m.content.length, 0) / recentUserMsgs.length
+      : 0;
+    const lastUserMsg = userMessages[userMessages.length - 1];
+    const lastContent = lastUserMsg?.content ?? '';
+
+    const activePlans = this.planExecutor.getActivePlans();
+
+    const result = detectConversationalPhase({
+      turnCount: userMessages.length,
+      recentTopics: [...new Set(this.recentTopics)].slice(-5),
+      repetitionDetected: this.detectResponseRepetition(),
+      avgRecentMessageLength: avgLen,
+      hasActiveGoals: activePlans.length > 0,
+      secondsSinceLastMessage: lastUserMsg
+        ? (Date.now() - (lastUserMsg as any).timestamp) / 1000
+        : 9999,
+      hasWrapUpSignals: WRAP_UP.test(lastContent),
+      hasTechnicalContent: TECHNICAL.test(lastContent),
+    });
+
+    this.lastConversationalPhase = result;
+    return result;
+  }
+
   private updatePrefrontalStatus(): void {
     const stats = this.planExecutor.getStats();
     this.status.modules.prefrontal = {
@@ -3289,6 +3323,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
             status: 'pending',
           }))
         : undefined,
+      conversationalPhase: this.computeConversationalPhase(),
     });
   }
 

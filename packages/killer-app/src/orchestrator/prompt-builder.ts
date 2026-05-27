@@ -60,6 +60,13 @@ export interface PromptBuilderDeps {
   }>;
   /** 子目标列表（带 parentGoalId） */
   subGoals?: Array<{ id: string; description: string; parentGoalId: string; status: string }>;
+  /** 对话阶段检测 */
+  conversationalPhase?: {
+    phase: string;
+    confidence: number;
+    turnsInPhase: number;
+    guidance: string;
+  };
 }
 
 /**
@@ -406,6 +413,13 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
       }
     }
     parts.push('Execute sub-goals with no dependencies in parallel. Complete dependencies before starting dependent sub-goals.');
+  }
+
+  // === 对话阶段 ===
+  if (deps.conversationalPhase) {
+    const cp = deps.conversationalPhase;
+    parts.push(`\nCONVERSATION PHASE: ${cp.phase} (confidence: ${(cp.confidence * 100).toFixed(0)}%, ${cp.turnsInPhase} turns)`);
+    parts.push(cp.guidance);
   }
 
   // === 关联记忆检索（基于当前输入） ===

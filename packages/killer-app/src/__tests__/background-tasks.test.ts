@@ -12,6 +12,7 @@ import {
   detectCommitments,
   checkPendingReminders,
   clearPendingItems,
+  detectConversationalPhase,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -453,6 +454,112 @@ describe('background-tasks', () => {
     it('should not throw after adding items', () => {
       detectCommitments('I need to do something');
       expect(() => clearPendingItems()).not.toThrow();
+    });
+  });
+
+  describe('detectConversationalPhase', () => {
+    it('should detect idle phase when user has been away', () => {
+      const result = detectConversationalPhase({
+        turnCount: 10,
+        recentTopics: ['coding'],
+        repetitionDetected: false,
+        avgRecentMessageLength: 100,
+        hasActiveGoals: true,
+        secondsSinceLastMessage: 600,
+        hasWrapUpSignals: false,
+        hasTechnicalContent: true,
+      });
+      expect(result.phase).toBe('idle');
+      expect(result.confidence).toBeGreaterThanOrEqual(0.9);
+    });
+
+    it('should detect greeting phase in first 2 turns', () => {
+      const result = detectConversationalPhase({
+        turnCount: 1,
+        recentTopics: [],
+        repetitionDetected: false,
+        avgRecentMessageLength: 20,
+        hasActiveGoals: false,
+        secondsSinceLastMessage: 5,
+        hasWrapUpSignals: false,
+        hasTechnicalContent: false,
+      });
+      expect(result.phase).toBe('greeting');
+    });
+
+    it('should detect wrap-up phase', () => {
+      const result = detectConversationalPhase({
+        turnCount: 15,
+        recentTopics: ['coding'],
+        repetitionDetected: false,
+        avgRecentMessageLength: 30,
+        hasActiveGoals: true,
+        secondsSinceLastMessage: 5,
+        hasWrapUpSignals: true,
+        hasTechnicalContent: false,
+      });
+      expect(result.phase).toBe('wrap-up');
+    });
+
+    it('should detect deep-work phase with technical content and goals', () => {
+      const result = detectConversationalPhase({
+        turnCount: 10,
+        recentTopics: ['coding', 'debugging'],
+        repetitionDetected: false,
+        avgRecentMessageLength: 120,
+        hasActiveGoals: true,
+        secondsSinceLastMessage: 10,
+        hasWrapUpSignals: false,
+        hasTechnicalContent: true,
+      });
+      expect(result.phase).toBe('deep-work');
+      expect(result.guidance).toContain('focused');
+    });
+
+    it('should detect review phase when repetition detected', () => {
+      const result = detectConversationalPhase({
+        turnCount: 20,
+        recentTopics: ['testing'],
+        repetitionDetected: true,
+        avgRecentMessageLength: 80,
+        hasActiveGoals: false,
+        secondsSinceLastMessage: 5,
+        hasWrapUpSignals: false,
+        hasTechnicalContent: false,
+      });
+      expect(result.phase).toBe('review');
+    });
+
+    it('should default to exploration phase', () => {
+      const result = detectConversationalPhase({
+        turnCount: 5,
+        recentTopics: ['chat'],
+        repetitionDetected: false,
+        avgRecentMessageLength: 40,
+        hasActiveGoals: false,
+        secondsSinceLastMessage: 10,
+        hasWrapUpSignals: false,
+        hasTechnicalContent: false,
+      });
+      expect(result.phase).toBe('exploration');
+      expect(result.guidance).toContain('curious');
+    });
+
+    it('should always provide guidance', () => {
+      const phases = [
+        { turnCount: 1, secondsSinceLastMessage: 5, hasTechnicalContent: false, hasActiveGoals: false, hasWrapUpSignals: false },
+        { turnCount: 10, secondsSinceLastMessage: 5, hasTechnicalContent: true, hasActiveGoals: true, hasWrapUpSignals: false },
+        { turnCount: 20, secondsSinceLastMessage: 600, hasTechnicalContent: false, hasActiveGoals: false, hasWrapUpSignals: false },
+      ];
+      for (const ctx of phases) {
+        const result = detectConversationalPhase({
+          ...ctx,
+          recentTopics: [],
+          repetitionDetected: false,
+          avgRecentMessageLength: 50,
+        });
+        expect(result.guidance.length).toBeGreaterThan(10);
+      }
     });
   });
 });

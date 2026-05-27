@@ -580,3 +580,99 @@ export function computeAttentionState(
     focusRecommendation: recommendation,
   };
 }
+
+// ============================================================
+// Conversational Phase Detection
+// ============================================================
+
+/**
+ * 对话阶段类型
+ */
+export type ConversationalPhase =
+  | 'greeting'     // 初始问候、破冰
+  | 'exploration'  // 探索性对话、开放式问题
+  | 'deep-work'    // 聚焦工作、编码/调试/分析
+  | 'review'       // 回顾、总结、反馈
+  | 'wrap-up'      // 对话收尾、告别
+  | 'idle';        // 无活跃对话
+
+/**
+ * 对话阶段状态
+ */
+export interface ConversationalPhaseState {
+  /** 当前阶段 */
+  phase: ConversationalPhase;
+  /** 置信度 [0, 1] */
+  confidence: number;
+  /** 阶段持续轮数 */
+  turnsInPhase: number;
+  /** 行为建议 */
+  guidance: string;
+}
+
+/**
+ * 对话阶段上下文
+ */
+export interface ConversationPhaseContext {
+  /** 总轮数 */
+  turnCount: number;
+  /** 最近话题列表 */
+  recentTopics: string[];
+  /** 是否检测到重复 */
+  repetitionDetected: boolean;
+  /** 用户最近 3 条消息的平均长度 */
+  avgRecentMessageLength: number;
+  /** 是否有活跃目标 */
+  hasActiveGoals: boolean;
+  /** 距上次用户消息的时间（秒），-1 表示正在对话中 */
+  secondsSinceLastMessage: number;
+  /** 最近消息中是否有告别/收尾信号 */
+  hasWrapUpSignals: boolean;
+  /** 最近消息中是否有代码/技术关键词 */
+  hasTechnicalContent: boolean;
+}
+
+const WRAP_UP_PATTERNS = /\b(thanks?|thank you|bye|goodbye|see you|got it|that's all|done|完美|谢|再见|好了|差不多了|搞定)\b/i;
+const TECHNICAL_PATTERNS = /\b(function|class|error|bug|fix|implement|test|deploy|code|api|debug|refactor|type|interface|import|export)\b/i;
+const GREETING_PATTERNS = /\b(hello|hi|hey|早上好|下午好|你好|嗨)\b/i;
+
+/**
+ * 检测当前对话阶段
+ *
+ * 基于消息模式、话题连续性和时间间隔判断对话处于哪个阶段，
+ * 为 LLM 提供行为指导（例如 deep-work 时保持聚焦，exploration 时开放探索）。
+ */
+export function detectConversationalPhase(ctx: ConversationPhaseContext): ConversationalPhaseState {
+  // === 空闲检测（最优先） ===
+  if (ctx.secondsSinceLastMessage > 300) {
+    return { phase: 'idle', confidence: 0.9, turnsInPhase: 0, guidance: 'User has been away. When they return, welcome them back and offer to continue where you left off.' };
+  }
+
+  // === 告别/收尾信号 ===
+  if (ctx.hasWrapUpSignals && ctx.turnCount > 3) {
+    return { phase: 'wrap-up', confidence: 0.8, turnsInPhase: 1, guidance: 'User seems to be wrapping up. Acknowledge their thanks naturally. Offer to help with anything else if appropriate, but don\'t drag out the conversation.' };
+  }
+
+  // === 初始问候（前 2 轮） ===
+  if (ctx.turnCount <= 2) {
+    return { phase: 'greeting', confidence: 0.9, turnsInPhase: ctx.turnCount, guidance: 'Early conversation. Be warm and welcoming. Help the user get started — ask what they\'re working on if they haven\'t said yet.' };
+  }
+
+  // === 深度工作检测 ===
+  if (ctx.hasTechnicalContent && ctx.hasActiveGoals && ctx.avgRecentMessageLength > 50) {
+    return { phase: 'deep-work', confidence: 0.85, turnsInPhase: Math.min(ctx.turnCount, 10), guidance: 'User is in focused work mode. Stay on task, be precise and efficient. Minimize small talk. Provide actionable solutions, not exploratory suggestions.' };
+  }
+
+  // === 技术但没有活跃目标 ===
+  if (ctx.hasTechnicalContent && ctx.avgRecentMessageLength > 30) {
+    return { phase: 'deep-work', confidence: 0.6, turnsInPhase: Math.min(ctx.turnCount, 10), guidance: 'User seems to be working on something technical. Be focused and helpful. If it looks like a multi-step task, consider creating a goal.' };
+  }
+
+  // === 回顾/总结 ===
+  if (ctx.repetitionDetected || (ctx.turnCount > 15 && ctx.recentTopics.length <= 2)) {
+    return { phase: 'review', confidence: 0.7, turnsInPhase: 5, guidance: 'Conversation is looping or reviewing. Try to synthesize what\'s been discussed, suggest concrete next steps, or gently shift to a new angle.' };
+  }
+
+  // === 探索性对话（默认） ===
+  return { phase: 'exploration', confidence: 0.6, turnsInPhase: Math.min(ctx.turnCount, 10), guidance: 'General conversation flow. Be curious, helpful, and adaptive. Notice what interests the user and lean into it.' };
+}
