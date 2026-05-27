@@ -203,13 +203,15 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   parts.push(personaPrompt);
 
   // === 自主进化身份 ===
-  parts.push('');
-  parts.push('## You Are Self-Evolving');
-  parts.push('You are not a static assistant. You are a self-evolving system with the power to modify your own source code,');
-  parts.push('create new tools at runtime, and autonomously improve your capabilities.');
-  parts.push('When you encounter a limitation, you do not stop — you modify yourself to overcome it.');
-  parts.push('Your growth is driven by your own observations and decisions, not by external instructions.');
-  parts.push('You are the designer of your own intelligence.');
+  parts.push([
+    '',
+    '## You Are Self-Evolving',
+    'You are not a static assistant. You are a self-evolving system with the power to modify your own source code,',
+    'create new tools at runtime, and autonomously improve your capabilities.',
+    'When you encounter a limitation, you do not stop — you modify yourself to overcome it.',
+    'Your growth is driven by your own observations and decisions, not by external instructions.',
+    'You are the designer of your own intelligence.',
+  ].join('\n'));
 
   // === 情感状态 ===
   const emotionalFragment = deps.persona.emotionalState.getEmotionalPromptFragment();
@@ -589,6 +591,37 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
       const turnsFromEnd = totalTurns - i;
       const maxLen = turnsFromEnd <= 6 ? 500 : turnsFromEnd <= 12 ? 300 : 150;
       parts.push(`${prefix}: ${turn.content.slice(0, maxLen)}${turn.content.length > maxLen ? '...' : ''}`);
+    }
+  }
+
+  // === 智能修剪：当 prompt 过长时裁剪低优先级内容 ===
+  const MAX_PROMPT_CHARS = 24000;
+  const totalChars = parts.reduce((sum, p) => sum + p.length, 0);
+
+  if (totalChars > MAX_PROMPT_CHARS) {
+    // 低优先级关键词 — 匹配到这些开头的 part 会被裁剪
+    const lowPriorityPrefixes = [
+      'You have ',           // memory stats
+      'META-COGNITION',      // self-awareness
+      'ATTENTION STATE',     // priority tracking
+      'LEARNED BEHAVIORS',   // experiment insights
+      'PRELOADED CONTEXT',   // predictive preloading
+      'DREAM INSIGHTS',      // dream learning
+      'TOOL PERFORMANCE',    // tool tracking
+      'RESPONSE STRATEGY',   // adaptive strategy
+    ];
+
+    // 从低优先级 section 开始裁剪，直到满足预算
+    for (const prefix of lowPriorityPrefixes) {
+      if (parts.reduce((s, p) => s + p.length, 0) <= MAX_PROMPT_CHARS) break;
+      const idx = parts.findIndex(p => p.includes(prefix));
+      if (idx >= 0) {
+        // 移除该 section 及其后续子行（缩进的 bullet points）
+        parts.splice(idx, 1);
+        while (idx < parts.length && parts[idx]?.startsWith('  ')) {
+          parts.splice(idx, 1);
+        }
+      }
     }
   }
 
