@@ -46,7 +46,8 @@ pnpm build 2>&1
 ## What's Been Tried
 
 ### Wins
-1. **Waypoint 1**: self_read/self_modify/self_list tools + Cerebellum wired to agent. Build passes. 4 new autonomous capabilities (read self, modify self, list self, experiment orchestrate).
+1. **Waypoint 1**: self_read/self_modify/self_list tools + Cerebellum wired to agent. Build passes. 4 new autonomous capabilities.
+2. **Waypoint 2**: AutoMissionTool — agent creates self-improvement missions as tool calls. Full Cerebellum lifecycle (create/waypoint/decide/abandon).
 
 ### Dead Ends
 {Auto-updated by engine.}
