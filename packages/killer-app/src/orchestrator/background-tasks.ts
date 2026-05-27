@@ -4455,3 +4455,153 @@ export function generateStyleGuidance(model: StyleEvolutionModel): string | unde
   if (hints.length === 0) return undefined;
   return hints.join('; ');
 }
+
+// ============================================================
+// Importance-Aware History Compressor — 智能对话历史压缩
+// ============================================================
+
+export interface CompressedHistory {
+  /** 压缩后的消息 */
+  messages: Array<{ role: string; content: string; timestamp?: number }>;
+  /** 压缩摘要 */
+  compressionSummary: string;
+  /** 原始消息数 */
+  originalCount: number;
+  /** 保留的高重要性消息数 */
+  preservedCount: number;
+}
+
+/**
+ * 基于重要性评分压缩对话历史
+ *
+ * 策略：保留高重要性轮次完整，将低重要性轮次合并为简短摘要。
+ * 高重要性 = score > 0.6（包含决策、代码、行动指令、强情感）
+ */
+export function compressHistory(
+  messages: Array<{ role: string; content: string; timestamp?: number }>,
+  maxChars: number,
+): CompressedHistory {
+  if (messages.length === 0) {
+    return { messages: [], compressionSummary: 'empty', originalCount: 0, preservedCount: 0 };
+  }
+
+  const totalChars = messages.reduce((s, m) => s + m.content.length, 0);
+  if (totalChars <= maxChars) {
+    return {
+      messages: [...messages],
+      compressionSummary: 'no compression needed',
+      originalCount: messages.length,
+      preservedCount: messages.length,
+    };
+  }
+
+  // 1. 给每条消息评分
+  const scored = messages.map((m, i) => ({
+    message: m,
+    index: i,
+    score: scoreTurnImportance(m.role, m.content).importance,
+  }));
+
+  // 2. 保留最近3轮和高重要性消息（score > 0.6）
+  const recentThreshold = Math.max(0, messages.length - 6);
+  const preserved: typeof scored = [];
+  const toCompress: typeof scored = [];
+
+  for (const item of scored) {
+    if (item.index >= recentThreshold || item.score > 0.6) {
+      preserved.push(item);
+    } else {
+      toCompress.push(item);
+    }
+  }
+
+  // 3. 将低重要性消息合并为摘要
+  const summaryParts: string[] = [];
+  let currentChunk: typeof scored = [];
+
+  const flushChunk = () => {
+    if (currentChunk.length === 0) return;
+    const roles = [...new Set(currentChunk.map(c => c.message.role))];
+    const avgScore = currentChunk.reduce((s, c) => s + c.score, 0) / currentChunk.length;
+    const summary = summarizeChunk(currentChunk.map(c => c.message));
+    if (summary) {
+      summaryParts.push(`[${roles.join('/')}×${currentChunk.length}] ${summary}`);
+    }
+    currentChunk = [];
+  };
+
+  for (const item of toCompress) {
+    currentChunk.push(item);
+    if (currentChunk.length >= 5) flushChunk();
+  }
+  flushChunk();
+
+  // 4. 重建消息列表
+  const result: Array<{ role: string; content: string; timestamp?: number }> = [];
+
+  if (summaryParts.length > 0) {
+    result.push({
+      role: 'system',
+      content: `[Earlier context summary]\n${summaryParts.join('\n')}`,
+      timestamp: toCompress[0]?.message.timestamp,
+    });
+  }
+
+  for (const item of preserved) {
+    result.push({
+      role: item.message.role,
+      content: item.message.content,
+      timestamp: item.message.timestamp,
+    });
+  }
+
+  // 5. 如果仍然超长，截断保留消息中的长内容
+  let currentTotal = result.reduce((s, m) => s + m.content.length, 0);
+  if (currentTotal > maxChars) {
+    for (let i = 0; i < result.length; i++) {
+      if (result[i].role === 'system') continue; // 不截断摘要
+      if (currentTotal <= maxChars) break;
+      if (result[i].content.length > 200) {
+        const excess = currentTotal - maxChars;
+        const maxLen = Math.max(100, result[i].content.length - excess);
+        result[i] = {
+          ...result[i],
+          content: result[i].content.slice(0, maxLen) + '...[truncated]',
+        };
+        currentTotal = result.reduce((s, m) => s + m.content.length, 0);
+      }
+    }
+  }
+
+  return {
+    messages: result,
+    compressionSummary: `compressed ${messages.length} → ${result.length} msgs (preserved ${preserved.length} high-importance)`,
+    originalCount: messages.length,
+    preservedCount: preserved.length,
+  };
+}
+
+function summarizeChunk(messages: Array<{ role: string; content: string }>): string {
+  // 提取关键信息：代码相关、决策、行动
+  const allContent = messages.map(m => m.content).join(' ');
+  const keywords: string[] = [];
+
+  // 提取工具/技术关键词
+  const techMatches = allContent.match(/\b(debug|test|deploy|build|error|fix|feature|refactor|install|config)\b/gi);
+  if (techMatches) {
+    const unique = [...new Set(techMatches.map(t => t.toLowerCase()))];
+    keywords.push(...unique.slice(0, 3));
+  }
+
+  // 提取决策标记
+  if (DECISION_MARKERS.test(allContent)) keywords.push('decision-made');
+  if (ACTION_MARKERS.test(allContent)) keywords.push('action-planned');
+
+  if (keywords.length === 0) {
+    // 即使没有关键词也生成基础摘要
+    const userMsgs = messages.filter(m => m.role === 'user');
+    const first = userMsgs[0]?.content.slice(0, 50) ?? 'general discussion';
+    return `${userMsgs.length} exchanges starting with "${first}..."`;
+  }
+  return `topics: ${keywords.join(', ')}`;
+}

@@ -78,6 +78,7 @@ import {
   inferSatisfactionFromReply,
   updateStyleEvolution,
   generateStyleGuidance,
+  compressHistory,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -3038,6 +3039,66 @@ describe('background-tasks', () => {
         });
       }
       expect(model.featureWeights.explanationRatio).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Importance-Aware History Compressor', () => {
+    it('should return all messages when under limit', () => {
+      const msgs = [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi there' },
+      ];
+      const result = compressHistory(msgs, 10000);
+      expect(result.messages.length).toBe(2);
+      expect(result.originalCount).toBe(2);
+      expect(result.preservedCount).toBe(2);
+    });
+
+    it('should preserve high-importance messages', () => {
+      const msgs = [
+        { role: 'user', content: 'small talk' },
+        { role: 'assistant', content: 'yeah' },
+        { role: 'user', content: 'I decided to use PostgreSQL for the database. This is critical.' },
+        { role: 'assistant', content: 'ok' },
+        { role: 'user', content: 'please fix the error in auth module' },
+        { role: 'assistant', content: 'done' },
+        { role: 'user', content: 'latest message' },
+        { role: 'assistant', content: 'reply' },
+      ];
+      const result = compressHistory(msgs, 200);
+      expect(result.preservedCount).toBeGreaterThanOrEqual(2);
+      // Decision message should be preserved
+      const preservedContent = result.messages.map(m => m.content).join(' ');
+      expect(preservedContent).toContain('PostgreSQL');
+    });
+
+    it('should create summary for low-importance messages', () => {
+      const msgs = [];
+      for (let i = 0; i < 20; i++) {
+        msgs.push({ role: i % 2 === 0 ? 'user' : 'assistant', content: `message ${i}: some generic text here` });
+      }
+      const result = compressHistory(msgs, 300);
+      expect(result.messages.length).toBeLessThan(20);
+      // Should have a system summary message
+      const sysMsg = result.messages.find(m => m.role === 'system');
+      expect(sysMsg).toBeDefined();
+    });
+
+    it('should always preserve recent messages', () => {
+      const msgs = [];
+      for (let i = 0; i < 20; i++) {
+        msgs.push({ role: 'user', content: `msg ${i}` });
+      }
+      const result = compressHistory(msgs, 500);
+      // Last 6 messages should be preserved (3 turns = 6 messages for last 3)
+      const lastContent = result.messages[result.messages.length - 1]?.content;
+      expect(lastContent).toContain('msg 19');
+    });
+
+    it('should handle empty messages', () => {
+      const result = compressHistory([], 1000);
+      expect(result.messages).toHaveLength(0);
+      expect(result.compressionSummary).toBe('empty');
     });
   });
 });
