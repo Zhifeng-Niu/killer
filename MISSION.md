@@ -4,8 +4,8 @@ status: active
 started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
-best_metric: 2278
-total_waypoints: 77
+best_metric: 2287
+total_waypoints: 78
 consecutive_discards: 0
 ---
 
@@ -121,6 +121,7 @@ npm test 2>&1
 74. **Response Style Self-Evolution** (waypoint 75): StyleEvolutionModel tracks 6 response features (codeBlocks, explanationRatio, listItems, length, questionsAsked, technical) against user satisfaction inferred from next reply. EMA-weighted feature preferences generate STYLE GUIDANCE section — agent learns whether the user prefers code-heavy vs prose, structured lists vs narrative, and adapts response style over time
 75. **Importance-Aware History Compression** (waypoint 76): compressHistory() uses scoreTurnImportance ratings to preserve high-importance turns (decisions, code, actions, strong emotions >0.6) while merging low-importance turns into topic summaries. Recent 3 turns always preserved. Long messages truncated as last resort. Smart context budget management instead of naive truncation
 76. **Tool Usage Pattern Mining** (waypoint 77): mineToolPatterns() discovers successful tool pair sequences (A→B) from usage history within 5-minute windows. Filters by minimum occurrences and success rate. suggestNextTool() recommends the most likely successful next tool based on the last tool used. Patterns sorted by successRate × occurrences for relevance
+77. **Conversation Knowledge Graph** (waypoint 78): Extract entities (file/module/concept/tool/person/technology/error) and relations (imports/uses/error-in/fixed-in) from conversation messages. KnowledgeEntity tracks mention count for importance ranking. KnowledgeRelation captures typed connections between entities. Foundation for context-aware entity linking and cross-reference resolution
 
 ### Dead Ends
 {Auto-updated by engine.}

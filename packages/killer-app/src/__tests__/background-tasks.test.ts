@@ -83,6 +83,11 @@ import {
   suggestNextTool,
   formatToolPatterns,
   type ToolUsageRecord,
+  createEmptyKnowledgeGraph,
+  extractEntitiesFromMessage,
+  extractRelationsFromMessage,
+  getTopEntities,
+  formatKnowledgeSummary,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -3182,6 +3187,72 @@ describe('background-tasks', () => {
       const formatted = formatToolPatterns(patterns);
       expect(formatted).toContain('code_search→shell_exec');
       expect(formatted).toContain('100%');
+    });
+  });
+
+  describe('Conversation Knowledge Graph', () => {
+    it('should extract file entities', () => {
+      const kg = createEmptyKnowledgeGraph();
+      const entities = extractEntitiesFromMessage('edit the file app.tsx and fix the bug', Date.now(), kg.entities);
+      const fileEntity = entities.get('app.tsx');
+      expect(fileEntity).toBeDefined();
+      expect(fileEntity!.type).toBe('file');
+    });
+
+    it('should extract technology entities', () => {
+      const kg = createEmptyKnowledgeGraph();
+      const entities = extractEntitiesFromMessage('using React and PostgreSQL for the project', Date.now(), kg.entities);
+      expect(entities.get('react')).toBeDefined();
+      expect(entities.get('postgresql')).toBeDefined();
+    });
+
+    it('should extract error entities', () => {
+      const kg = createEmptyKnowledgeGraph();
+      const entities = extractEntitiesFromMessage('got a TypeError in the code', Date.now(), kg.entities);
+      expect(entities.get('typeerror')).toBeDefined();
+      expect(entities.get('typeerror')!.type).toBe('error');
+    });
+
+    it('should increment mention count for repeated entities', () => {
+      const now = Date.now();
+      let entities = extractEntitiesFromMessage('edit app.tsx', now, new Map());
+      entities = extractEntitiesFromMessage('fix app.tsx', now + 1000, entities);
+      entities = extractEntitiesFromMessage('test app.tsx', now + 2000, entities);
+      expect(entities.get('app.tsx')!.mentions).toBe(3);
+    });
+
+    it('should extract import relations', () => {
+      const relations = extractRelationsFromMessage('app.module imports utils.helper');
+      expect(relations.length).toBeGreaterThan(0);
+      expect(relations[0].relation).toBe('imports');
+    });
+
+    it('should extract error-in relations', () => {
+      const relations = extractRelationsFromMessage('TypeError error in database');
+      expect(relations.length).toBeGreaterThan(0);
+      expect(relations[0].relation).toBe('error-in');
+    });
+
+    it('should get top entities by mention count', () => {
+      let entities = new Map();
+      entities.set('a', { name: 'a', type: 'file', mentions: 5, firstMentioned: 0 });
+      entities.set('b', { name: 'b', type: 'concept', mentions: 10, firstMentioned: 0 });
+      entities.set('c', { name: 'c', type: 'technology', mentions: 3, firstMentioned: 0 });
+      const top = getTopEntities(entities, 2);
+      expect(top).toHaveLength(2);
+      expect(top[0].name).toBe('b');
+    });
+
+    it('should format knowledge summary', () => {
+      let entities = new Map();
+      entities.set('app.tsx', { name: 'app.tsx', type: 'file', mentions: 3, firstMentioned: 0 });
+      const summary = formatKnowledgeSummary(entities, []);
+      expect(summary).toContain('app.tsx');
+      expect(summary).toContain('file');
+    });
+
+    it('should return empty summary for no entities', () => {
+      expect(formatKnowledgeSummary(new Map(), [])).toBe('');
     });
   });
 });

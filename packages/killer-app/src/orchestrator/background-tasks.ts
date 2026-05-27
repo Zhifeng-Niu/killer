@@ -4717,3 +4717,121 @@ export function formatToolPatterns(patterns: ToolPattern[]): string {
     `${p.sequence.join('→')} (success: ${(p.successRate * 100).toFixed(0)}%, used ${p.occurrences}x)`,
   ).join('; ');
 }
+
+// ============================================================
+// Conversation Knowledge Graph — 对话知识图谱
+// ============================================================
+
+export interface KnowledgeEntity {
+  name: string;
+  type: 'file' | 'module' | 'concept' | 'tool' | 'person' | 'technology' | 'error';
+  mentions: number;
+  firstMentioned: number;
+}
+
+export interface KnowledgeRelation {
+  from: string;
+  to: string;
+  relation: string;
+  confidence: number;
+}
+
+export interface ConversationKnowledgeGraph {
+  entities: Map<string, KnowledgeEntity>;
+  relations: KnowledgeRelation[];
+}
+
+export function createEmptyKnowledgeGraph(): ConversationKnowledgeGraph {
+  return { entities: new Map(), relations: [] };
+}
+
+// 实体类型检测模式
+const ENTITY_PATTERNS: Array<{ pattern: RegExp; type: KnowledgeEntity['type'] }> = [
+  { pattern: /[\w/.]+\.(ts|tsx|js|jsx|py|go|rs|java|json|yaml|yml|md|sql)\b/g, type: 'file' },
+  { pattern: /(?:import|from|require)\s+['"]([^'"]+)['"]/g, type: 'module' },
+  { pattern: /\b(Error|TypeError|ReferenceError|SyntaxError|ValidationError)\b/g, type: 'error' },
+  { pattern: /\b(React|Next\.js|Vue|Angular|Express|Fastify|Django|Flask|PostgreSQL|MongoDB|Redis|Docker|Kubernetes|Git|npm|pnpm|yarn)\b/gi, type: 'technology' },
+  { pattern: /\b(auth|database|api|router|middleware|config|logger|cache|queue|pipeline)\b/gi, type: 'concept' },
+  { pattern: /\b(grep|find|search|test|build|deploy|install|run)\b/gi, type: 'tool' },
+];
+
+// 关系检测模式
+const RELATION_PATTERNS: Array<{ pattern: RegExp; fromGroup: number; toGroup: number; relation: string }> = [
+  { pattern: /(\w+(?:\.\w+)?)\s+(?:imports?|requires?|depends?\s+on)\s+(\w+(?:\.\w+)?)/gi, fromGroup: 1, toGroup: 2, relation: 'imports' },
+  { pattern: /(\w+(?:\.\w+)?)\s+(?:uses?|calls?|invokes?)\s+(\w+(?:\.\w+)?)/gi, fromGroup: 1, toGroup: 2, relation: 'uses' },
+  { pattern: /(\w+)\s+(?:error|bug|issue|problem)\s+(?:in|with|at)\s+(\w+)/gi, fromGroup: 1, toGroup: 2, relation: 'error-in' },
+  { pattern: /fix(?:ed|es)?\s+(?:the\s+)?(\w+)\s+(?:in|of)\s+(\w+)/gi, fromGroup: 1, toGroup: 2, relation: 'fixed-in' },
+];
+
+export function extractEntitiesFromMessage(
+  message: string,
+  timestamp: number,
+  existingEntities: Map<string, KnowledgeEntity>,
+): Map<string, KnowledgeEntity> {
+  const updated = new Map(existingEntities);
+
+  for (const { pattern, type } of ENTITY_PATTERNS) {
+    // Reset lastIndex for global patterns
+    pattern.lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(message)) !== null) {
+      // 文件类型用 match[0]（完整文件名），其他用 capture group
+      const name = (type === 'file' ? match[0] : (match[1] ?? match[0])).toLowerCase();
+      if (name.length < 2 || name.length > 50) continue;
+
+      const existing = updated.get(name);
+      if (existing) {
+        updated.set(name, { ...existing, mentions: existing.mentions + 1 });
+      } else {
+        updated.set(name, { name, type, mentions: 1, firstMentioned: timestamp });
+      }
+    }
+  }
+
+  return updated;
+}
+
+export function extractRelationsFromMessage(message: string): KnowledgeRelation[] {
+  const relations: KnowledgeRelation[] = [];
+
+  for (const { pattern, fromGroup, toGroup, relation } of RELATION_PATTERNS) {
+    pattern.lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(message)) !== null) {
+      const from = match[fromGroup]?.toLowerCase();
+      const to = match[toGroup]?.toLowerCase();
+      if (from && to && from !== to) {
+        relations.push({ from, to, relation, confidence: 0.7 });
+      }
+    }
+  }
+
+  return relations;
+}
+
+export function getTopEntities(
+  entities: Map<string, KnowledgeEntity>,
+  limit: number = 10,
+): KnowledgeEntity[] {
+  return [...entities.values()]
+    .sort((a, b) => b.mentions - a.mentions)
+    .slice(0, limit);
+}
+
+export function formatKnowledgeSummary(
+  entities: Map<string, KnowledgeEntity>,
+  relations: KnowledgeRelation[],
+): string {
+  const topEntities = getTopEntities(entities, 8);
+  if (topEntities.length === 0) return '';
+
+  const parts: string[] = [];
+  parts.push(`entities: ${topEntities.map(e => `${e.name}(${e.type}:${e.mentions}x)`).join(', ')}`);
+
+  const uniqueRelations = relations.slice(-5);
+  if (uniqueRelations.length > 0) {
+    parts.push(`relations: ${uniqueRelations.map(r => `${r.from}→${r.relation}→${r.to}`).join(', ')}`);
+  }
+
+  return parts.join(' | ');
+}
