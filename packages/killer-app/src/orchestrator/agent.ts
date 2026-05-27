@@ -180,6 +180,9 @@ export class KillerAgent {
   // 工具使用效果追踪
   private toolPerformance: Map<string, { uses: number; successes: number; avgDurationMs: number }> = new Map();
 
+  // 目标依赖树：父目标 ID → 子目标依赖关系
+  private goalDependencies: Map<string, Array<{ subGoalId: string; dependsOn: string[] }>> = new Map();
+
   constructor(config: AgentConfig) {
     this.config = config;
     this.sessionDir = config.sessionDir ?? path.join(os.homedir(), '.killer', 'sessions');
@@ -678,11 +681,143 @@ export class KillerAgent {
         const goal = await this.createGoal(analysis.description, analysis.priority);
         if (goal) {
           this.logger.info(`Auto-created goal from input: ${goal.description.slice(0, 60)}`);
+          // Attempt hierarchical decomposition for complex goals
+          const subGoals = await this.decomposeGoal(goal);
+          if (subGoals.length > 0) {
+            this.logger.info(`Decomposed goal into ${subGoals.length} sub-goals`);
+          }
         }
       }
     } catch {
       // Goal extraction should never block the main flow
     }
+  }
+
+  /**
+   * 将复杂目标分解为带依赖关系的子目标树
+   *
+   * 使用 LLM 分析目标描述，生成 2-5 个子目标。
+   * 每个子目标记录 parentGoalId 和 dependsOn（依赖的其他子目标 ID）。
+   */
+  async decomposeGoal(parentGoal: Goal): Promise<Goal[]> {
+    const prompt = `Break down this goal into 2-5 concrete sub-goals with dependencies.
+
+Goal: "${parentGoal.description}"
+
+Respond in this EXACT format (one line per sub-goal):
+SUB | <short description> | <depends on: none OR comma-separated sub numbers>
+
+Rules:
+- Sub-goals should be independently achievable
+- Number them 1, 2, 3... — dependencies reference these numbers
+- Sub-goals with "none" dependencies can start immediately (parallel)
+- Keep descriptions under 60 chars
+
+Example for "Build a REST API with auth":
+SUB | Design API schema and routes | none
+SUB | Implement database models | 1
+SUB | Build authentication middleware | 1
+SUB | Write endpoint handlers | 2, 3
+SUB | Add integration tests | 4`;
+
+    try {
+      const response = await this.callLLMWithRetry(prompt, '');
+      const lines = response.trim().split('\n').filter(l => l.startsWith('SUB'));
+      if (lines.length < 2) return [];
+
+      // Parse sub-goals
+      interface ParsedSubGoal {
+        description: string;
+        dependsOnIndices: number[];
+      }
+      const parsed: ParsedSubGoal[] = [];
+
+      for (const line of lines.slice(0, 5)) {
+        const match = line.match(/^SUB\s*\|\s*(.+?)\s*\|\s*(.+)$/);
+        if (match) {
+          const description = match[1].trim();
+          const depsStr = match[2].trim().toLowerCase();
+          const dependsOnIndices = depsStr === 'none'
+            ? []
+            : depsStr.split(',').map(s => parseInt(s.trim(), 10) - 1).filter(n => !isNaN(n) && n >= 0);
+          parsed.push({ description, dependsOnIndices });
+        }
+      }
+
+      if (parsed.length < 2) return [];
+
+      // Create sub-goals with parent relationship
+      const subGoalMap = new Map<number, Goal>();
+      for (let i = 0; i < parsed.length; i++) {
+        const sub: Goal = {
+          id: generateId('sub'),
+          description: parsed[i].description,
+          priority: parentGoal.priority,
+          parentGoalId: parentGoal.id,
+          status: 'pending',
+          createdAt: Date.now(),
+        };
+        subGoalMap.set(i, sub);
+      }
+
+      // Resolve dependency indices to sub-goal IDs and track in metadata
+      const subGoals = Array.from(subGoalMap.values());
+      this.goalDependencies.set(parentGoal.id, parsed.map((p, i) => ({
+        subGoalId: subGoalMap.get(i)!.id,
+        dependsOn: p.dependsOnIndices.map(di => subGoalMap.get(di)?.id).filter(Boolean) as string[],
+      })));
+
+      // Mark root-less sub-goals as ready
+      for (let i = 0; i < parsed.length; i++) {
+        if (parsed[i].dependsOnIndices.length === 0) {
+          subGoalMap.get(i)!.status = 'in_progress';
+        }
+      }
+
+      this.consciousness.emit({
+        type: 'external.user_message',
+        source: 'prefrontal',
+        data: {
+          event: 'goal.decomposed',
+          parentGoalId: parentGoal.id,
+          subGoalCount: subGoals.length,
+          dependencyTree: this.goalDependencies.get(parentGoal.id),
+        },
+      });
+
+      return subGoals;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 获取目标依赖树（用于 prompt 注入）
+   */
+  getGoalDependencyTree(): Array<{
+    parentDescription: string;
+    subGoals: Array<{ description: string; status: string; dependsOn: string[] }>;
+  }> {
+    const trees: Array<{
+      parentDescription: string;
+      subGoals: Array<{ description: string; status: string; dependsOn: string[] }>;
+    }> = [];
+
+    for (const [parentId, deps] of this.goalDependencies) {
+      const parent = this.listGoals().find(g => g.id === parentId);
+      if (!parent || deps.length === 0) continue;
+
+      trees.push({
+        parentDescription: parent.description,
+        subGoals: deps.map(d => ({
+          description: d.subGoalId,
+          status: 'pending',
+          dependsOn: d.dependsOn,
+        })),
+      });
+    }
+
+    return trees;
   }
 
   /**
@@ -3145,6 +3280,15 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       behavioralInsights: this.behavioralInsights.length > 0 ? [...this.behavioralInsights] : undefined,
       strategyScores: this.persona.getUserModel().preferenceProfile.strategyScores,
       toolPerformanceSummary: this.getToolPerformanceSummary(),
+      goalDependencyTree: this.goalDependencies.size > 0 ? this.getGoalDependencyTree() : undefined,
+      subGoals: this.goalDependencies.size > 0
+        ? Array.from(this.goalDependencies.values()).flat().map(d => ({
+            id: d.subGoalId,
+            description: d.subGoalId,
+            parentGoalId: '',
+            status: 'pending',
+          }))
+        : undefined,
     });
   }
 

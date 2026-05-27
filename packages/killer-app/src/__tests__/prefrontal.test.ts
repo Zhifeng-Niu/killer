@@ -10,7 +10,25 @@ import type { SensoryInput } from '../sensory/types.js';
 import { SensoryChannel } from '../sensory/types.js';
 
 class MockLLMProvider {
-  async complete(_prompt: string): Promise<{ content: string; usage?: unknown }> {
+  private goalAnalysisResponse = 'NO';
+  private decompositionResponse = '';
+
+  setGoalAnalysis(response: string): void {
+    this.goalAnalysisResponse = response;
+  }
+
+  setDecomposition(response: string): void {
+    this.decompositionResponse = response;
+  }
+
+  async complete(prompt: string): Promise<{ content: string; usage?: unknown }> {
+    // Route based on prompt content
+    if (prompt.includes('Break down this goal')) {
+      return { content: this.decompositionResponse || 'SUB | Step 1 | none\nSUB | Step 2 | 1', usage: { promptTokens: 10, completionTokens: 5 } };
+    }
+    if (prompt.includes('Does it describe a complex')) {
+      return { content: this.goalAnalysisResponse, usage: { promptTokens: 10, completionTokens: 5 } };
+    }
     return { content: 'Mock response', usage: { promptTokens: 10, completionTokens: 5 } };
   }
 }
@@ -104,6 +122,91 @@ describe('Prefrontal Integration', () => {
 
     it('should have plan executor initialized', () => {
       expect(agent.planExecutor).toBeDefined();
+    });
+  });
+
+  describe('Goal Decomposition', () => {
+    it('should decompose a complex goal into sub-goals', async () => {
+      const mockProvider = new MockLLMProvider();
+      mockProvider.setDecomposition([
+        'SUB | Design API schema | none',
+        'SUB | Implement database models | 1',
+        'SUB | Build auth middleware | 1',
+        'SUB | Write endpoint handlers | 2, 3',
+        'SUB | Add integration tests | 4',
+      ].join('\n'));
+
+      const decomposeAgent = new KillerAgent({
+        llm: mockProvider,
+        sensory: { enabledChannels: [], bufferSize: 10 },
+        memory: { dreamingEnabled: false, forgettingEnabled: false },
+        prefrontal: { maxPlanSteps: 5, maxConcurrentPlans: 3, riskTolerance: 0.5 },
+        evolutionEnabled: false,
+        debugLogging: false,
+      });
+      await decomposeAgent.boot();
+
+      const parent = await decomposeAgent.createGoal('Build REST API with auth', 0.8);
+      expect(parent).toBeDefined();
+
+      const subGoals = await decomposeAgent.decomposeGoal(parent!);
+      expect(subGoals.length).toBe(5);
+      expect(subGoals[0].parentGoalId).toBe(parent!.id);
+      expect(subGoals[0].status).toBe('in_progress'); // no dependencies → ready
+      expect(subGoals[1].status).toBe('pending'); // depends on #1
+
+      await decomposeAgent.shutdown();
+    });
+
+    it('should return empty array for unparseable LLM response', async () => {
+      const mockProvider = new MockLLMProvider();
+      mockProvider.setDecomposition('I cannot break this down');
+
+      const testAgent = new KillerAgent({
+        llm: mockProvider,
+        sensory: { enabledChannels: [], bufferSize: 10 },
+        memory: { dreamingEnabled: false, forgettingEnabled: false },
+        prefrontal: { maxPlanSteps: 5, maxConcurrentPlans: 3, riskTolerance: 0.5 },
+        evolutionEnabled: false,
+        debugLogging: false,
+      });
+      await testAgent.boot();
+
+      const goal = await testAgent.createGoal('Simple task', 0.5);
+      const subGoals = await testAgent.decomposeGoal(goal!);
+      expect(subGoals.length).toBe(0);
+
+      await testAgent.shutdown();
+    });
+
+    it('should mark parallel sub-goals as in_progress', async () => {
+      const mockProvider = new MockLLMProvider();
+      mockProvider.setDecomposition([
+        'SUB | Research frameworks | none',
+        'SUB | Analyze requirements | none',
+        'SUB | Write proposal | 1, 2',
+      ].join('\n'));
+
+      const testAgent = new KillerAgent({
+        llm: mockProvider,
+        sensory: { enabledChannels: [], bufferSize: 10 },
+        memory: { dreamingEnabled: false, forgettingEnabled: false },
+        prefrontal: { maxPlanSteps: 5, maxConcurrentPlans: 3, riskTolerance: 0.5 },
+        evolutionEnabled: false,
+        debugLogging: false,
+      });
+      await testAgent.boot();
+
+      const goal = await testAgent.createGoal('Plan migration', 0.7);
+      const subGoals = await testAgent.decomposeGoal(goal!);
+
+      // First two have no deps → in_progress (parallel)
+      expect(subGoals[0].status).toBe('in_progress');
+      expect(subGoals[1].status).toBe('in_progress');
+      // Third depends on both → pending
+      expect(subGoals[2].status).toBe('pending');
+
+      await testAgent.shutdown();
     });
   });
 });

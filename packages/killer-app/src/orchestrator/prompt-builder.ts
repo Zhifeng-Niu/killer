@@ -53,6 +53,13 @@ export interface PromptBuilderDeps {
   };
   /** 工具使用效果摘要 */
   toolPerformanceSummary?: string;
+  /** 目标依赖树（层次化分解） */
+  goalDependencyTree?: Array<{
+    parentDescription: string;
+    subGoals: Array<{ description: string; status: string; dependsOn: string[] }>;
+  }>;
+  /** 子目标列表（带 parentGoalId） */
+  subGoals?: Array<{ id: string; description: string; parentGoalId: string; status: string }>;
 }
 
 /**
@@ -378,6 +385,27 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
       }
     }
     parts.push('Work toward these goals when the user\'s request is related. If they ask about progress, report from this context.');
+  }
+
+  // === 目标依赖树（层次化分解） ===
+  if (deps.goalDependencyTree && deps.goalDependencyTree.length > 0 && deps.subGoals) {
+    parts.push('\nGOAL DECOMPOSITION — Complex goals broken into sub-tasks:');
+    for (const tree of deps.goalDependencyTree) {
+      parts.push(`  ┌ ${tree.parentDescription}`);
+      for (const sub of tree.subGoals) {
+        const subGoal = deps.subGoals.find(s => s.id === sub.description);
+        const desc = subGoal?.description ?? sub.description;
+        const statusIcon = sub.status === 'completed' ? '✓' : sub.status === 'in_progress' ? '→' : '·';
+        const depsStr = sub.dependsOn.length > 0
+          ? ` (after: ${sub.dependsOn.map(dId => {
+              const sg = deps.subGoals!.find(s => s.id === dId);
+              return sg ? sg.description.slice(0, 30) : dId.slice(0, 8);
+            }).join(', ')})`
+          : ' [can start now]';
+        parts.push(`  │ ${statusIcon} ${desc}${depsStr}`);
+      }
+    }
+    parts.push('Execute sub-goals with no dependencies in parallel. Complete dependencies before starting dependent sub-goals.');
   }
 
   // === 关联记忆检索（基于当前输入） ===
