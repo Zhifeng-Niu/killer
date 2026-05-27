@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -180,6 +180,7 @@ export class KillerAgent {
   // 注意力优先级状态
   private lastAttentionState: import('./background-tasks.js').AttentionState | null = null;
   private lastBehaviorMode: import('./background-tasks.js').PerceptionVector['behaviorMode'] | null = null;
+  private cognitiveTuning: CognitiveTuningParams = { ...DEFAULT_COGNITIVE_TUNING };
 
   // 实验驱动的行为洞察（成功的实验模式，注入系统 prompt）
   private behavioralInsights: string[] = [];
@@ -3609,7 +3610,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     const rhythm = analyzeConversationRhythm(
       userMessages.map(m => ({ length: m.content.length, timestamp: m.timestamp })),
     );
-    if (rhythm.confidence < 0.4 || rhythm.rhythm === 'initial') return undefined;
+    if (rhythm.confidence < this.cognitiveTuning.rhythmThreshold || rhythm.rhythm === 'initial') return undefined;
     return `[${rhythm.rhythm}] ${rhythm.responseHint}`;
   }
 
@@ -3627,7 +3628,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
   private computeEmotionalStrategy(): string | undefined {
     const es = this.persona.emotionalState.getState();
-    if (es.intensity < 0.2) return undefined;
+    if (es.intensity < this.cognitiveTuning.emotionThreshold) return undefined;
     const strategy = mapEmotionToResponseStrategy({
       valence: es.current.valence,
       arousal: es.current.arousal,
@@ -3662,7 +3663,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
     this.lastBehaviorMode = pv.behaviorMode;
 
-    if (pv.overallAttention < 0.3 && pv.behaviorMode === 'balanced') return undefined;
+    if (pv.overallAttention < this.cognitiveTuning.fusionAttentionThreshold && pv.behaviorMode === 'balanced') return undefined;
     return `[${pv.behaviorMode}] attention=${(pv.overallAttention * 100).toFixed(0)}% — ${pv.fusedHint}`;
   }
 

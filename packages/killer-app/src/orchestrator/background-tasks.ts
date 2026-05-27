@@ -3526,3 +3526,88 @@ export function verifyStrategyCoherence(context: {
     resolution: resolutions.length > 0 ? resolutions.join(' ') : 'All strategies are aligned.',
   };
 }
+
+/**
+ * 认知模块调优参数
+ */
+export interface CognitiveTuningParams {
+  /** 情感触发灵敏度阈值 (0-1, default 0.2) */
+  emotionThreshold: number;
+  /** 节奏检测置信度阈值 (0-1, default 0.4) */
+  rhythmThreshold: number;
+  /** 专长检测最小证据数 (default 2) */
+  expertiseMinEvidence: number;
+  /** 健康度告警阈值 (0-1, default 0.5) */
+  healthAlertThreshold: number;
+  /** 感知融合注意力阈值 (0-1, default 0.3) */
+  fusionAttentionThreshold: number;
+}
+
+/** 默认参数 */
+export const DEFAULT_COGNITIVE_TUNING: CognitiveTuningParams = {
+  emotionThreshold: 0.2,
+  rhythmThreshold: 0.4,
+  expertiseMinEvidence: 2,
+  healthAlertThreshold: 0.5,
+  fusionAttentionThreshold: 0.3,
+};
+
+/**
+ * 模块触发统计
+ */
+interface ModuleStats {
+  /** 总触发次数 */
+  triggers: number;
+  /** 导致冲突的次数 */
+  conflicts: number;
+  /** 上次调整时间 */
+  lastAdjustment: number;
+}
+
+/**
+ * 认知参数自适应调节器
+ *
+ * 根据各模块的触发频率和冲突率，自动微调灵敏度。
+ * 高冲突率 → 降低灵敏度；低触发率 → 提高灵敏度。
+ * 使用缓慢的指数移动平均避免过度调整。
+ */
+export function adaptCognitiveParams(
+  current: CognitiveTuningParams,
+  moduleStats: Record<string, ModuleStats>,
+): CognitiveTuningParams {
+  const alpha = 0.05; // 缓慢调整率
+  const result = { ...current };
+
+  // 情感模块：高冲突率 → 提高阈值（降低灵敏度）
+  const emotionStats = moduleStats['emotion'];
+  if (emotionStats && emotionStats.triggers >= 10) {
+    const conflictRate = emotionStats.conflicts / emotionStats.triggers;
+    if (conflictRate > 0.3) {
+      result.emotionThreshold = Math.min(0.5, current.emotionThreshold + alpha);
+    } else if (conflictRate < 0.05) {
+      result.emotionThreshold = Math.max(0.1, current.emotionThreshold - alpha);
+    }
+  }
+
+  // 节奏模块
+  const rhythmStats = moduleStats['rhythm'];
+  if (rhythmStats && rhythmStats.triggers >= 10) {
+    const conflictRate = rhythmStats.conflicts / rhythmStats.triggers;
+    if (conflictRate > 0.3) {
+      result.rhythmThreshold = Math.min(0.7, current.rhythmThreshold + alpha);
+    } else if (conflictRate < 0.05) {
+      result.rhythmThreshold = Math.max(0.2, current.rhythmThreshold - alpha);
+    }
+  }
+
+  // 健康告警
+  const healthStats = moduleStats['health'];
+  if (healthStats && healthStats.triggers >= 5) {
+    const alertRate = healthStats.triggers > 0 ? 1 - (healthStats.conflicts / healthStats.triggers) : 0.5;
+    if (alertRate < 0.2) {
+      result.healthAlertThreshold = Math.min(0.7, current.healthAlertThreshold + alpha);
+    }
+  }
+
+  return result;
+}

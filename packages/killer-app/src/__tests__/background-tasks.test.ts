@@ -50,6 +50,8 @@ import {
   mapEmotionToResponseStrategy,
   fusePerceptionSignals,
   verifyStrategyCoherence,
+  adaptCognitiveParams,
+  DEFAULT_COGNITIVE_TUNING,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -2454,6 +2456,44 @@ describe('background-tasks', () => {
         expertiseHint: 'Use domain-specific terminology freely.',
       });
       expect(result.conflicts.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe('adaptCognitiveParams', () => {
+    it('should return unchanged params with insufficient data', () => {
+      const result = adaptCognitiveParams(DEFAULT_COGNITIVE_TUNING, {
+        emotion: { triggers: 3, conflicts: 2, lastAdjustment: 0 },
+      });
+      expect(result.emotionThreshold).toBe(DEFAULT_COGNITIVE_TUNING.emotionThreshold);
+    });
+
+    it('should increase emotion threshold on high conflict rate', () => {
+      const result = adaptCognitiveParams(DEFAULT_COGNITIVE_TUNING, {
+        emotion: { triggers: 20, conflicts: 10, lastAdjustment: 0 },
+      });
+      expect(result.emotionThreshold).toBeGreaterThan(DEFAULT_COGNITIVE_TUNING.emotionThreshold);
+    });
+
+    it('should decrease emotion threshold on low conflict rate', () => {
+      const result = adaptCognitiveParams(DEFAULT_COGNITIVE_TUNING, {
+        emotion: { triggers: 20, conflicts: 0, lastAdjustment: 0 },
+      });
+      expect(result.emotionThreshold).toBeLessThan(DEFAULT_COGNITIVE_TUNING.emotionThreshold);
+    });
+
+    it('should increase rhythm threshold on high conflict rate', () => {
+      const result = adaptCognitiveParams(DEFAULT_COGNITIVE_TUNING, {
+        rhythm: { triggers: 15, conflicts: 8, lastAdjustment: 0 },
+      });
+      expect(result.rhythmThreshold).toBeGreaterThan(DEFAULT_COGNITIVE_TUNING.rhythmThreshold);
+    });
+
+    it('should not exceed max threshold bounds', () => {
+      const highParams = { ...DEFAULT_COGNITIVE_TUNING, emotionThreshold: 0.49 };
+      const result = adaptCognitiveParams(highParams, {
+        emotion: { triggers: 20, conflicts: 15, lastAdjustment: 0 },
+      });
+      expect(result.emotionThreshold).toBeLessThanOrEqual(0.5);
     });
   });
 });
