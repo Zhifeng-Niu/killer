@@ -31,6 +31,7 @@ import {
   generateProgressReport,
   generateTemporalContext,
   predictConversationFlow,
+  evaluateResponseQuality,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -1387,6 +1388,83 @@ describe('background-tasks', () => {
       expect(pred).toHaveProperty('flowDescription');
       expect(pred.confidence).toBeGreaterThan(0);
       expect(pred.confidence).toBeLessThanOrEqual(1);
+    });
+  });
+
+  describe('evaluateResponseQuality', () => {
+    it('should give high relevance when response addresses the question', () => {
+      const score = evaluateResponseQuality(
+        'How do I install TypeScript?',
+        'You can install TypeScript using npm: npm install -g typescript',
+      );
+      expect(score.relevance).toBeGreaterThan(0.5);
+      expect(score.overall).toBeGreaterThan(0.3);
+    });
+
+    it('should give low relevance when response is off-topic', () => {
+      const score = evaluateResponseQuality(
+        'How do I install TypeScript?',
+        'The weather is nice today. Did you know that penguins live in Antarctica?',
+      );
+      expect(score.relevance).toBeLessThan(0.3);
+      expect(score.tags).toContain('low-relevance');
+    });
+
+    it('should detect code in response as actionable', () => {
+      const score = evaluateResponseQuality(
+        'Write a hello world function',
+        'Here is the code:\n```js\nfunction hello() {\n  console.log("Hello, world!");\n}\n```',
+      );
+      expect(score.actionability).toBeGreaterThan(0.5);
+      expect(score.tags).toContain('has-code');
+    });
+
+    it('should detect step-by-step instructions', () => {
+      const score = evaluateResponseQuality(
+        'How to deploy to production?',
+        '1. Run tests\n2. Build the project\n3. Deploy to server\n4. Verify health check',
+      );
+      expect(score.actionability).toBeGreaterThan(0.5);
+      expect(score.tags).toContain('has-steps');
+    });
+
+    it('should penalize over-explained short answers', () => {
+      const score = evaluateResponseQuality(
+        'yes or no?',
+        'Well, that is a very interesting question. Let me elaborate on the history of yes and no. In many cultures, affirmative and negative responses have evolved significantly. '.repeat(5),
+      );
+      expect(score.conciseness).toBeLessThan(0.6);
+      expect(score.tags).toContain('over-explained');
+    });
+
+    it('should detect incomplete multi-intent responses', () => {
+      const score = evaluateResponseQuality(
+        'Fix the bug and add tests',
+        'I fixed the bug by adding a null check.',
+        ['fix bug', 'write unit tests for authentication module'],
+      );
+      expect(score.completeness).toBeLessThan(1);
+      expect(score.tags).toContain('incomplete-multi-intent');
+    });
+
+    it('should give perfect completeness for single intent', () => {
+      const score = evaluateResponseQuality(
+        'Fix the bug',
+        'I fixed the bug by adding a null check.',
+      );
+      expect(score.completeness).toBe(1);
+    });
+
+    it('should return all score dimensions', () => {
+      const score = evaluateResponseQuality('Hello', 'Hi there!');
+      expect(score).toHaveProperty('relevance');
+      expect(score).toHaveProperty('completeness');
+      expect(score).toHaveProperty('conciseness');
+      expect(score).toHaveProperty('actionability');
+      expect(score).toHaveProperty('overall');
+      expect(score).toHaveProperty('tags');
+      expect(score.overall).toBeGreaterThanOrEqual(0);
+      expect(score.overall).toBeLessThanOrEqual(1);
     });
   });
 });

@@ -2056,3 +2056,142 @@ export function predictConversationFlow(
     flowDescription: '对话模式不明确',
   };
 }
+
+// ============================================================
+// 回复质量自评 (Response Quality Self-Evaluation)
+// ============================================================
+
+/** 回复质量评分 */
+export interface ResponseQualityScore {
+  /** 与输入的相关性 (0-1) */
+  relevance: number;
+  /** 完整性 — 是否覆盖了多意图的所有部分 (0-1) */
+  completeness: number;
+  /** 简洁度 — 长度是否匹配复杂度 (0-1) */
+  conciseness: number;
+  /** 可操作性 — 是否包含具体步骤/代码 (0-1) */
+  actionability: number;
+  /** 综合评分 (0-1) */
+  overall: number;
+  /** 评分理由标签 */
+  tags: string[];
+}
+
+const CODE_INDICATORS = /(?:```|function |class |const |import |return |def |if \(|for \(|=>|->|\{[\s\S]{10,}\})/;
+const STEP_INDICATORS = /(?:^\s*\d+[.)] |step \d|first.*then|首先.*然后|1\.|步骤|step)/im;
+const LINK_INDICATORS = /(?:https?:\/\/|www\.|\.com|\.io|\.org|\.dev)/;
+const QUESTION_PARTS = /(?:^|\n)\s*(?:also|additionally|and|also|plus|另外|还有|以及|同时)/im;
+
+/**
+ * 评估回复质量
+ * 基于规则的多维度评分，用于自适应策略反馈
+ */
+export function evaluateResponseQuality(
+  userMessage: string,
+  agentResponse: string,
+  detectedIntents?: string[],
+): ResponseQualityScore {
+  const tags: string[] = [];
+
+  // === 相关性 (Relevance) ===
+  // 提取用户消息中的关键词，检查是否在回复中出现
+  const userKeywords = extractKeywords(userMessage);
+  const responseLower = agentResponse.toLowerCase();
+  let matchCount = 0;
+  for (const kw of userKeywords) {
+    if (responseLower.includes(kw.toLowerCase())) matchCount++;
+  }
+  const relevance = userKeywords.length > 0
+    ? Math.min(1, matchCount / userKeywords.length)
+    : 0.5;
+  if (relevance > 0.7) tags.push('high-relevance');
+  else if (relevance < 0.3) tags.push('low-relevance');
+
+  // === 完整性 (Completeness) ===
+  let completeness = 1;
+  if (detectedIntents && detectedIntents.length > 1) {
+    const covered = detectedIntents.filter(intent => {
+      const words = intent.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+      return words.some(w => responseLower.includes(w));
+    });
+    completeness = covered.length / detectedIntents.length;
+    if (completeness < 0.8) tags.push('incomplete-multi-intent');
+  }
+
+  // === 简洁度 (Conciseness) ===
+  // 短问题期望短回答，长/复杂问题可以长回答
+  const userLen = userMessage.length;
+  const respLen = agentResponse.length;
+  const hasCode = CODE_INDICATORS.test(agentResponse);
+  const expectedLen = hasCode
+    ? Math.max(200, userLen * 3)
+    : Math.max(50, userLen * 1.5);
+  let conciseness: number;
+  if (respLen <= expectedLen * 2) {
+    conciseness = 1;
+  } else if (respLen <= expectedLen * 4) {
+    conciseness = 0.7;
+    tags.push('verbose');
+  } else {
+    conciseness = 0.4;
+    tags.push('excessively-long');
+  }
+  // 非常短的问题但非常长的回答 — 可能过度解释
+  if (userLen < 30 && respLen > 500) {
+    conciseness = Math.max(0.3, conciseness - 0.2);
+    tags.push('over-explained');
+  }
+
+  // === 可操作性 (Actionability) ===
+  let actionability = 0.3; // baseline
+  if (CODE_INDICATORS.test(agentResponse)) {
+    actionability += 0.3;
+    tags.push('has-code');
+  }
+  if (STEP_INDICATORS.test(agentResponse)) {
+    actionability += 0.2;
+    tags.push('has-steps');
+  }
+  if (LINK_INDICATORS.test(agentResponse)) {
+    actionability += 0.1;
+    tags.push('has-links');
+  }
+  if (/command|命令|run|执行|install|安装/i.test(agentResponse)) {
+    actionability += 0.1;
+    tags.push('has-commands');
+  }
+  actionability = Math.min(1, actionability);
+
+  // === 综合 ===
+  const overall = (relevance * 0.35 + completeness * 0.25 + conciseness * 0.2 + actionability * 0.2);
+
+  return { relevance, completeness, conciseness, actionability, overall, tags };
+}
+
+function extractKeywords(text: string): string[] {
+  // 移除停用词，提取有意义的关键词
+  const stopWords = new Set([
+    'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+    'should', 'may', 'might', 'can', 'shall', 'to', 'of', 'in', 'for',
+    'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during',
+    'before', 'after', 'above', 'below', 'between', 'out', 'off', 'over',
+    'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when',
+    'where', 'why', 'how', 'all', 'each', 'every', 'both', 'few', 'more',
+    'most', 'other', 'some', 'such', 'no', 'not', 'only', 'same', 'so',
+    'than', 'too', 'very', 'just', 'because', 'but', 'and', 'or', 'if',
+    'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those',
+    'i', 'me', 'my', 'we', 'our', 'you', 'your', 'it', 'its', 'he',
+    'she', 'they', 'them', '的', '了', '在', '是', '我', '有', '和',
+    '就', '不', '人', '都', '一', '一个', '上', '也', '很', '到',
+    '说', '要', '去', '你', '会', '着', '没有', '看', '好', '自己',
+  ]);
+
+  const words = text
+    .replace(/[^\w一-鿿]+/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 1 && !stopWords.has(w.toLowerCase()));
+
+  // 去重
+  return [...new Set(words)];
+}
