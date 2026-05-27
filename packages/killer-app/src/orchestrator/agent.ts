@@ -177,6 +177,9 @@ export class KillerAgent {
   private behavioralInsights: string[] = [];
   private readonly maxBehavioralInsights = 10;
 
+  // 工具使用效果追踪
+  private toolPerformance: Map<string, { uses: number; successes: number; avgDurationMs: number }> = new Map();
+
   constructor(config: AgentConfig) {
     this.config = config;
     this.sessionDir = config.sessionDir ?? path.join(os.homedir(), '.killer', 'sessions');
@@ -1933,6 +1936,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         delegateProfiles: this.taskDelegate.exportProfiles(),
         // Behavioral insights from experiments
         behavioralInsights: [...this.behavioralInsights],
+        // Tool performance tracking
+        toolPerformance: this.exportToolPerformance(),
       };
       // 原子写入：temp + rename 防止崩溃损坏
       const tmpPath = filePath + '.tmp';
@@ -1994,6 +1999,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       data.skillsData ??= [];
       data.delegateProfiles ??= {};
       data.behavioralInsights ??= [];
+      data.toolPerformance ??= {};
     }
 
     data.version = KillerAgent.SESSION_VERSION;
@@ -2078,6 +2084,12 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       if (data.behavioralInsights && Array.isArray(data.behavioralInsights)) {
         this.behavioralInsights = data.behavioralInsights.slice(-this.maxBehavioralInsights);
         if (this.behavioralInsights.length > 0) restored++;
+      }
+
+      // Restore tool performance tracking
+      if (data.toolPerformance && typeof data.toolPerformance === 'object') {
+        this.importToolPerformance(data.toolPerformance);
+        if (Object.keys(data.toolPerformance).length > 0) restored++;
       }
 
       if (restored > 0) {
@@ -2682,7 +2694,13 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         await this.hooks.emit('tool:execute', { tool: toolName, round });
 
         try {
+          const toolStart = Date.now();
           const toolExecResult = await this.tools.execute(toolName, params);
+          const toolDuration = Date.now() - toolStart;
+
+          // 追踪工具使用效果
+          this.recordToolPerformance(toolName, toolExecResult.success, toolDuration);
+
           const resultStr = toolExecResult.success
             ? (typeof toolExecResult.data === 'string' ? toolExecResult.data : JSON.stringify(toolExecResult.data))
             : `Error: ${toolExecResult.error}`;
@@ -2962,6 +2980,52 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     }
   }
 
+  /**
+   * 记录工具使用效果
+   */
+  private recordToolPerformance(toolName: string, success: boolean, durationMs: number): void {
+    const perf = this.toolPerformance.get(toolName) ?? { uses: 0, successes: 0, avgDurationMs: 0 };
+    perf.avgDurationMs = (perf.avgDurationMs * perf.uses + durationMs) / (perf.uses + 1);
+    perf.uses++;
+    if (success) perf.successes++;
+    this.toolPerformance.set(toolName, perf);
+  }
+
+  /**
+   * 获取工具效果摘要（用于 prompt 注入）
+   */
+  private getToolPerformanceSummary(): string {
+    if (this.toolPerformance.size === 0) return '';
+    const lines: string[] = [];
+    for (const [tool, perf] of this.toolPerformance) {
+      if (perf.uses < 2) continue;
+      const rate = Math.round((perf.successes / perf.uses) * 100);
+      const tag = rate >= 80 ? '✓' : rate >= 50 ? '~' : '✗';
+      lines.push(`${tag} ${tool}: ${rate}% (${perf.uses} uses, ${Math.round(perf.avgDurationMs)}ms avg)`);
+    }
+    return lines.length > 0 ? lines.join('\n') : '';
+  }
+
+  /**
+   * 导出工具使用效果数据
+   */
+  private exportToolPerformance(): Record<string, { uses: number; successes: number; avgDurationMs: number }> {
+    const result: Record<string, { uses: number; successes: number; avgDurationMs: number }> = {};
+    for (const [tool, perf] of this.toolPerformance) {
+      result[tool] = { ...perf };
+    }
+    return result;
+  }
+
+  /**
+   * 导入工具使用效果数据
+   */
+  private importToolPerformance(data: Record<string, { uses: number; successes: number; avgDurationMs: number }>): void {
+    for (const [tool, perf] of Object.entries(data)) {
+      this.toolPerformance.set(tool, { ...perf });
+    }
+  }
+
   private detectTopics(input: string): string[] {
     const topics: string[] = [];
     const topicPatterns: Array<[RegExp, string]> = [
@@ -3080,6 +3144,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       attentionState: this.lastAttentionState ?? undefined,
       behavioralInsights: this.behavioralInsights.length > 0 ? [...this.behavioralInsights] : undefined,
       strategyScores: this.persona.getUserModel().preferenceProfile.strategyScores,
+      toolPerformanceSummary: this.getToolPerformanceSummary(),
     });
   }
 

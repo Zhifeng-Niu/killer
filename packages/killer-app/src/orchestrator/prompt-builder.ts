@@ -51,6 +51,8 @@ export interface PromptBuilderDeps {
     proactiveVsReactive: number;
     sampleCount: number;
   };
+  /** 工具使用效果摘要 */
+  toolPerformanceSummary?: string;
 }
 
 /**
@@ -325,6 +327,13 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
     const analyticalBias = s.analyticalVsIntuitive > 0.6 ? 'Use analytical, structured reasoning' : s.analyticalVsIntuitive < 0.4 ? 'Use intuitive, conversational reasoning' : 'Mix analytical and intuitive approaches';
     const proactiveBias = s.proactiveVsReactive > 0.6 ? 'Be proactive — anticipate needs' : s.proactiveVsReactive < 0.4 ? 'Stay reactive — respond to what is asked' : 'Balance proactive suggestions with direct answers';
     parts.push(`\nRESPONSE STRATEGY (learned from ${s.sampleCount} interactions): ${detailBias}. ${analyticalBias}. ${proactiveBias}.`);
+  }
+
+  // === 工具使用效果 ===
+  if (deps.toolPerformanceSummary) {
+    parts.push('\nTOOL PERFORMANCE (learned from usage):');
+    parts.push(deps.toolPerformanceSummary);
+    parts.push('✓ = reliable, ~ = moderate, ✗ = unreliable. Prefer tools with high success rates. Avoid tools that consistently fail.');
   }
 
   // === 活跃计划（前额叶皮层） ===
