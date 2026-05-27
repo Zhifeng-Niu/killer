@@ -5,7 +5,7 @@ started_at: 2026-05-27T09:41:25Z
 expedition_branch: odyssey/20260527-174125
 baseline_metric: null
 best_metric: null
-total_waypoints: 0
+total_waypoints: 3
 consecutive_discards: 0
 ---
 
@@ -47,7 +47,8 @@ pnpm build 2>&1
 
 ### Wins
 1. **Waypoint 1**: self_read/self_modify/self_list tools + Cerebellum wired to agent. Build passes. 4 new autonomous capabilities.
-2. **Waypoint 2**: AutoMissionTool — agent creates self-improvement missions as tool calls. Full Cerebellum lifecycle (create/waypoint/decide/abandon).
+2. **Waypoint 2**: AutoMissionTool — agent creates self-improvement missions as tool calls. Full Cerebellum lifecycle.
+3. **Waypoint 3**: Limitation-aware tool chain loop — agent detects when it hits a capability wall and is guided to self-modify. Bundle ready (748KB).
 
 ### Dead Ends
 {Auto-updated by engine.}
