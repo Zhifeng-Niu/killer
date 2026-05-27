@@ -2868,6 +2868,7 @@ export function scoreSectionRelevance(
     'STRATEGY COHERENCE': 0.7,
     'COGNITIVE STATE': 0.7,
     'COMPOSITE RESPONSE STRATEGY': 0.75,
+    'INTENT EVOLUTION': 0.55,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -4056,4 +4057,173 @@ export function importSectionWeights(data: Record<string, number>): SectionWeigh
     offsets[k] = Math.max(-WEIGHT_CLAMP, Math.min(WEIGHT_CLAMP, v));
   }
   return { offsets, lastActiveSections: [], updates: 0 };
+}
+
+// ============================================================
+// Intent Evolution Tracker — 跨轮次意图演变追踪
+// ============================================================
+
+export interface IntentNode {
+  /** 意图摘要（从 detectMultiIntent 或关键词提取） */
+  summary: string;
+  /** 对话轮次索引 */
+  turnIndex: number;
+  /** 时间戳 */
+  timestamp: number;
+  /** 意图类别 */
+  category: IntentCategory;
+}
+
+export type IntentCategory =
+  | 'question'      // 提问
+  | 'debug'         // 调试
+  | 'feature'       // 功能请求
+  | 'refactor'      // 重构
+  | 'learn'         // 学习/探索
+  | 'config'        // 配置/设置
+  | 'review'        // 审查/检查
+  | 'deploy'        // 部署/发布
+  | 'general';      // 通用
+
+export interface IntentTransition {
+  from: IntentCategory;
+  to: IntentCategory;
+  type: 'gradual' | 'pivot' | 'return' | 'deepen';
+  description: string;
+}
+
+export interface IntentEvolution {
+  transitions: IntentTransition[];
+  dominantCategory: IntentCategory;
+  activeChains: string[];
+}
+
+const CATEGORY_KEYWORDS: Record<IntentCategory, string[]> = {
+  question: ['怎么', '如何', '为什么', 'what', 'how', 'why', '？', '?'],
+  debug: ['错误', 'bug', '报错', '失败', 'error', 'fail', 'crash', 'debug', '修复', 'fix', '异常'],
+  feature: ['添加', '增加', '实现', '新增', 'add', 'implement', 'create', 'build', '开发', '功能'],
+  refactor: ['重构', '优化', '改进', 'refactor', 'optimize', 'improve', 'clean', '重写', 'rewrite'],
+  learn: ['了解', '学习', '解释', 'explain', 'learn', 'understand', '什么是', 'tell me about', '介绍一下'],
+  config: ['配置', '设置', 'install', 'setup', 'config', 'configure', '环境', '初始化', 'init'],
+  review: ['检查', '审查', 'review', 'check', 'verify', '测试', 'test', '验证'],
+  deploy: ['部署', '发布', 'deploy', 'publish', 'release', '上线', 'ship', 'push'],
+  general: [],
+};
+
+export function classifyIntent(message: string): IntentCategory {
+  const lower = message.toLowerCase();
+  let best: IntentCategory = 'general';
+  let bestScore = 0;
+  for (const [cat, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
+    if (cat === 'general') continue;
+    let score = 0;
+    for (const kw of keywords) {
+      if (lower.includes(kw)) score++;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = cat as IntentCategory;
+    }
+  }
+  return best;
+}
+
+export function extractIntentSummary(message: string): string {
+  // 取前 60 字符作为意图摘要，去除命令前缀
+  const cleaned = message.replace(/^\/\w+\s*/, '').trim();
+  return cleaned.length > 60 ? cleaned.slice(0, 57) + '...' : cleaned;
+}
+
+export function trackIntentEvolution(
+  history: IntentNode[],
+  windowSize: number = 10,
+): IntentEvolution {
+  const recent = history.slice(-windowSize);
+  if (recent.length < 2) {
+    return {
+      transitions: [],
+      dominantCategory: recent[0]?.category ?? 'general',
+      activeChains: [],
+    };
+  }
+
+  const transitions: IntentTransition[] = [];
+  for (let i = 1; i < recent.length; i++) {
+    const prev = recent[i - 1];
+    const curr = recent[i];
+    if (prev.category === curr.category) continue;
+
+    // 检测意图转变类型
+    const gap = curr.turnIndex - prev.turnIndex;
+    let type: IntentTransition['type'];
+    let description: string;
+
+    if (gap <= 1) {
+      // 相邻轮次
+      // 检查是否回归到更早的意图
+      const earlierCategory = recent.slice(0, i - 1).find(n => n.category === curr.category);
+      if (earlierCategory) {
+        type = 'return';
+        description = `意图回归: ${curr.category}（之前在 turn ${earlierCategory.turnIndex}）`;
+      } else if (isRelatedCategory(prev.category, curr.category)) {
+        type = 'gradual';
+        description = `意图渐变: ${prev.category} → ${curr.category}`;
+      } else {
+        type = 'pivot';
+        description = `意图突变: ${prev.category} → ${curr.category}`;
+      }
+    } else {
+      type = 'gradual';
+      description = `意图渐变: ${prev.category} → ${curr.category}（间隔 ${gap} 轮）`;
+    }
+
+    transitions.push({ from: prev.category, to: curr.category, type, description });
+  }
+
+  // 统计主导意图
+  const catCounts: Record<string, number> = {};
+  for (const n of recent) {
+    catCounts[n.category] = (catCounts[n.category] ?? 0) + 1;
+  }
+  const dominantCategory = (Object.entries(catCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'general') as IntentCategory;
+
+  // 提取活跃意图链（连续相同类别的意图序列）
+  const activeChains: string[] = [];
+  let chainStart = 0;
+  for (let i = 1; i <= recent.length; i++) {
+    if (i === recent.length || recent[i].category !== recent[chainStart].category) {
+      if (i - chainStart >= 2) {
+        activeChains.push(`${recent[chainStart].category}×${i - chainStart}`);
+      }
+      chainStart = i;
+    }
+  }
+
+  return { transitions, dominantCategory, activeChains };
+}
+
+function isRelatedCategory(a: IntentCategory, b: IntentCategory): boolean {
+  const groups: IntentCategory[][] = [
+    ['debug', 'question'],
+    ['feature', 'refactor'],
+    ['config', 'deploy'],
+    ['review', 'debug'],
+    ['learn', 'question'],
+  ];
+  return groups.some(g => g.includes(a) && g.includes(b));
+}
+
+export function formatIntentEvolution(evolution: IntentEvolution): string {
+  const parts: string[] = [];
+  if (evolution.dominantCategory !== 'general') {
+    parts.push(`主导意图: ${evolution.dominantCategory}`);
+  }
+  if (evolution.activeChains.length > 0) {
+    parts.push(`活跃意图链: ${evolution.activeChains.join(', ')}`);
+  }
+  const recentTransitions = evolution.transitions.slice(-3);
+  for (const t of recentTransitions) {
+    parts.push(t.description);
+  }
+  return parts.join(' | ');
 }

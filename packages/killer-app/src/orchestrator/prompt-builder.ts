@@ -111,6 +111,8 @@ export interface PromptBuilderDeps {
   responseStrategy?: string;
   /** 自适应 section 权重偏移 */
   sectionWeightOffsets?: Record<string, number>;
+  /** 意图演变追踪 */
+  intentEvolution?: string;
 }
 
 /**
@@ -360,6 +362,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 回复策略指导 ===
   if (deps.responseStrategy) {
     parts.push(`\nCOMPOSITE RESPONSE STRATEGY — ${deps.responseStrategy}`);
+  }
+
+  // === 意图演变追踪 ===
+  if (deps.intentEvolution) {
+    parts.push(`\nINTENT EVOLUTION — ${deps.intentEvolution}`);
   }
 
   // === 自主行动建议 ===

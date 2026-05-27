@@ -4,8 +4,8 @@ status: active
 started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
-best_metric: 2239
-total_waypoints: 72
+best_metric: 2251
+total_waypoints: 73
 consecutive_discards: 0
 ---
 
@@ -116,6 +116,7 @@ npm test 2>&1
 69. **Composite Response Strategy Guidance** (waypoint 70): generateResponseStrategyGuidance() synthesizes all perception signals (mode/flow/emotion/quality/expertise/health) into concrete response guidance (tone/structure/detail/priority). Injected as COMPOSITE RESPONSE STRATEGY section — LLM now gets a unified "how to respond" directive instead of scattered individual hints
 70. **Interaction Gap Adaptive Response** (waypoint 71): generateResponseStrategyGuidance() adapts to time between interactions — rapid-fire (<30s) triggers minimal detail mode, return-after-gap (>300s) triggers context recap. Agent matches response brevity to user's interaction pace and provides context restoration after absences
 71. **Adaptive Section Weight Learning** (waypoint 72): SectionWeights tracks EMA-adjusted offsets per prompt section based on response quality feedback — high quality boosts active section weights, low quality reduces them. Weights clamp at ±0.15, persist via session, and feed into scoreSectionRelevance() as learnedOffset. Prompt pruning now adapts to which sections actually help responses
+72. **Intent Evolution Tracker** (waypoint 73): Cross-turn intent tracking with category classification (question/debug/feature/refactor/learn/config/review/deploy/general). Detects gradual shifts, sudden pivots, and intent returns. Active intent chains and dominant category injected as INTENT EVOLUTION section — LLM sees the user's evolving goals across the conversation
 
 ### Dead Ends
 {Auto-updated by engine.}

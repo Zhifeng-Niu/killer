@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL, createDefaultSectionWeights, recordActiveSections, updateSectionWeights, getSectionWeightOffset, exportSectionWeights, importSectionWeights, type SectionWeights } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL, createDefaultSectionWeights, recordActiveSections, updateSectionWeights, getSectionWeightOffset, exportSectionWeights, importSectionWeights, type SectionWeights, classifyIntent, extractIntentSummary, trackIntentEvolution, formatIntentEvolution, type IntentNode, type IntentEvolution } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -190,6 +190,10 @@ export class KillerAgent {
 
   // 自适应 section 权重学习
   private sectionWeights: SectionWeights = createDefaultSectionWeights();
+
+  // 意图演变追踪
+  private intentHistory: IntentNode[] = [];
+  private turnCounter = 0;
 
   // 实验驱动的行为洞察（成功的实验模式，注入系统 prompt）
   private behavioralInsights: string[] = [];
@@ -2502,6 +2506,18 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     // 检测用户消息中的承诺/计划/待办（用于后续提醒）
     detectCommitments(content);
 
+    // 追踪意图演变
+    this.turnCounter++;
+    this.intentHistory.push({
+      summary: extractIntentSummary(content),
+      turnIndex: this.turnCounter,
+      timestamp: Date.now(),
+      category: classifyIntent(content),
+    });
+    if (this.intentHistory.length > 50) {
+      this.intentHistory = this.intentHistory.slice(-50);
+    }
+
     const input: SensoryInput = {
       id: generateId('input'),
       timestamp: Date.now(),
@@ -3441,7 +3457,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       'GOAL DEPENDENCIES', 'TOPIC TRANSITION', 'SUGGESTED ACTIONS',
       'CONVERSATION RHYTHM', 'USER EXPERTISE', 'EMOTIONAL RESPONSE STRATEGY',
       'PERCEPTION FUSION', 'RESTORED CONTEXT', 'STRATEGY COHERENCE',
-      'COGNITIVE STATE', 'COMPOSITE RESPONSE STRATEGY',
+      'COGNITIVE STATE', 'COMPOSITE RESPONSE STRATEGY', 'INTENT EVOLUTION',
     ];
 
     const memoryStats = this.hippocampus.getStats();
@@ -3515,6 +3531,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       strategyCoherence: this.computeStrategyCoherence(perception),
       cognitiveState: this.computeCognitiveState(perception),
       responseStrategy: this.computeResponseStrategy(perception),
+      intentEvolution: this.computeIntentEvolution(),
       sectionWeightOffsets: exportSectionWeights(this.sectionWeights),
     });
 
@@ -3848,6 +3865,13 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         : undefined,
     });
     return guidance?.formatted;
+  }
+
+  private computeIntentEvolution(): string | undefined {
+    if (this.intentHistory.length < 3) return undefined;
+    const evolution = trackIntentEvolution(this.intentHistory);
+    if (evolution.transitions.length === 0 && evolution.activeChains.length === 0) return undefined;
+    return formatIntentEvolution(evolution);
   }
 
   /**

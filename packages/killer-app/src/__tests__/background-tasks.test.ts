@@ -64,6 +64,11 @@ import {
   getSectionWeightOffset,
   exportSectionWeights,
   importSectionWeights,
+  classifyIntent,
+  extractIntentSummary,
+  trackIntentEvolution,
+  formatIntentEvolution,
+  type IntentNode,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -2787,6 +2792,104 @@ describe('background-tasks', () => {
       });
       expect(result.score).toBeGreaterThan(0.55);
       expect(result.reason).toContain('learned');
+    });
+  });
+
+  describe('Intent Evolution Tracker', () => {
+    it('should classify debug intent', () => {
+      expect(classifyIntent('my code has an error when I run it')).toBe('debug');
+    });
+
+    it('should classify feature intent', () => {
+      expect(classifyIntent('please add a new login feature')).toBe('feature');
+    });
+
+    it('should classify question intent', () => {
+      expect(classifyIntent('how does this work?')).toBe('question');
+    });
+
+    it('should classify general intent', () => {
+      expect(classifyIntent('hello there')).toBe('general');
+    });
+
+    it('should extract intent summary', () => {
+      expect(extractIntentSummary('/help me with something')).toBe('me with something');
+      const long = 'a'.repeat(100);
+      const summary = extractIntentSummary(long);
+      expect(summary.length).toBeLessThanOrEqual(63);
+      expect(summary).toContain('...');
+    });
+
+    it('should detect intent transitions', () => {
+      const history: IntentNode[] = [
+        { summary: 'fix the bug', turnIndex: 1, timestamp: Date.now(), category: 'debug' },
+        { summary: 'add new feature', turnIndex: 2, timestamp: Date.now(), category: 'feature' },
+        { summary: 'deploy to prod', turnIndex: 3, timestamp: Date.now(), category: 'deploy' },
+      ];
+      const evolution = trackIntentEvolution(history);
+      expect(evolution.transitions.length).toBe(2);
+      expect(evolution.transitions[0].type).toBe('pivot');
+    });
+
+    it('should detect intent return', () => {
+      const history: IntentNode[] = [
+        { summary: 'fix bug', turnIndex: 1, timestamp: Date.now(), category: 'debug' },
+        { summary: 'add feature', turnIndex: 2, timestamp: Date.now(), category: 'feature' },
+        { summary: 'another error', turnIndex: 3, timestamp: Date.now(), category: 'debug' },
+      ];
+      const evolution = trackIntentEvolution(history);
+      const returnTransition = evolution.transitions.find(t => t.type === 'return');
+      expect(returnTransition).toBeDefined();
+      expect(returnTransition!.to).toBe('debug');
+    });
+
+    it('should detect gradual transitions between related categories', () => {
+      const history: IntentNode[] = [
+        { summary: 'what is this error', turnIndex: 1, timestamp: Date.now(), category: 'question' },
+        { summary: 'fix the crash', turnIndex: 2, timestamp: Date.now(), category: 'debug' },
+      ];
+      const evolution = trackIntentEvolution(history);
+      expect(evolution.transitions[0].type).toBe('gradual');
+    });
+
+    it('should identify dominant category', () => {
+      const history: IntentNode[] = [
+        { summary: 'fix bug 1', turnIndex: 1, timestamp: Date.now(), category: 'debug' },
+        { summary: 'fix bug 2', turnIndex: 2, timestamp: Date.now(), category: 'debug' },
+        { summary: 'add feature', turnIndex: 3, timestamp: Date.now(), category: 'feature' },
+        { summary: 'fix bug 3', turnIndex: 4, timestamp: Date.now(), category: 'debug' },
+      ];
+      const evolution = trackIntentEvolution(history);
+      expect(evolution.dominantCategory).toBe('debug');
+    });
+
+    it('should detect active intent chains', () => {
+      const history: IntentNode[] = [
+        { summary: 'fix bug 1', turnIndex: 1, timestamp: Date.now(), category: 'debug' },
+        { summary: 'fix bug 2', turnIndex: 2, timestamp: Date.now(), category: 'debug' },
+        { summary: 'fix bug 3', turnIndex: 3, timestamp: Date.now(), category: 'debug' },
+      ];
+      const evolution = trackIntentEvolution(history);
+      expect(evolution.activeChains).toContain('debug×3');
+    });
+
+    it('should format intent evolution', () => {
+      const history: IntentNode[] = [
+        { summary: 'fix bug', turnIndex: 1, timestamp: Date.now(), category: 'debug' },
+        { summary: 'add feature', turnIndex: 2, timestamp: Date.now(), category: 'feature' },
+      ];
+      const evolution = trackIntentEvolution(history);
+      const formatted = formatIntentEvolution(evolution);
+      expect(formatted).toContain('debug');
+    });
+
+    it('should return empty evolution for insufficient history', () => {
+      const history: IntentNode[] = [
+        { summary: 'hello', turnIndex: 1, timestamp: Date.now(), category: 'general' },
+      ];
+      const evolution = trackIntentEvolution(history);
+      expect(evolution.transitions).toHaveLength(0);
+      expect(evolution.dominantCategory).toBe('general');
     });
   });
 });
