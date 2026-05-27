@@ -291,6 +291,45 @@ export class SkillManager {
   }
 
   /**
+   * 导出所有 skills 为可序列化格式
+   */
+  exportSkills(): Array<{ skill: Skill; metadata?: SkillEcosystemMetadata }> {
+    const skills = this.ecosystem.getAll();
+    return skills.map(skill => ({
+      skill: { ...skill },
+      metadata: this.metadata.get(skill.id),
+    }));
+  }
+
+  /**
+   * 从导出数据恢复 skills
+   */
+  importSkills(data: Array<{ skill: Skill; metadata?: SkillEcosystemMetadata }>): { restored: number; skipped: number } {
+    let restored = 0;
+    let skipped = 0;
+
+    for (const item of data) {
+      if (this.ecosystem.get(item.skill.id)) {
+        skipped++;
+        continue;
+      }
+
+      this.ecosystem.restore(item.skill);
+
+      if (item.metadata) {
+        this.metadata.set(item.skill.id, {
+          ...item.metadata,
+          lifecycle: 'active' as SkillLifecycle,
+        });
+      }
+
+      restored++;
+    }
+
+    return { restored, skipped };
+  }
+
+  /**
    * 记录反馈
    */
   private recordFeedback(skillId: string, feedback: SkillFeedback): void {

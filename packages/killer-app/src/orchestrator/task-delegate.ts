@@ -403,6 +403,29 @@ Please provide a coherent, unified response that integrates all findings. Be con
   }
 
   /**
+   * 导出 cell 能力画像
+   */
+  exportProfiles(): Record<string, CellProfile> {
+    const result: Record<string, CellProfile> = {};
+    for (const [type, profile] of this.cellProfiles) {
+      result[type] = { ...profile };
+    }
+    return result;
+  }
+
+  /**
+   * 导入 cell 能力画像
+   */
+  importProfiles(data: Record<string, CellProfile>): void {
+    for (const [type, profile] of Object.entries(data)) {
+      // 只导入不存在的类型，避免覆盖当前会话数据
+      if (!this.cellProfiles.has(type)) {
+        this.cellProfiles.set(type, { ...profile });
+      }
+    }
+  }
+
+  /**
    * 日志
    */
   private log(message: string): void {

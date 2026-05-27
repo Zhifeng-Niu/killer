@@ -236,7 +236,7 @@ describe('Session Persistence Integration', () => {
     expect(fs.existsSync(filePath)).toBe(true);
 
     const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    expect(data.version).toBe(2);
+    expect(data.version).toBe(3);
     expect(data.conversationHistory).toBeDefined();
     expect(data.personaGenome).toBeDefined();
     expect(data.emotionalState).toBeDefined();

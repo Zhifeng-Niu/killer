@@ -42,6 +42,21 @@ export class SkillEcosystem {
   private compiledCache: Map<string, Skill> = new Map();
 
   /**
+   * 从序列化数据恢复 Skill（保留原始 ID 和属性）
+   */
+  restore(skill: Skill): void {
+    this.skills.set(skill.id, { ...skill });
+    this.usageHistory.set(skill.id, []);
+  }
+
+  /**
+   * 导出所有 Skills 为可序列化数组
+   */
+  exportAll(): Skill[] {
+    return this.getAll().map(s => ({ ...s }));
+  }
+
+  /**
    * 生成新 Skill
    */
   generate(config: SkillGenerationConfig): Skill {

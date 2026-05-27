@@ -1914,6 +1914,10 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         hippocampusData: this.hippocampus.export(),
         // Plan data (prefrontal cortex)
         planData: this.planExecutor.export(),
+        // Skill data (cortex — survives restarts)
+        skillsData: this.skillManager.exportSkills(),
+        // Task delegation profiles (learning history)
+        delegateProfiles: this.taskDelegate.exportProfiles(),
       };
       // 原子写入：temp + rename 防止崩溃损坏
       const tmpPath = filePath + '.tmp';
@@ -1968,6 +1972,12 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           trustLevel: 0.5,
         };
       }
+    }
+
+    // V2 → V3: 添加跨会话学习持久化
+    if (version < 3) {
+      data.skillsData ??= [];
+      data.delegateProfiles ??= {};
     }
 
     data.version = KillerAgent.SESSION_VERSION;
@@ -2031,6 +2041,21 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       // Restore time awareness
       if (data.savedAt) {
         this.persona.setLastSeenAt(data.savedAt);
+      }
+
+      // Restore skills from previous session
+      if (data.skillsData && Array.isArray(data.skillsData) && data.skillsData.length > 0) {
+        const result = this.skillManager.importSkills(data.skillsData);
+        if (result.restored > 0) {
+          restored++;
+          this.logger.info(`Restored ${result.restored} skills from previous session`);
+        }
+      }
+
+      // Restore task delegation profiles (cell success rates)
+      if (data.delegateProfiles && typeof data.delegateProfiles === 'object') {
+        this.taskDelegate.importProfiles(data.delegateProfiles);
+        restored++;
       }
 
       if (restored > 0) {
@@ -2391,7 +2416,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
   private static readonly MAX_LLM_RETRIES = 3;
 
   /** 当前会话格式版本 — 迁移时递增 */
-  private static readonly SESSION_VERSION = 2;
+  private static readonly SESSION_VERSION = 3;
   /** 重试基础延迟（毫秒） */
   private static readonly RETRY_BASE_DELAY_MS = 1000;
 
