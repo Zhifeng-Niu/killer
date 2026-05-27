@@ -4,8 +4,8 @@ status: active
 started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
-best_metric: 1222
-total_waypoints: 16
+best_metric: 1969
+total_waypoints: 18
 consecutive_discards: 0
 ---
 
@@ -61,6 +61,7 @@ npm test 2>&1
 14. **Goal Auto-Generation** (waypoint 14, verified existing): handleGoalInInput + analyzeInputForGoal already auto-detect multi-step tasks from conversation via LLM and create tracked goals with plans
 15. **Tool Success Rate Tracking** (waypoint 15): Track tool execution outcomes per tool, inject TOOL PERFORMANCE into system prompt (✓/~ rating), persist across sessions, LLM adapts tool selection based on historical reliability
 16. **Predictive Context Preloading** (waypoint 16): High-confidence (>70%) predicted needs trigger proactive episodic memory retrieval, injected as PRELOADED CONTEXT — agent anticipates needs before user mentions them
+17. **Smart Prompt Section Pruning** (waypoints 17-18): Prefix-based section removal when prompt exceeds 24000 chars budget — drops low-priority sections (memory stats, meta-cognition, dream insights) while preserving identity and tools. Fixed critical bug where sections[] was never merged to parts[]
 
 ### Dead Ends
 {Auto-updated by engine.}
