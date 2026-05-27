@@ -26,7 +26,8 @@ const KNOWN_TUI_COMMANDS = new Set([
   'dream', 'think', 'evolve', 'delegate', 'diagnostics',
   'health', 'metrics', 'sessions', 'save', 'load',
   'mission', 'key', 'approve', 'deny', 'model', 'mode',
-  'find', 'retry', 'clear', 'exit', 'quit',
+  'find', 'retry', 'clear', 'learn', 'unlearn', 'inspect',
+  'exit', 'quit',
 ]);
 
 function createMessage(role: ChatMessage['role'], content: string, streaming = false): ChatMessage {
@@ -350,6 +351,9 @@ async function handleCommand(input: string, agent: KillerAgent): Promise<string>
         '  /deny <t>    — 禁止工具执行',
         '  /model [n]   — 查看/切换模型',
         '  /mode [m]    — 权限策略 auto|confirm|deny',
+        '  /learn       — 工具自创建说明',
+        '  /unlearn <t> — 移除动态工具',
+        '  /inspect     — 查看所有工具',
         '  /mission     — Cerebellum 任务管理',
         '  /exit        — 退出',
       ].join('\n');
@@ -524,6 +528,26 @@ async function handleCommand(input: string, agent: KillerAgent): Promise<string>
       if (!args) return '用法: /deny <tool>';
       agent.toolPermissions.deny(args);
       return `✓ ${args} 已禁止`;
+    }
+    case 'inspect': {
+      const r = await agent.tools.execute('inspect_tools', {});
+      if (!r.success) return `Inspect failed: ${r.error}`;
+      const d = r.data as { total: number; builtin: number; dynamic: number; tools: Array<{ name: string; description: string; type: string }> };
+      const lines = [`Total: ${d.total} (builtin: ${d.builtin}, dynamic: ${d.dynamic})`, ''];
+      for (const t of d.tools) {
+        const tag = t.type === 'dynamic' ? ' ★' : '';
+        lines.push(`  ${t.name}${tag}: ${t.description.slice(0, 60)}`);
+      }
+      return lines.join('\n');
+    }
+    case 'learn': {
+      if (!args) return '用法: /learn <name> — Agent 通过 learn 工具自行创建新工具\n  提示: 在对话中告诉 Agent 你需要什么能力，它会自行调用 learn 工具创建';
+      return '提示: 请在对话中描述你需要的工具能力，Agent 会自行调用 learn 工具创建。\n  例如: "帮我创建一个工具来计算两个日期之间的天数"';
+    }
+    case 'unlearn': {
+      if (!args) return '用法: /unlearn <tool_name>';
+      const r = await agent.tools.execute('unlearn', { name: args.trim() });
+      return r.success ? `✓ 工具 "${args.trim()}" 已移除` : `移除失败: ${r.error}`;
     }
     case 'exit':
     case 'quit': {

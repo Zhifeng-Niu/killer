@@ -38,11 +38,11 @@ describe('ToolPermissions', () => {
       }
     });
 
-    it('should require confirmation for unknown tools', () => {
+    it('should auto-approve unknown tools (default policy is auto)', () => {
       const check = perms.check('unknown_tool_xyz');
-      expect(check.allowed).toBe(false);
-      expect(check.level).toBe('confirm');
-      expect(check.reason).toContain('Unknown tool');
+      expect(check.allowed).toBe(true);
+      expect(check.level).toBe('auto');
+      expect(check.reason).toContain('Auto-approved');
     });
   });
 
@@ -93,8 +93,9 @@ describe('ToolPermissions', () => {
 
       const removed = perms.removeRule('removable');
       expect(removed).toBe(true);
-      // Falls back to unknown behavior
-      expect(perms.check('removable').level).toBe('confirm');
+      // Falls back to default policy (auto)
+      expect(perms.check('removable').level).toBe('auto');
+      expect(perms.check('removable').allowed).toBe(true);
     });
 
     it('should return false when removing non-existent rule', () => {
@@ -186,8 +187,8 @@ describe('ToolPermissions', () => {
       expect(perms.getPermissionLevel('memory_store')).toBe('confirm');
     });
 
-    it('should return confirm for unknown tools', () => {
-      expect(perms.getPermissionLevel('totally_unknown')).toBe('confirm');
+    it('should return default policy fallback for unknown tools (getPermissionLevel default)', () => {
+      expect(perms.getPermissionLevel('totally_unknown')).toBe('auto');
     });
   });
 
@@ -209,8 +210,8 @@ describe('ToolPermissions', () => {
 
     it('should handle empty tool name gracefully', () => {
       const check = perms.check('');
-      expect(check.level).toBe('confirm');
-      expect(check.allowed).toBe(false);
+      expect(check.level).toBe('auto');
+      expect(check.allowed).toBe(true);
     });
 
     it('should return rule reason when available', () => {

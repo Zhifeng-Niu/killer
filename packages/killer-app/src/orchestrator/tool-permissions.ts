@@ -204,7 +204,7 @@ export class ToolPermissions {
    * 获取工具的权限级别
    */
   getPermissionLevel(toolName: string): PermissionLevel {
-    return this.rules.get(toolName)?.permission ?? 'confirm';
+    return this.rules.get(toolName)?.permission ?? this.defaultPolicy;
   }
 
   /**

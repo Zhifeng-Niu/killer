@@ -320,8 +320,12 @@ describe('buildSystemPrompt', () => {
       const prompt = buildSystemPrompt(deps);
       expect(prompt).toContain('User: Hi');
       expect(prompt).toContain('Assistant: Hello!');
-      // Short messages should not have truncation marker
-      expect(prompt).not.toContain('...');
+      // Short messages should not have truncation marker (line ending with ...)
+      const lines = prompt.split('\n');
+      const truncatedLine = lines.find(l =>
+        (l.includes('User:') || l.includes('Assistant:')) && l.trimEnd().endsWith('...')
+      );
+      expect(truncatedLine).toBeUndefined();
     });
   });
 });

@@ -100,6 +100,10 @@ export class Cerebellum {
     return this.activeMission;
   }
 
+  getActiveExperiment(): Experiment | null {
+    return this.activeExperiment;
+  }
+
   hasActiveMission(): boolean {
     return this.activeMission !== null;
   }

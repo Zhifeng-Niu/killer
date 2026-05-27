@@ -76,3 +76,22 @@ export {
   getBuiltinTools,
   createToolExecutor,
 } from './builtin-tools.js';
+
+// ToolForge — runtime capability extension
+export {
+  ToolForge,
+  LearnTool,
+  UnlearnTool,
+  InspectToolsTool,
+  SelfReflectTool,
+  EssenceForge,
+  EvolveEssenceTool,
+  validateToolCode,
+  validateToolName,
+  TOOL_TEMPLATE,
+} from './tool-forge.js';
+export type {
+  ForgedToolMeta,
+  ForgeResult,
+  PromptFragment,
+} from './tool-forge.js';

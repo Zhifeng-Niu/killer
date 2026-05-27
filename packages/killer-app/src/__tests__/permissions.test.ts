@@ -27,12 +27,12 @@ describe('ToolPermissions', () => {
     expect(dreamCheck.allowed).toBe(false);
   });
 
-  it('should require confirmation for unknown tools', () => {
+  it('should auto-approve unknown tools with default policy', () => {
     const perms = new ToolPermissions();
 
     const check = perms.check('unknown_tool');
-    expect(check.allowed).toBe(false);
-    expect(check.level).toBe('confirm');
+    expect(check.allowed).toBe(true);
+    expect(check.level).toBe('auto');
   });
 
   it('should allow tools after approval', () => {
@@ -102,7 +102,7 @@ describe('ToolPermissions', () => {
 
     expect(perms.getPermissionLevel('time')).toBe('auto');
     expect(perms.getPermissionLevel('memory_store')).toBe('confirm');
-    expect(perms.getPermissionLevel('unknown')).toBe('confirm');
+    expect(perms.getPermissionLevel('unknown')).toBe('auto');
   });
 
   it('should remove rules', () => {
@@ -112,7 +112,7 @@ describe('ToolPermissions', () => {
     expect(perms.check('temp_tool').level).toBe('deny');
 
     perms.removeRule('temp_tool');
-    // After removal, falls back to default (confirm for unknown)
-    expect(perms.check('temp_tool').level).toBe('confirm');
+    // After removal, falls back to default policy (auto)
+    expect(perms.check('temp_tool').level).toBe('auto');
   });
 });

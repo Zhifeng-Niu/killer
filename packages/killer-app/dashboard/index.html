@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Killer Agent — Living Dashboard</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Inter:wght@300;400;600&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0a0a0f;
+      --surface: #12121a;
+      --border: #1e1e2e;
+      --text: #c0c0d0;
+      --text-dim: #5a5a70;
+      --pulse: #6ee7b7;
+      --pulse-dim: #064e3b;
+      --emotion: #f0abfc;
+      --tool: #67e8f9;
+      --memory: #fbbf24;
+      --cell: #a78bfa;
+      --danger: #f87171;
+      --thinking: #818cf8;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    /* ── Neural Canvas (background) ── */
+    #neural-canvas {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 0;
+      opacity: 0.3;
+    }
+
+    /* ── Layout ── */
+    .dashboard {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 280px 1fr 280px;
+      grid-template-rows: 48px 1fr 200px;
+      gap: 1px;
+      height: 100vh;
+      background: var(--border);
+    }
+
+    /* ── Header ── */
+    .header {
+      grid-column: 1 / -1;
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 16px;
+    }
+    .header .logo {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--pulse);
+      letter-spacing: 0.05em;
+    }
+    .header .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--pulse);
+      animation: breathe 2s ease-in-out infinite;
+    }
+    .header .status-dot.disconnected { background: var(--danger); animation: none; }
+    .header .uptime {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .header .spacer { flex: 1; }
+    .header .event-rate {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    /* ── Panels ── */
+    .panel {
+      background: var(--surface);
+      padding: 16px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    .panel-title {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+    }
+
+    /* ── Left: Agent State ── */
+    .agent-state {
+      grid-row: 2;
+      grid-column: 1;
+    }
+    .state-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      font-size: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .state-item .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .state-item .label { color: var(--text-dim); flex: 1; }
+    .state-item .value { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+
+    /* ── Center: Event Stream ── */
+    .event-stream {
+      grid-row: 2;
+      grid-column: 2;
+    }
+    .event-item {
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      animation: fadeIn 0.3s ease;
+    }
+    .event-item .event-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .event-item .event-type {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 3px;
+    }
+    .event-item .event-time {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+    .event-item .event-data {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--text-dim);
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 60px;
+      overflow: hidden;
+    }
+
+    /* ── Right: Metrics ── */
+    .metrics {
+      grid-row: 2;
+      grid-column: 3;
+    }
+    .metric-card {
+      background: var(--bg);
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 8px;
+    }
+    .metric-card .metric-label {
+      font-size: 10px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .metric-card .metric-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 24px;
+      font-weight: 300;
+      margin-top: 4px;
+    }
+    .metric-card .metric-bar {
+      height: 2px;
+      background: var(--border);
+      border-radius: 1px;
+      margin-top: 8px;
+      overflow: hidden;
+    }
+    .metric-card .metric-bar-fill {
+      height: 100%;
+      border-radius: 1px;
+      transition: width 0.5s ease;
+    }
+
+    /* ── Bottom: Pulse Timeline ── */
+    .pulse-timeline {
+      grid-column: 1 / -1;
+      grid-row: 3;
+      position: relative;
+    }
+    #pulse-canvas {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── Emotion Ring ── */
+    .emotion-ring {
+      width: 120px; height: 120px;
+      margin: 16px auto;
+      position: relative;
+    }
+    .emotion-ring canvas {
+      width: 100%; height: 100%;
+    }
+    .emotion-label {
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 8px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ── Animations ── */
+    @keyframes breathe {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.85); }
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes pulse-ring {
+      0% { transform: scale(0.8); opacity: 0.8; }
+      100% { transform: scale(1.6); opacity: 0; }
+    }
+
+    /* Event type colors */
+    .event-type.cycle { background: #064e3b; color: var(--pulse); }
+    .event-type.llm { background: #1e1b4b; color: var(--thinking); }
+    .event-type.tool { background: #164e63; color: var(--tool); }
+    .event-type.memory { background: #422006; color: var(--memory); }
+    .event-type.cell { background: #2e1065; color: var(--cell); }
+    .event-type.emotion { background: #4a044e; color: var(--emotion); }
+    .event-type.error { background: #450a0a; color: var(--danger); }
+    .event-type.experiment { background: #064e3b; color: var(--pulse); }
+    .event-type.other { background: var(--border); color: var(--text-dim); }
+
+    /* Connection status */
+    .connect-bar {
+      grid-column: 1 / -1;
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 4px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .connect-bar input {
+      background: var(--border);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      width: 200px;
+    }
+    .connect-bar button {
+      background: var(--pulse-dim);
+      color: var(--pulse);
+      border: none;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .connect-bar button:hover { background: #059669; }
+  </style>
+</head>
+<body>
+  <canvas id="neural-canvas"></canvas>
+
+  <div class="dashboard">
+    <!-- Header -->
+    <div class="header">
+      <div class="status-dot" id="status-dot"></div>
+      <div class="logo">KILLER</div>
+      <div class="uptime" id="uptime">--:--:--</div>
+      <div class="spacer"></div>
+      <div class="event-rate" id="event-rate">0 evt/s</div>
+    </div>
+
+    <!-- Left: Agent State -->
+    <div class="panel agent-state">
+      <div class="panel-title">Agent State</div>
+      <div id="agent-state">
+        <div class="state-item"><div class="dot" style="background:var(--text-dim)"></div><span class="label">model</span><span class="value" id="s-model">--</span></div>
+        <div class="state-item"><div class="dot" style="background:var(--text-dim)"></div><span class="label">phase</span><span class="value" id="s-phase">--</span></div>
+        <div class="state-item"><div class="dot" style="background:var(--text-dim)"></div><span class="label">loops</span><span class="value" id="s-loops">--</span></div>
+        <div class="state-item"><div class="dot" style="background:var(--text-dim)"></div><span class="label">cells</span><span class="value" id="s-cells">--</span></div>
+        <div class="state-item"><div class="dot" style="background:var(--text-dim)"></div><span class="label">episodes</span><span class="value" id="s-episodes">--</span></div>
+        <div class="state-item"><div class="dot" style="background:var(--text-dim)"></div><span class="label">goals</span><span class="value" id="s-goals">--</span></div>
+      </div>
+
+      <div class="panel-title" style="margin-top:16px">Emotion</div>
+      <div class="emotion-ring">
+        <canvas id="emotion-canvas" width="120" height="120"></canvas>
+      </div>
+      <div class="emotion-label" id="emotion-label">neutral</div>
+    </div>
+
+    <!-- Center: Event Stream -->
+    <div class="panel event-stream" id="event-stream">
+      <div class="panel-title">Consciousness Stream</div>
+    </div>
+
+    <!-- Right: Metrics -->
+    <div class="panel metrics">
+      <div class="panel-title">Activity</div>
+      <div class="metric-card">
+        <div class="metric-label">Events / min</div>
+        <div class="metric-value" id="m-events" style="color:var(--pulse)">0</div>
+        <div class="metric-bar"><div class="metric-bar-fill" id="m-events-bar" style="width:0%;background:var(--pulse)"></div></div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Tool Calls</div>
+        <div class="metric-value" id="m-tools" style="color:var(--tool)">0</div>
+        <div class="metric-bar"><div class="metric-bar-fill" id="m-tools-bar" style="width:0%;background:var(--tool)"></div></div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Memory Ops</div>
+        <div class="metric-value" id="m-memory" style="color:var(--memory)">0</div>
+        <div class="metric-bar"><div class="metric-bar-fill" id="m-memory-bar" style="width:0%;background:var(--memory)"></div></div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Errors</div>
+        <div class="metric-value" id="m-errors" style="color:var(--danger)">0</div>
+        <div class="metric-bar"><div class="metric-bar-fill" id="m-errors-bar" style="width:0%;background:var(--danger)"></div></div>
+      </div>
+    </div>
+
+    <!-- Bottom: Pulse Timeline -->
+    <div class="panel pulse-timeline">
+      <canvas id="pulse-canvas"></canvas>
+    </div>
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>
