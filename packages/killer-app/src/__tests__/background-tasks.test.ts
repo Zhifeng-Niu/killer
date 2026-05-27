@@ -33,6 +33,9 @@ import {
   predictConversationFlow,
   evaluateResponseQuality,
   detectResponseRepetition,
+  detectLengthSignal,
+  updateLengthPreference,
+  createDefaultLengthPreference,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -1523,6 +1526,97 @@ describe('background-tasks', () => {
         0.9, // very high threshold
       );
       expect(result.isRepetitive).toBe(false);
+    });
+  });
+
+  describe('adaptive response length', () => {
+    describe('detectLengthSignal', () => {
+      it('should detect explicit "more" requests', () => {
+        expect(detectLengthSignal('tell me more about this', 100)).toBe('wants-longer');
+        expect(detectLengthSignal('explain more', 200)).toBe('wants-longer');
+        expect(detectLengthSignal('展开说说', 100)).toBe('wants-longer');
+      });
+
+      it('should detect explicit "shorter" requests', () => {
+        expect(detectLengthSignal('too long, tldr', 500)).toBe('wants-shorter');
+        expect(detectLengthSignal('keep it brief', 300)).toBe('wants-shorter');
+        expect(detectLengthSignal('精简一点', 200)).toBe('wants-shorter');
+      });
+
+      it('should detect implicit shorter signal from short follow-up after long response', () => {
+        expect(detectLengthSignal('ok', 600)).toBe('wants-shorter');
+        expect(detectLengthSignal('thanks', 800)).toBe('wants-shorter');
+      });
+
+      it('should detect implicit longer signal from question after short response', () => {
+        expect(detectLengthSignal('What about the error handling?', 80)).toBe('wants-longer');
+      });
+
+      it('should return neutral for balanced interactions', () => {
+        expect(detectLengthSignal('I see, that makes sense', 300)).toBe('neutral');
+      });
+    });
+
+    describe('updateLengthPreference', () => {
+      it('should increase score on wants-longer signal', () => {
+        const initial = createDefaultLengthPreference();
+        const updated = updateLengthPreference(initial, 'wants-longer');
+        expect(updated.score).toBeGreaterThan(initial.score);
+        expect(updated.suggestedMaxLength).toBeGreaterThan(initial.suggestedMaxLength);
+      });
+
+      it('should decrease score on wants-shorter signal', () => {
+        const initial = createDefaultLengthPreference();
+        const updated = updateLengthPreference(initial, 'wants-shorter');
+        expect(updated.score).toBeLessThan(initial.score);
+        expect(updated.suggestedMaxLength).toBeLessThan(initial.suggestedMaxLength);
+      });
+
+      it('should not change on neutral signal', () => {
+        const initial = createDefaultLengthPreference();
+        const updated = updateLengthPreference(initial, 'neutral');
+        expect(updated.score).toBe(initial.score);
+      });
+
+      it('should track recent signals', () => {
+        let pref = createDefaultLengthPreference();
+        pref = updateLengthPreference(pref, 'wants-longer');
+        pref = updateLengthPreference(pref, 'wants-shorter');
+        expect(pref.recentSignals).toEqual(['wants-longer', 'wants-shorter']);
+      });
+
+      it('should limit signals to last 10', () => {
+        let pref = createDefaultLengthPreference();
+        for (let i = 0; i < 15; i++) {
+          pref = updateLengthPreference(pref, 'wants-longer');
+        }
+        expect(pref.recentSignals.length).toBe(10);
+      });
+
+      it('should clamp score to [0, 1]', () => {
+        let pref = createDefaultLengthPreference();
+        for (let i = 0; i < 20; i++) {
+          pref = updateLengthPreference(pref, 'wants-shorter');
+        }
+        expect(pref.score).toBeGreaterThanOrEqual(0);
+        expect(pref.score).toBeLessThanOrEqual(1);
+      });
+
+      it('should produce concise recommendation for low score', () => {
+        let pref = createDefaultLengthPreference();
+        for (let i = 0; i < 10; i++) {
+          pref = updateLengthPreference(pref, 'wants-shorter');
+        }
+        expect(pref.recommendation).toContain('concise');
+      });
+
+      it('should produce detailed recommendation for high score', () => {
+        let pref = createDefaultLengthPreference();
+        for (let i = 0; i < 10; i++) {
+          pref = updateLengthPreference(pref, 'wants-longer');
+        }
+        expect(pref.recommendation).toContain('Detailed');
+      });
     });
   });
 });

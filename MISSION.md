@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 1969
-total_waypoints: 43
+total_waypoints: 44
 consecutive_discards: 0
 ---
 
@@ -87,6 +87,7 @@ npm test 2>&1
 40. **Quality Feedback Loop** (waypoint 41): evaluateAndAdjustQuality() runs after each response — verbose/over-explained tags push strategy towards concise, high actionability reinforces current direction, low relevance nudges towards intuitive mode. Slow alpha=0.1 prevents over-correction
 41. **Response Deduplication** (waypoint 42): detectResponseRepetition() uses trigram Jaccard similarity to compare new responses against recent history. Threshold 0.35 catches semantically similar responses, flagging them to avoid repetitive advice loops
 42. **Dedup in Meta-Cognition** (waypoint 43): Replaced naive "starts with same 50 chars" repetition detection with trigram Jaccard similarity check against last 5 assistant messages. Meta-cognition prompt now triggers on semantic-level repetition, not just string matching
+43. **Adaptive Response Length** (waypoint 44): detectLengthSignal() captures explicit ("tell me more"/"tldr") and implicit (short reply after long response) length preference signals. updateLengthPreference() tracks rolling score (0-1) with suggested max length (300-1500 chars) and injects into recommendation
 
 ### Dead Ends
 {Auto-updated by engine.}

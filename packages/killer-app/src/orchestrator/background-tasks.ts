@@ -2277,3 +2277,89 @@ export function detectResponseRepetition(
     ngramSize: 3,
   };
 }
+
+// ============================================================
+// 自适应回复长度控制 (Adaptive Response Length)
+// ============================================================
+
+/** 长度偏好信号 */
+export type LengthSignal = 'wants-shorter' | 'wants-longer' | 'neutral';
+
+/** 长度偏好追踪 */
+export interface LengthPreference {
+  /** 当前偏好分数 (0=concise, 1=detailed) */
+  score: number;
+  /** 最近 N 个信号 */
+  recentSignals: LengthSignal[];
+  /** 建议的最大回复长度（字符数） */
+  suggestedMaxLength: number;
+  /** 推荐的详细程度描述 */
+  recommendation: string;
+}
+
+const MORE_PATTERNS = /(?:\b(tell me more|explain more|elaborate|go on|continue|expand|more detail|in detail)\b)|(详细|展开|继续|多说|深入|更多)/i;
+const SHORT_PATTERNS = /(?:\b(too long|tldr|too verbose|brief|short|concise|summary|quick)\b)|(太长|简短|简洁|总结|精简)/i;
+const SHORT_RESPONSE_THRESHOLD = 15; // 用户回复短于此值视为 "满意/不需要更多信息"
+
+/**
+ * 从用户输入中提取长度偏好信号
+ */
+export function detectLengthSignal(
+  userInput: string,
+  previousResponseLength: number,
+): LengthSignal {
+  const trimmed = userInput.trim();
+
+  if (MORE_PATTERNS.test(trimmed)) return 'wants-longer';
+  if (SHORT_PATTERNS.test(trimmed)) return 'wants-shorter';
+
+  // 隐式信号：长回复后接极短回复（ok/thanks/好的）→ 可能太长了
+  if (previousResponseLength > 500 && trimmed.length < SHORT_RESPONSE_THRESHOLD) {
+    return 'wants-shorter';
+  }
+
+  // 隐式信号：短回复后接追问 → 可能不够详细
+  if (previousResponseLength < 100 && trimmed.length >= 30 && /\?$/.test(trimmed)) {
+    return 'wants-longer';
+  }
+
+  return 'neutral';
+}
+
+/**
+ * 更新长度偏好追踪
+ */
+export function updateLengthPreference(
+  current: LengthPreference,
+  signal: LengthSignal,
+): LengthPreference {
+  const recentSignals = [...current.recentSignals, signal].slice(-10);
+  const alpha = 0.15;
+
+  let score = current.score;
+  if (signal === 'wants-longer') score = Math.min(1, score + alpha);
+  else if (signal === 'wants-shorter') score = Math.max(0, score - alpha);
+
+  // 基于偏好分数计算建议长度
+  const suggestedMaxLength = Math.round(300 + score * 1200); // 300-1500 chars
+
+  let recommendation: string;
+  if (score < 0.3) recommendation = 'Keep responses very concise (1-3 sentences). Use bullet points.';
+  else if (score < 0.5) recommendation = 'Keep responses brief. Focus on key points.';
+  else if (score < 0.7) recommendation = 'Moderate detail. Explain reasoning briefly.';
+  else recommendation = 'Detailed responses welcome. Include examples and context.';
+
+  return { score, recentSignals, suggestedMaxLength, recommendation };
+}
+
+/**
+ * 创建默认长度偏好
+ */
+export function createDefaultLengthPreference(): LengthPreference {
+  return {
+    score: 0.5,
+    recentSignals: [],
+    suggestedMaxLength: 900,
+    recommendation: 'Moderate detail. Explain reasoning briefly.',
+  };
+}
