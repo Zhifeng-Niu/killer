@@ -4,8 +4,8 @@ status: active
 started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
-best_metric: 2155
-total_waypoints: 51
+best_metric: 2163
+total_waypoints: 52
 consecutive_discards: 0
 ---
 
@@ -95,6 +95,7 @@ npm test 2>&1
 48. **Autonomous Action Decider** (waypoint 49): decideAutonomousActions() integrates flow/phase/health/intents/ambiguity signals to suggest proactive actions — memory search, web search, goal check, clarification ask, summary offer, topic switch. Injected as SUGGESTED ACTIONS section, sorted by urgency, capped at 3. Bridges perception-to-action gap for autonomous agent behavior
 49. **Interaction Outcome Tracking** (waypoint 50): classifyInteractionOutcome() analyzes user's next message to judge previous response effectiveness (success/clarification_needed/repeated_question/topic_abandoned/frustration). suggestStrategyAdjustment() maps outcomes to strategy dimension changes (frustration→more detail, repeated→more analytical). Wired into processInputCore before command handling — creates perception-to-self-correction feedback loop
 50. **Dynamic Prompt Section Scoring** (waypoint 51): scoreSectionRelevance() replaces static phase-based pruning with per-section relevance scoring. Each section gets base score + context-dependent adjustments (deep-work boosts tools, idle boosts dreams, low-health boosts meta-cognition). Pruning now removes lowest-scoring sections first regardless of phase — smarter context budget utilization
+51. **Topic Context Snapshots** (waypoint 52): extractTopicSnapshot() captures key decisions, active tools, and unresolved questions from conversation segments when topic shifts occur. formatTopicSnapshot() converts snapshots to injectable prompt text for context restoration when user returns to a previous topic
 
 ### Dead Ends
 {Auto-updated by engine.}

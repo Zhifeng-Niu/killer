@@ -42,6 +42,8 @@ import {
   classifyInteractionOutcome,
   suggestStrategyAdjustment,
   scoreSectionRelevance,
+  extractTopicSnapshot,
+  formatTopicSnapshot,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -1999,6 +2001,88 @@ describe('background-tasks', () => {
       const result = scoreSectionRelevance('DREAM INSIGHTS', { ...baseCtx, phase: 'deep-work', healthScore: 0.9 });
       expect(result.score).toBeGreaterThanOrEqual(0);
       expect(result.score).toBeLessThanOrEqual(1);
+    });
+  });
+
+  describe('extractTopicSnapshot', () => {
+    const messages = [
+      { role: 'user', content: 'How do I set up authentication?' },
+      { role: 'assistant', content: 'We decided to use JWT tokens for authentication' },
+      { role: 'user', content: '但是 how do we handle token refresh?' },
+      { role: 'assistant', content: 'I\'ll implement a refresh token rotation strategy using the authMiddleware' },
+      { role: 'user', content: 'not working, still getting 401 errors' },
+    ];
+
+    it('should extract key decisions from messages', () => {
+      const snapshot = extractTopicSnapshot(messages, 'authentication', { start: 0, end: 5 });
+      expect(snapshot.keyPoints.length).toBeGreaterThan(0);
+      expect(snapshot.topic).toBe('authentication');
+    });
+
+    it('should extract active tools', () => {
+      const snapshot = extractTopicSnapshot(messages, 'authentication', { start: 0, end: 5 });
+      expect(snapshot.activeTools.length).toBeGreaterThan(0);
+    });
+
+    it('should extract unresolved questions', () => {
+      const snapshot = extractTopicSnapshot(messages, 'authentication', { start: 0, end: 5 });
+      expect(snapshot.unsolvedQuestions.length).toBeGreaterThan(0);
+    });
+
+    it('should deduplicate entries', () => {
+      const snapshot = extractTopicSnapshot(messages, 'authentication', { start: 0, end: 5 });
+      const allPoints = [...snapshot.keyPoints, ...snapshot.activeTools, ...snapshot.unsolvedQuestions];
+      expect(new Set(allPoints).size).toBe(allPoints.length);
+    });
+
+    it('should cap at 5 entries per category', () => {
+      const manyMessages = Array(20).fill(null).map((_, i) => ({
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: `We'll use tool${i} for the solution is approach${i}`,
+      }));
+      const snapshot = extractTopicSnapshot(manyMessages, 'test', { start: 0, end: 20 });
+      expect(snapshot.keyPoints.length).toBeLessThanOrEqual(5);
+      expect(snapshot.activeTools.length).toBeLessThanOrEqual(5);
+    });
+
+    it('should handle empty messages', () => {
+      const snapshot = extractTopicSnapshot([], 'test', { start: 0, end: 0 });
+      expect(snapshot.keyPoints).toEqual([]);
+      expect(snapshot.activeTools).toEqual([]);
+      expect(snapshot.unsolvedQuestions).toEqual([]);
+    });
+  });
+
+  describe('formatTopicSnapshot', () => {
+    it('should format snapshot with all fields', () => {
+      const text = formatTopicSnapshot({
+        topic: 'auth',
+        keyPoints: ['Using JWT'],
+        activeTools: ['authMiddleware'],
+        unsolvedQuestions: ['Token refresh'],
+        timestamp: Date.now(),
+        turnStart: 0,
+        turnEnd: 5,
+      });
+      expect(text).toContain('Previous context on "auth"');
+      expect(text).toContain('Using JWT');
+      expect(text).toContain('Token refresh');
+      expect(text).toContain('authMiddleware');
+    });
+
+    it('should omit empty categories', () => {
+      const text = formatTopicSnapshot({
+        topic: 'test',
+        keyPoints: [],
+        activeTools: [],
+        unsolvedQuestions: [],
+        timestamp: Date.now(),
+        turnStart: 0,
+        turnEnd: 0,
+      });
+      expect(text).toContain('Previous context on "test"');
+      expect(text).not.toContain('Key points');
+      expect(text).not.toContain('Unresolved');
     });
   });
 });

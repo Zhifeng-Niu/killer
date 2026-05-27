@@ -2880,3 +2880,86 @@ export function scoreSectionRelevance(
 
   return { prefix: sectionPrefix, score, reason: reason.join(', ') };
 }
+
+/**
+ * 对话上下文快照 — 用于话题切换后的上下文恢复
+ */
+export interface TopicContextSnapshot {
+  topic: string;
+  keyPoints: string[];
+  activeTools: string[];
+  unsolvedQuestions: string[];
+  timestamp: number;
+  turnStart: number;
+  turnEnd: number;
+}
+
+/**
+ * 从对话历史中提取话题上下文快照
+ *
+ * 当检测到话题切换时，保存当前话题的关键信息，
+ * 以便用户返回时能快速恢复工作上下文
+ */
+export function extractTopicSnapshot(
+  messages: Array<{ role: string; content: string }>,
+  topic: string,
+  turnRange: { start: number; end: number },
+): TopicContextSnapshot {
+  const keyPoints: string[] = [];
+  const activeTools: string[] = [];
+  const unsolvedQuestions: string[] = [];
+
+  const topicMessages = messages.slice(turnRange.start, turnRange.end);
+
+  for (const msg of topicMessages) {
+    const content = msg.content;
+
+    // Extract key decisions/conclusions
+    const decisionPatterns = /(?:决定|决定使用|we'll use|let's go with|I'll|选择了|conclusion|决定是|the answer is|the solution is|we decided)(.+)/gi;
+    let match: RegExpExecArray | null;
+    while ((match = decisionPatterns.exec(content)) !== null) {
+      if (match[1]) keyPoints.push(match[1].trim().slice(0, 80));
+    }
+
+    // Extract tool usage
+    const toolPatterns = /(?:using|used|running|execute|调用|使用了|运行了)(?:\s+)(\w+(?:tool|command|script|test|build|deploy|search)?)/gi;
+    while ((match = toolPatterns.exec(content)) !== null) {
+      if (match[1]) activeTools.push(match[1].trim());
+    }
+
+    // Extract unresolved questions
+    if (msg.role === 'user') {
+      const questionPatterns = /^(?:但是|but|however|still|还是|问题是|不对|not working|doesn't work|how do we|what about)(.+)/gim;
+      while ((match = questionPatterns.exec(content)) !== null) {
+        if (match[1]) unsolvedQuestions.push(match[1].trim().slice(0, 80));
+      }
+    }
+  }
+
+  return {
+    topic,
+    keyPoints: [...new Set(keyPoints)].slice(0, 5),
+    activeTools: [...new Set(activeTools)].slice(0, 5),
+    unsolvedQuestions: [...new Set(unsolvedQuestions)].slice(0, 5),
+    timestamp: Date.now(),
+    turnStart: turnRange.start,
+    turnEnd: turnRange.end,
+  };
+}
+
+/**
+ * 格式化话题快照为可注入 prompt 的文本
+ */
+export function formatTopicSnapshot(snapshot: TopicContextSnapshot): string {
+  const parts: string[] = [`Previous context on "${snapshot.topic}":`];
+  if (snapshot.keyPoints.length > 0) {
+    parts.push(`  Key points: ${snapshot.keyPoints.join('; ')}`);
+  }
+  if (snapshot.unsolvedQuestions.length > 0) {
+    parts.push(`  Unresolved: ${snapshot.unsolvedQuestions.join('; ')}`);
+  }
+  if (snapshot.activeTools.length > 0) {
+    parts.push(`  Tools used: ${snapshot.activeTools.join(', ')}`);
+  }
+  return parts.join('\n');
+}
