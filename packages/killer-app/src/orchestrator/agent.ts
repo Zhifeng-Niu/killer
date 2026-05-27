@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -3442,6 +3442,16 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       lengthPreference: Math.abs(this.lengthPreference.score - 0.5) > 0.15
         ? `${this.lengthPreference.recommendation} (target ~${this.lengthPreference.suggestedMaxLength} chars)`
         : undefined,
+      toolPriority: (() => {
+        const flow = predictConversationFlow(this.conversationHistory);
+        const phase = this.contextWindow.getCurrentPhase();
+        const eventNodes = this.hippocampus.getSemanticNodesByType('event');
+        const temporal = generateTemporalContext(this.previousInteractionTimestamp, eventNodes);
+        if (flow.currentPattern === 'casual-chat' && phase === 'idle') return undefined;
+        const suggestion = suggestToolPriority(flow.currentPattern, phase, temporal.urgencyLevel);
+        if (suggestion.preferredTools.length === 0) return undefined;
+        return `Prefer: ${suggestion.preferredTools.join(', ')}. ${suggestion.reason}`;
+      })(),
     });
   }
 

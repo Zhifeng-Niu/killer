@@ -2363,3 +2363,77 @@ export function createDefaultLengthPreference(): LengthPreference {
     recommendation: 'Moderate detail. Explain reasoning briefly.',
   };
 }
+
+// ============================================================
+// 上下文感知工具优先级 (Context-Aware Tool Prioritization)
+// ============================================================
+
+/** 工具优先级建议 */
+export interface ToolPrioritySuggestion {
+  /** 推荐优先使用的工具 */
+  preferredTools: string[];
+  /** 原因说明 */
+  reason: string;
+}
+
+const FLOW_TOOL_MAP: Record<string, string[]> = {
+  'question-answer': ['web_search', 'memory_recall'],
+  'debug-diagnose-fix': ['code_search', 'file_read', 'shell_exec'],
+  'explore-deepen-implement': ['web_search', 'memory_recall', 'code_search', 'file_write'],
+  'request-review-iterate': ['file_read', 'code_search', 'shell_exec'],
+  'learn-practice-master': ['web_search', 'memory_recall', 'file_write'],
+  'plan-execute-verify': ['file_read', 'file_write', 'shell_exec'],
+};
+
+const PHASE_TOOL_MAP: Record<string, string[]> = {
+  'deep-work': ['file_read', 'file_write', 'code_search', 'shell_exec'],
+  'exploration': ['web_search', 'memory_recall', 'code_search'],
+  'review': ['file_read', 'code_search', 'shell_exec'],
+  'wrap-up': ['memory_recall', 'file_write'],
+  'greeting': [],
+  'idle': [],
+};
+
+/**
+ * 根据对话流程和阶段生成工具优先级建议
+ */
+export function suggestToolPriority(
+  flowPattern: string,
+  phase: string,
+  urgencyLevel: 'low' | 'normal' | 'high',
+): ToolPrioritySuggestion {
+  const flowTools = FLOW_TOOL_MAP[flowPattern] ?? [];
+  const phaseTools = PHASE_TOOL_MAP[phase] ?? [];
+
+  // 合并：流程工具优先，阶段工具补充
+  const seen = new Set<string>();
+  const preferredTools: string[] = [];
+  for (const tool of [...flowTools, ...phaseTools]) {
+    if (!seen.has(tool)) {
+      seen.add(tool);
+      preferredTools.push(tool);
+    }
+  }
+
+  // 高紧急度 → 优先执行工具
+  if (urgencyLevel === 'high') {
+    const urgencyTools = ['shell_exec', 'file_write'];
+    for (const t of urgencyTools.reverse()) {
+      if (preferredTools.includes(t)) {
+        preferredTools.splice(preferredTools.indexOf(t), 1);
+        preferredTools.unshift(t);
+      }
+    }
+  }
+
+  // 生成原因说明
+  const parts: string[] = [];
+  if (flowTools.length > 0) parts.push(`${flowPattern} flow`);
+  if (phaseTools.length > 0) parts.push(`${phase} phase`);
+  if (urgencyLevel === 'high') parts.push('urgent deadline');
+
+  return {
+    preferredTools: preferredTools.slice(0, 5),
+    reason: parts.length > 0 ? `Based on: ${parts.join(', ')}` : 'No specific context',
+  };
+}

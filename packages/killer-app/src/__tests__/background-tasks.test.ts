@@ -36,6 +36,7 @@ import {
   detectLengthSignal,
   updateLengthPreference,
   createDefaultLengthPreference,
+  suggestToolPriority,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -1617,6 +1618,47 @@ describe('background-tasks', () => {
         }
         expect(pref.recommendation).toContain('Detailed');
       });
+    });
+  });
+
+  describe('suggestToolPriority', () => {
+    it('should suggest debug tools for debug flow', () => {
+      const suggestion = suggestToolPriority('debug-diagnose-fix', 'deep-work', 'low');
+      expect(suggestion.preferredTools).toContain('code_search');
+      expect(suggestion.preferredTools).toContain('file_read');
+      expect(suggestion.reason).toContain('debug-diagnose-fix');
+    });
+
+    it('should suggest search tools for question flow', () => {
+      const suggestion = suggestToolPriority('question-answer', 'exploration', 'low');
+      expect(suggestion.preferredTools).toContain('web_search');
+      expect(suggestion.preferredTools).toContain('memory_recall');
+    });
+
+    it('should merge flow and phase tools', () => {
+      const suggestion = suggestToolPriority('explore-deepen-implement', 'deep-work', 'low');
+      expect(suggestion.preferredTools.length).toBeGreaterThan(2);
+      // Flow tools come first
+      expect(suggestion.preferredTools[0]).toBe('web_search');
+    });
+
+    it('should prioritize exec tools under high urgency', () => {
+      const suggestion = suggestToolPriority('plan-execute-verify', 'deep-work', 'high');
+      expect(suggestion.reason).toContain('urgent');
+      // shell_exec should be prioritized to front
+      const execIdx = suggestion.preferredTools.indexOf('shell_exec');
+      expect(execIdx).toBeLessThanOrEqual(1);
+    });
+
+    it('should limit to 5 tools', () => {
+      const suggestion = suggestToolPriority('explore-deepen-implement', 'deep-work', 'low');
+      expect(suggestion.preferredTools.length).toBeLessThanOrEqual(5);
+    });
+
+    it('should handle unknown patterns gracefully', () => {
+      const suggestion = suggestToolPriority('unknown-pattern', 'unknown-phase', 'low');
+      expect(suggestion.preferredTools).toEqual([]);
+      expect(suggestion.reason).toBeTruthy();
     });
   });
 });

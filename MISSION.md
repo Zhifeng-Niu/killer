@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 1969
-total_waypoints: 45
+total_waypoints: 46
 consecutive_discards: 0
 ---
 
@@ -89,6 +89,7 @@ npm test 2>&1
 42. **Dedup in Meta-Cognition** (waypoint 43): Replaced naive "starts with same 50 chars" repetition detection with trigram Jaccard similarity check against last 5 assistant messages. Meta-cognition prompt now triggers on semantic-level repetition, not just string matching
 43. **Adaptive Response Length** (waypoint 44): detectLengthSignal() captures explicit ("tell me more"/"tldr") and implicit (short reply after long response) length preference signals. updateLengthPreference() tracks rolling score (0-1) with suggested max length (300-1500 chars) and injects into recommendation
 44. **Length Preference in System Prompt** (waypoint 45): Wired length signal detection into processInputCore, tracks preference state across interactions, injects LENGTH PREFERENCE section into system prompt when score deviates from default by ±0.15
+45. **Context-Aware Tool Prioritization** (waypoint 46): suggestToolPriority() combines flow prediction + conversational phase + urgency level to recommend preferred tools. Injected as TOOL PRIORITY section — debug flow prefers code_search/shell_exec, question flow prefers web_search/memory_recall, high urgency bumps exec tools to front
 
 ### Dead Ends
 {Auto-updated by engine.}

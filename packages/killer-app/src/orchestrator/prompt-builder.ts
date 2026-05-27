@@ -77,6 +77,8 @@ export interface PromptBuilderDeps {
   flowPrediction?: string;
   /** 自适应长度偏好 */
   lengthPreference?: string;
+  /** 上下文感知工具优先级 */
+  toolPriority?: string;
 }
 
 /**
@@ -256,6 +258,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 自适应长度偏好 ===
   if (deps.lengthPreference) {
     parts.push(`\nLENGTH PREFERENCE — ${deps.lengthPreference}`);
+  }
+
+  // === 工具优先级建议 ===
+  if (deps.toolPriority) {
+    parts.push(`\nTOOL PRIORITY — ${deps.toolPriority}`);
   }
 
   // === 生命叙事 ===
