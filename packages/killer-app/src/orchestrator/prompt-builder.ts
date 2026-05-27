@@ -104,6 +104,8 @@ export interface PromptBuilderDeps {
   perceptionFusion?: string;
   /** 行为模式（来自感知融合） */
   behaviorMode?: 'focused' | 'exploratory' | 'supportive' | 'urgent' | 'balanced';
+  /** 策略一致性检查结果 */
+  strategyCoherence?: string;
 }
 
 /**
@@ -338,6 +340,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 综合感知融合 ===
   if (deps.perceptionFusion) {
     parts.push(`\nPERCEPTION FUSION — ${deps.perceptionFusion}`);
+  }
+
+  // === 策略一致性 ===
+  if (deps.strategyCoherence) {
+    parts.push(`\nSTRATEGY COHERENCE — ${deps.strategyCoherence}`);
   }
 
   // === 自主行动建议 ===

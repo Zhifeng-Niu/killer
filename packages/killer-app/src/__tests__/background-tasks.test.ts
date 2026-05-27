@@ -49,6 +49,7 @@ import {
   buildUserExpertiseProfile,
   mapEmotionToResponseStrategy,
   fusePerceptionSignals,
+  verifyStrategyCoherence,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -2405,6 +2406,54 @@ describe('background-tasks', () => {
       const pv = fusePerceptionSignals(base);
       expect(pv.overallAttention).toBeGreaterThanOrEqual(0);
       expect(pv.overallAttention).toBeLessThanOrEqual(1);
+    });
+  });
+
+  describe('verifyStrategyCoherence', () => {
+    it('should return coherent when no conflicts exist', () => {
+      const result = verifyStrategyCoherence({
+        rhythmHint: 'Standard balanced response.',
+        expertiseHint: 'Use standard technical terms.',
+        behaviorMode: 'balanced',
+      });
+      expect(result.coherent).toBe(true);
+      expect(result.conflicts).toEqual([]);
+    });
+
+    it('should detect length_vs_empathy conflict', () => {
+      const result = verifyStrategyCoherence({
+        rhythmHint: 'Respond very concisely.',
+        emotionalHint: 'Provide thorough step-by-step explanations.',
+      });
+      expect(result.coherent).toBe(false);
+      expect(result.conflicts).toContain('length_vs_empathy');
+      expect(result.resolution).toContain('structured');
+    });
+
+    it('should detect speed_vs_precision conflict', () => {
+      const result = verifyStrategyCoherence({
+        behaviorMode: 'urgent',
+        expertiseHint: 'Use domain-specific terminology freely.',
+      });
+      expect(result.conflicts).toContain('speed_vs_precision');
+    });
+
+    it('should detect expertise_vs_empathy conflict', () => {
+      const result = verifyStrategyCoherence({
+        expertiseHint: 'Use domain-specific terminology freely.',
+        behaviorMode: 'supportive',
+      });
+      expect(result.conflicts).toContain('expertise_vs_empathy');
+    });
+
+    it('should handle multiple conflicts simultaneously', () => {
+      const result = verifyStrategyCoherence({
+        rhythmHint: 'Respond very concisely.',
+        emotionalHint: 'Provide thorough step-by-step explanations.',
+        behaviorMode: 'urgent',
+        expertiseHint: 'Use domain-specific terminology freely.',
+      });
+      expect(result.conflicts.length).toBeGreaterThanOrEqual(2);
     });
   });
 });

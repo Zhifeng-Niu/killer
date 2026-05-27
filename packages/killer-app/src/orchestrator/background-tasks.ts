@@ -2827,6 +2827,7 @@ export function scoreSectionRelevance(
     'EMOTIONAL RESPONSE STRATEGY': 0.6,
     'PERCEPTION FUSION': 0.65,
     'RESTORED CONTEXT': 0.6,
+    'STRATEGY COHERENCE': 0.7,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -3464,5 +3465,64 @@ export function fusePerceptionSignals(context: {
     overallAttention,
     behaviorMode,
     fusedHint,
+  };
+}
+
+/**
+ * 策略冲突类型
+ */
+export type StrategyConflict =
+  | 'length_vs_empathy'   // 节奏要求简洁但情感要求详细
+  | 'speed_vs_precision'  // 快速模式但需要精确
+  | 'expertise_vs_empathy'; // 专家级术语但需要共情
+
+export interface StrategyCoherence {
+  /** 是否一致 */
+  coherent: boolean;
+  /** 检测到的冲突 */
+  conflicts: StrategyConflict[];
+  /** 调解建议 */
+  resolution: string;
+}
+
+/**
+ * 验证多个策略建议的一致性
+ *
+ * 当 rhythm、expertise、emotion、perception fusion 给出
+ * 矛盾建议时，检测冲突并提供调解方案。
+ */
+export function verifyStrategyCoherence(context: {
+  rhythmHint?: string;
+  expertiseHint?: string;
+  emotionalHint?: string;
+  behaviorMode?: string;
+}): StrategyCoherence {
+  const conflicts: StrategyConflict[] = [];
+  const resolutions: string[] = [];
+
+  const wantsConcise = context.rhythmHint?.includes('concise') ?? false;
+  const wantsThorough = context.emotionalHint?.includes('thorough') || context.emotionalHint?.includes('step-by-step');
+  const isExpert = context.expertiseHint?.includes('freely') ?? false;
+  const isSupportive = context.behaviorMode === 'supportive';
+
+  if (wantsConcise && wantsThorough) {
+    conflicts.push('length_vs_empathy');
+    resolutions.push('Prioritize empathy: be thorough but use structured format (numbered steps) to maintain clarity.');
+  }
+
+  if (context.behaviorMode === 'urgent' && isExpert) {
+    conflicts.push('speed_vs_precision');
+    resolutions.push('Be precise but skip explanations — expert user needs accuracy, not hand-holding.');
+  }
+
+  if (isExpert && isSupportive) {
+    conflicts.push('expertise_vs_empathy');
+    resolutions.push('Use technical terms but show care through tone — "Here\'s the precise fix" rather than oversimplifying.');
+  }
+
+  return {
+    coherent: conflicts.length === 0,
+    conflicts,
+    resolution: resolutions.length > 0 ? resolutions.join(' ') : 'All strategies are aligned.',
   };
 }
