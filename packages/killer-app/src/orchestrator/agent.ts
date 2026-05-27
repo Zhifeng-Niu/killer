@@ -1091,7 +1091,7 @@ Examples:
       payload: step.action?.payload,
     });
 
-    // 高唤醒度（紧张/焦虑）降低风险承受度
+    // 高唤醒度（紧张/焦虑）降低风险承受度 + 用户风险偏好调制
     let effectiveTolerance = this.prefrontalConfig.riskTolerance;
     if (this.persona) {
       const emotionalState = this.persona.emotionalState.exportState();
@@ -1100,6 +1100,9 @@ Examples:
         effectiveTolerance *= 0.6;
         this.logger.info(`Risk tolerance reduced due to high arousal (${arousal.toFixed(2)})`);
       }
+      // 用户的心理风险偏好影响系统风险阈值
+      const userRisk = this.persona.predictiveModel.exportState().psychologicalProfile.riskTolerance;
+      effectiveTolerance = effectiveTolerance * 0.6 + userRisk * effectiveTolerance * 0.4;
     }
 
     if (riskAssessment.overallScore > effectiveTolerance) {

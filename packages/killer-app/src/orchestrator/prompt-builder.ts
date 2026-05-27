@@ -208,6 +208,39 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
     parts.push(`\n${predictionFragment}`);
   }
 
+  // === 用户画像驱动的输出格式 ===
+  const predModel = deps.persona.predictiveModel;
+  const userProfile = typeof predModel.exportState === 'function' ? predModel.exportState() : null;
+  if (userProfile) {
+    const psycho = userProfile.psychologicalProfile;
+  if (psycho.informationPreference === 'summary') {
+    parts.push('\nOUTPUT STYLE: This user prefers concise summaries. Keep responses brief and to-the-point. Use bullet points over paragraphs.');
+  } else if (psycho.informationPreference === 'detailed') {
+    parts.push('\nOUTPUT STYLE: This user prefers detailed explanations. Provide thorough context, examples, and reasoning.');
+  }
+  if (psycho.decisionStyle === 'analytical') {
+    parts.push('DECISION STYLE: Present options with trade-off analysis rather than single recommendations.');
+  } else if (psycho.decisionStyle === 'intuitive') {
+    parts.push('DECISION STYLE: Lead with your recommendation, then briefly explain why.');
+  }
+
+  // === 预测需求前馈（高置信度时主动准备） ===
+  const highConfNeeds = userProfile.predictedNeeds.filter(n => n.confidence > 0.6);
+  if (highConfNeeds.length > 0 && deps.currentInput) {
+    const inputLower = deps.currentInput.toLowerCase();
+    const relevantNeeds = highConfNeeds.filter(n =>
+      n.description.toLowerCase().split(' ').some(w => w.length > 3 && inputLower.includes(w))
+    );
+    if (relevantNeeds.length > 0) {
+      parts.push('\nPROACTIVE PREPARATION — Based on your understanding of this user, they may also need:');
+      for (const need of relevantNeeds.slice(0, 2)) {
+        parts.push(`  - ${need.description} (confidence: ${(need.confidence * 100).toFixed(0)}%)`);
+      }
+      parts.push('Consider preparing relevant context or tools for these anticipated needs.');
+    }
+  }
+  } // end if (userProfile)
+
   // === 活跃计划（前额叶皮层） ===
   if (deps.activePlans && deps.activePlans.length > 0) {
     parts.push('\nACTIVE PLANS — You have goals in progress:');
