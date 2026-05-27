@@ -181,6 +181,8 @@ export class KillerAgent {
   private lastAttentionState: import('./background-tasks.js').AttentionState | null = null;
   private lastBehaviorMode: import('./background-tasks.js').PerceptionVector['behaviorMode'] | null = null;
   private cognitiveTuning: CognitiveTuningParams = { ...DEFAULT_COGNITIVE_TUNING };
+  private moduleStats: Record<string, { triggers: number; conflicts: number; lastAdjustment: number }> = {};
+  private lastTuningAdjustment = 0;
 
   // 实验驱动的行为洞察（成功的实验模式，注入系统 prompt）
   private behavioralInsights: string[] = [];
@@ -3690,12 +3692,42 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       primaryEmotion: es.primaryEmotion,
     });
 
+    // 记录模块触发
+    const modules = ['emotion', 'rhythm', 'expertise', 'health'] as const;
+    for (const mod of modules) {
+      if (!this.moduleStats[mod]) this.moduleStats[mod] = { triggers: 0, conflicts: 0, lastAdjustment: 0 };
+      this.moduleStats[mod].triggers++;
+    }
+
     const coherence = verifyStrategyCoherence({
       rhythmHint: rhythm.responseHint,
       expertiseHint: expertise.terminologyHint,
       emotionalHint: strategy.lengthHint,
       behaviorMode: this.lastBehaviorMode ?? undefined,
     });
+
+    // 记录冲突到对应模块
+    if (!coherence.coherent) {
+      for (const conflict of coherence.conflicts) {
+        if (conflict.includes('empathy') || conflict.includes('length')) {
+          this.moduleStats['emotion']!.conflicts++;
+          this.moduleStats['rhythm']!.conflicts++;
+        }
+        if (conflict.includes('speed') || conflict.includes('precision')) {
+          this.moduleStats['expertise']!.conflicts++;
+        }
+        if (conflict.includes('expertise')) {
+          this.moduleStats['emotion']!.conflicts++;
+        }
+      }
+    }
+
+    // 每 20 次交互调优一次参数
+    const totalTriggers = Object.values(this.moduleStats).reduce((s, m) => s + m.triggers, 0);
+    if (totalTriggers - this.lastTuningAdjustment >= 20) {
+      this.cognitiveTuning = adaptCognitiveParams(this.cognitiveTuning, this.moduleStats);
+      this.lastTuningAdjustment = totalTriggers;
+    }
 
     if (coherence.coherent) return undefined;
     return `Conflicts: ${coherence.conflicts.join(', ')} → ${coherence.resolution}`;
@@ -3733,7 +3765,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
     if (summary.activeModules.length < 2) return undefined;
     const metricParts = Object.entries(summary.metrics).map(([k, v]) => `${k}=${v}`).join(' ');
-    return `${summary.oneLiner} | ${metricParts}`;
+    const tuning = `tuning=[em:${this.cognitiveTuning.emotionThreshold.toFixed(2)} rh:${this.cognitiveTuning.rhythmThreshold.toFixed(2)} fus:${this.cognitiveTuning.fusionAttentionThreshold.toFixed(2)}]`;
+    return `${summary.oneLiner} | ${metricParts} | ${tuning}`;
   }
 
   /**

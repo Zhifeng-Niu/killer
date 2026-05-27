@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 2222
-total_waypoints: 65
+total_waypoints: 66
 consecutive_discards: 0
 ---
 
@@ -109,6 +109,7 @@ npm test 2>&1
 62. **Prompt Section Deduplication** (waypoint 63): deduplicateSections() uses trigram Jaccard similarity (threshold 0.3) to detect and merge overlapping prompt sections before pruning. Integrated into prompt-builder pipeline — reduces token waste when multiple cognitive modules emit similar advice
 63. **Multi-Dimensional Tool Prioritization** (waypoint 64): suggestToolPriority() now leverages expertise domains and behaviorMode — expert users get code tools prioritized, supportive/urgent modes prefer reliable tools (file_read, shell_exec), exploratory mode prefers search tools. Tool selection now adapts to 5 dimensions: flow, phase, urgency, expertise, behavior
 64. **Cognitive State Summary** (waypoint 65): generateCognitiveStateSummary() produces unified overview of all active cognitive modules (flow, phase, rhythm, emotion, health, expertise, perception fusion). Injected as COGNITIVE STATE section in system prompt with base priority 0.7 — gives LLM a single-point view of its own cognitive state for self-aware response adaptation
+65. **Cognitive Parameter Self-Tuning Closed Loop** (waypoint 66): computeStrategyCoherence() now tracks per-module trigger/conflict counts via moduleStats, feeds them to adaptCognitiveParams() every 20 interactions to auto-adjust emotionThreshold/rhythmThreshold/fusionAttentionThreshold. Cognitive state summary includes current tuning values — the agent can now see and self-adjust its own perception sensitivity
 
 ### Dead Ends
 {Auto-updated by engine.}
