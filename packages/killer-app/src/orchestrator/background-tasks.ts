@@ -1339,3 +1339,107 @@ export function scoreTurnImportance(role: string, content: string): TurnScore {
     reasons,
   };
 }
+
+// ============================================================
+// Topic Transition Detection
+// ============================================================
+
+/**
+ * 主题状态
+ */
+export interface TopicState {
+  /** 当前主题关键词 */
+  currentTopic: string;
+  /** 主题历史 */
+  history: Array<{ topic: string; turnStart: number; turnEnd: number }>;
+  /** 是否刚切换主题 */
+  transitioned: boolean;
+  /** 返回的主题（如果有） */
+  returnedTo?: string;
+}
+
+/** 主题切换关键词 */
+const TOPIC_SWITCH_PATTERNS = [
+  /(?:anyway|by the way|btw|speaking of|回到|说起|回到之前|回到刚才|回到那个)/i,
+  /(?:let(?:'s| us) (?:talk about|discuss|move to|switch to)|换个话题|我们聊|说一下)/i,
+  /(?:go back to|return to|回到|刚才说的|之前那个)/i,
+  /(?:never mind|算了|forget it|换个|换个方向)/i,
+];
+
+/** 技术领域关键词 */
+const TOPIC_KEYWORDS: Array<{ pattern: RegExp; topic: string }> = [
+  { pattern: /\b(debug|bug|error|fix|issue|crash|stack trace)\b/i, topic: 'debugging' },
+  { pattern: /\b(tests?|testing|unit test|coverage|vitest|jest)\b/i, topic: 'testing' },
+  { pattern: /\b(deploy|deployment|CI|CD|pipeline|release)\b/i, topic: 'deployment' },
+  { pattern: /\b(performance|optim|latency|speed|benchmark|slow)\b/i, topic: 'performance' },
+  { pattern: /\b(secur|auth|token|encrypt|vulnerab|OWASP)\b/i, topic: 'security' },
+  { pattern: /\b(refactor|clean|architect|design|pattern|restruct)\b/i, topic: 'architecture' },
+  { pattern: /\b(database|query|SQL|migration|schema)\b/i, topic: 'database' },
+  { pattern: /\b(API|endpoint|REST|GraphQL|route)\b/i, topic: 'api' },
+  { pattern: /\b(docker|container|kubernetes|k8s|microservice)\b/i, topic: 'infrastructure' },
+];
+
+/**
+ * 从消息中提取主题
+ */
+export function extractTopic(message: string): string {
+  for (const kw of TOPIC_KEYWORDS) {
+    if (kw.pattern.test(message)) return kw.topic;
+  }
+  return 'general';
+}
+
+/**
+ * 检测主题转换
+ */
+export function detectTopicTransition(
+  currentMessage: string,
+  previousTopic: string,
+  turnNumber: number,
+  topicHistory: Array<{ topic: string; turnStart: number; turnEnd: number }>,
+): TopicState {
+  const detectedTopic = extractTopic(currentMessage);
+  const transitioned = detectedTopic !== previousTopic && turnNumber > 1;
+
+  // 检查是否是显式返回之前的话题
+  let returnedTo: string | undefined;
+  if (transitioned) {
+    for (const pattern of TOPIC_SWITCH_PATTERNS) {
+      if (pattern.test(currentMessage)) {
+        // 查找历史中匹配的话题
+        const match = TOPIC_SWITCH_PATTERNS.find(p => p === pattern);
+        if (match) {
+          const returnPatterns = [/回到|return to|go back to|之前那个|刚才说的/i];
+          if (returnPatterns.some(p => p.test(currentMessage))) {
+            // 返回最近的历史话题
+            const previousTopics = topicHistory.filter(h => h.topic === detectedTopic);
+            if (previousTopics.length > 0) {
+              returnedTo = detectedTopic;
+            }
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  // 更新历史
+  const history = [...topicHistory];
+  if (transitioned && previousTopic !== 'general') {
+    // 关闭前一个主题
+    const lastEntry = history[history.length - 1];
+    if (lastEntry && lastEntry.topic === previousTopic && lastEntry.turnEnd === 0) {
+      lastEntry.turnEnd = turnNumber - 1;
+    }
+  }
+
+  // 添加新主题
+  history.push({ topic: detectedTopic, turnStart: turnNumber, turnEnd: 0 });
+
+  return {
+    currentTopic: detectedTopic,
+    history,
+    transitioned,
+    returnedTo,
+  };
+}

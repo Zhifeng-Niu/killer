@@ -23,6 +23,8 @@ import {
   clearFailureTracking,
   detectMultiIntent,
   scoreTurnImportance,
+  extractTopic,
+  detectTopicTransition,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -1004,6 +1006,82 @@ describe('background-tasks', () => {
     it('should return reasons for high scores', () => {
       const score = scoreTurnImportance('user', 'We decided to implement the caching fix — error rate is 5% and latency is 2000ms. This is critical.');
       expect(score.reasons.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe('extractTopic', () => {
+    it('should detect debugging topic', () => {
+      expect(extractTopic('I need to fix the bug in the login flow')).toBe('debugging');
+    });
+
+    it('should detect testing topic', () => {
+      expect(extractTopic('How do I write unit tests for this module?')).toBe('testing');
+    });
+
+    it('should detect deployment topic', () => {
+      expect(extractTopic('The CI pipeline is failing on deploy')).toBe('deployment');
+    });
+
+    it('should detect performance topic', () => {
+      expect(extractTopic('The API latency is too slow')).toBe('performance');
+    });
+
+    it('should return general for non-technical messages', () => {
+      expect(extractTopic('Hello, how are you?')).toBe('general');
+    });
+  });
+
+  describe('detectTopicTransition', () => {
+    it('should detect topic transition', () => {
+      const result = detectTopicTransition(
+        'I need to fix the bug in authentication',
+        'testing',
+        5,
+        [{ topic: 'testing', turnStart: 1, turnEnd: 0 }],
+      );
+      expect(result.transitioned).toBe(true);
+      expect(result.currentTopic).toBe('debugging');
+    });
+
+    it('should not detect transition on same topic', () => {
+      const result = detectTopicTransition(
+        'Another bug I found in the error handler',
+        'debugging',
+        3,
+        [{ topic: 'debugging', turnStart: 1, turnEnd: 0 }],
+      );
+      expect(result.transitioned).toBe(false);
+    });
+
+    it('should detect explicit topic return', () => {
+      const result = detectTopicTransition(
+        'Let\'s go back to the database migration',
+        'debugging',
+        10,
+        [{ topic: 'database', turnStart: 1, turnEnd: 4 }],
+      );
+      expect(result.currentTopic).toBe('database');
+    });
+
+    it('should update topic history', () => {
+      const result = detectTopicTransition(
+        'How do I optimize the query performance?',
+        'debugging',
+        5,
+        [{ topic: 'debugging', turnStart: 1, turnEnd: 0 }],
+      );
+      expect(result.history.length).toBe(2);
+      expect(result.history[0].turnEnd).toBe(4);
+    });
+
+    it('should not detect transition on first turn', () => {
+      const result = detectTopicTransition(
+        'I need help with testing',
+        'general',
+        1,
+        [],
+      );
+      expect(result.transitioned).toBe(false);
     });
   });
 });
