@@ -2395,12 +2395,14 @@ const PHASE_TOOL_MAP: Record<string, string[]> = {
 };
 
 /**
- * 根据对话流程和阶段生成工具优先级建议
+ * 根据对话流程、阶段、专长和行为模式生成工具优先级建议
  */
 export function suggestToolPriority(
   flowPattern: string,
   phase: string,
   urgencyLevel: 'low' | 'normal' | 'high',
+  expertiseDomains?: string[],
+  behaviorMode?: string,
 ): ToolPrioritySuggestion {
   const flowTools = FLOW_TOOL_MAP[flowPattern] ?? [];
   const phaseTools = PHASE_TOOL_MAP[phase] ?? [];
@@ -2426,11 +2428,46 @@ export function suggestToolPriority(
     }
   }
 
+  // 专家用户 → 优先代码工具，减少 web_search
+  if (expertiseDomains && expertiseDomains.length >= 2) {
+    const codeTools = ['code_search', 'file_read', 'file_write', 'shell_exec'];
+    for (const t of codeTools.reverse()) {
+      if (preferredTools.includes(t)) {
+        preferredTools.splice(preferredTools.indexOf(t), 1);
+        preferredTools.unshift(t);
+      }
+    }
+  }
+
+  // 支持性行为模式 → 优先确定性工具
+  if (behaviorMode === 'supportive' || behaviorMode === 'urgent') {
+    const reliableTools = ['file_read', 'shell_exec'];
+    for (const t of reliableTools.reverse()) {
+      if (preferredTools.includes(t)) {
+        preferredTools.splice(preferredTools.indexOf(t), 1);
+        preferredTools.unshift(t);
+      }
+    }
+  }
+
+  // 探索模式 → 优先搜索工具
+  if (behaviorMode === 'exploratory') {
+    const searchTools = ['web_search', 'memory_recall', 'code_search'];
+    for (const t of searchTools.reverse()) {
+      if (preferredTools.includes(t)) {
+        preferredTools.splice(preferredTools.indexOf(t), 1);
+        preferredTools.unshift(t);
+      }
+    }
+  }
+
   // 生成原因说明
   const parts: string[] = [];
   if (flowTools.length > 0) parts.push(`${flowPattern} flow`);
   if (phaseTools.length > 0) parts.push(`${phase} phase`);
   if (urgencyLevel === 'high') parts.push('urgent deadline');
+  if (expertiseDomains && expertiseDomains.length >= 2) parts.push('expert user');
+  if (behaviorMode && behaviorMode !== 'balanced') parts.push(`${behaviorMode} mode`);
 
   return {
     preferredTools: preferredTools.slice(0, 5),

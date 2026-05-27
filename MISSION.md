@@ -4,8 +4,8 @@ status: active
 started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
-best_metric: 2214
-total_waypoints: 63
+best_metric: 2217
+total_waypoints: 64
 consecutive_discards: 0
 ---
 
@@ -107,6 +107,7 @@ npm test 2>&1
 60. **Strategy Coherence Verification** (waypoint 61): verifyStrategyCoherence() detects conflicts between rhythm/expertise/emotion/perception strategies (length_vs_empathy, speed_vs_precision, expertise_vs_empathy) and provides resolution guidance. Injected as STRATEGY COHERENCE section — prevents contradictory advice from multiple cognitive modules
 61. **Cognitive Parameter Self-Tuning** (waypoint 62): adaptCognitiveParams() adjusts module sensitivity thresholds based on trigger frequency and conflict rate — high conflict → raise threshold (less sensitive), low conflict → lower threshold (more sensitive). Agent now uses tunable thresholds instead of hardcoded values for emotion (0.2), rhythm (0.4), and fusion attention (0.3). Foundation for self-optimizing cognitive system
 62. **Prompt Section Deduplication** (waypoint 63): deduplicateSections() uses trigram Jaccard similarity (threshold 0.3) to detect and merge overlapping prompt sections before pruning. Integrated into prompt-builder pipeline — reduces token waste when multiple cognitive modules emit similar advice
+63. **Multi-Dimensional Tool Prioritization** (waypoint 64): suggestToolPriority() now leverages expertise domains and behaviorMode — expert users get code tools prioritized, supportive/urgent modes prefer reliable tools (file_read, shell_exec), exploratory mode prefers search tools. Tool selection now adapts to 5 dimensions: flow, phase, urgency, expertise, behavior
 
 ### Dead Ends
 {Auto-updated by engine.}

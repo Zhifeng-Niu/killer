@@ -3509,7 +3509,13 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     const eventNodes = this.hippocampus.getSemanticNodesByType('event');
     const temporal = generateTemporalContext(this.previousInteractionTimestamp, eventNodes);
     if (flow.currentPattern === 'casual-chat' && phase === 'idle') return undefined;
-    const suggestion = suggestToolPriority(flow.currentPattern, phase, temporal.urgencyLevel);
+    const userMsgs = this.conversationHistory.filter(m => m.role === 'user').slice(-10).map(m => m.content);
+    const expertise = userMsgs.length >= 3 ? buildUserExpertiseProfile(userMsgs) : undefined;
+    const suggestion = suggestToolPriority(
+      flow.currentPattern, phase, temporal.urgencyLevel,
+      expertise?.domains.map(d => d.domain),
+      this.lastBehaviorMode ?? undefined,
+    );
     if (suggestion.preferredTools.length === 0) return undefined;
     return `Prefer: ${suggestion.preferredTools.join(', ')}. ${suggestion.reason}`;
   }

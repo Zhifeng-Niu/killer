@@ -1676,6 +1676,24 @@ describe('background-tasks', () => {
       expect(suggestion.preferredTools).toEqual([]);
       expect(suggestion.reason).toBeTruthy();
     });
+
+    it('should prioritize code tools for expert users', () => {
+      const suggestion = suggestToolPriority('explore-deepen-implement', 'deep-work', 'normal', ['frontend', 'backend']);
+      expect(suggestion.reason).toContain('expert');
+      expect(suggestion.preferredTools[0]).toBe('code_search');
+    });
+
+    it('should prioritize reliable tools in supportive mode', () => {
+      const suggestion = suggestToolPriority('debug-diagnose-fix', 'deep-work', 'normal', undefined, 'supportive');
+      expect(suggestion.preferredTools[0]).toBe('file_read');
+      expect(suggestion.reason).toContain('supportive');
+    });
+
+    it('should prioritize search tools in exploratory mode', () => {
+      const suggestion = suggestToolPriority('question-answer', 'exploration', 'normal', undefined, 'exploratory');
+      expect(suggestion.preferredTools[0]).toBe('web_search');
+      expect(suggestion.reason).toContain('exploratory');
+    });
   });
 
   describe('monitorConversationHealth', () => {
