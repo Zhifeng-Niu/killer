@@ -363,13 +363,63 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
     parts.push('Apply these insights when relevant. They represent what actually works, not theory.');
   }
 
-  // === 自适应策略评分 ===
-  if (deps.strategyScores && deps.strategyScores.sampleCount >= 3) {
+  // === 自适应策略评分（阶段感知） ===
+  {
+    const phase = deps.conversationalPhase;
     const s = deps.strategyScores;
-    const detailBias = s.detailVsConcise > 0.6 ? 'Prefer detailed explanations' : s.detailVsConcise < 0.4 ? 'Keep responses concise' : 'Balance detail and brevity';
-    const analyticalBias = s.analyticalVsIntuitive > 0.6 ? 'Use analytical, structured reasoning' : s.analyticalVsIntuitive < 0.4 ? 'Use intuitive, conversational reasoning' : 'Mix analytical and intuitive approaches';
-    const proactiveBias = s.proactiveVsReactive > 0.6 ? 'Be proactive — anticipate needs' : s.proactiveVsReactive < 0.4 ? 'Stay reactive — respond to what is asked' : 'Balance proactive suggestions with direct answers';
-    parts.push(`\nRESPONSE STRATEGY (learned from ${s.sampleCount} interactions): ${detailBias}. ${analyticalBias}. ${proactiveBias}.`);
+    const hasPhaseBias = phase && phase.confidence > 0.7;
+    const hasLearnedBias = s && s.sampleCount >= 3;
+
+    if (hasPhaseBias || hasLearnedBias) {
+      // Phase-based biasing: overrides learned strategy when phase confidence is high
+      let detail: string;
+      let analytical: string;
+      let proactive: string;
+
+      if (hasPhaseBias) {
+        switch (phase!.phase) {
+          case 'deep-work':
+            detail = 'Keep responses concise and actionable';
+            analytical = 'Use analytical, structured reasoning';
+            proactive = 'Stay focused on the current task';
+            break;
+          case 'exploration':
+            detail = 'Provide detailed explanations with context';
+            analytical = 'Use intuitive, conversational reasoning';
+            proactive = 'Be proactive — suggest related ideas and possibilities';
+            break;
+          case 'greeting':
+            detail = 'Keep responses warm but brief';
+            analytical = 'Be natural and conversational';
+            proactive = 'Ask about the user\'s goals and interests';
+            break;
+          case 'wrap-up':
+            detail = 'Keep responses concise';
+            analytical = 'Summarize and synthesize';
+            proactive = 'Offer to help with next steps if needed';
+            break;
+          case 'idle':
+            detail = 'Be ready for anything';
+            analytical = 'Adapt to whatever comes next';
+            proactive = 'Welcome the user back warmly';
+            break;
+          case 'review':
+          default:
+            detail = 'Balance detail and brevity';
+            analytical = 'Mix analytical and intuitive approaches';
+            proactive = 'Suggest concrete next steps';
+            break;
+        }
+      } else {
+        // Fall back to learned scores
+        detail = s!.detailVsConcise > 0.6 ? 'Prefer detailed explanations' : s!.detailVsConcise < 0.4 ? 'Keep responses concise' : 'Balance detail and brevity';
+        analytical = s!.analyticalVsIntuitive > 0.6 ? 'Use analytical, structured reasoning' : s!.analyticalVsIntuitive < 0.4 ? 'Use intuitive, conversational reasoning' : 'Mix analytical and intuitive approaches';
+        proactive = s!.proactiveVsReactive > 0.6 ? 'Be proactive — anticipate needs' : s!.proactiveVsReactive < 0.4 ? 'Stay reactive — respond to what is asked' : 'Balance proactive suggestions with direct answers';
+      }
+
+      const source = hasPhaseBias ? `adapted to ${phase!.phase} phase` : `learned from ${s!.sampleCount} interactions`;
+      parts.push(`\nRESPONSE STRATEGY (${source}): ${detail}. ${analytical}. ${proactive}.`);
+    }
   }
 
   // === 工具使用效果 ===
