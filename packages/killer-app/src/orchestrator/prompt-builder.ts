@@ -106,6 +106,8 @@ export interface PromptBuilderDeps {
   behaviorMode?: 'focused' | 'exploratory' | 'supportive' | 'urgent' | 'balanced';
   /** 策略一致性检查结果 */
   strategyCoherence?: string;
+  /** 认知状态总览 */
+  cognitiveState?: string;
 }
 
 /**
@@ -345,6 +347,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 策略一致性 ===
   if (deps.strategyCoherence) {
     parts.push(`\nSTRATEGY COHERENCE — ${deps.strategyCoherence}`);
+  }
+
+  // === 认知状态总览 ===
+  if (deps.cognitiveState) {
+    parts.push(`\nCOGNITIVE STATE — ${deps.cognitiveState}`);
   }
 
   // === 自主行动建议 ===

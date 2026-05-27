@@ -2865,6 +2865,7 @@ export function scoreSectionRelevance(
     'PERCEPTION FUSION': 0.65,
     'RESTORED CONTEXT': 0.6,
     'STRATEGY COHERENCE': 0.7,
+    'COGNITIVE STATE': 0.7,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -3729,4 +3730,91 @@ function buildTrigramSet(text: string): Set<string> {
     set.add(normalized.slice(i, i + 3));
   }
   return set;
+}
+
+/**
+ * 认知状态总览
+ */
+export interface CognitiveStateSummary {
+  /** 活跃模块列表 */
+  activeModules: string[];
+  /** 综合行为模式 */
+  behaviorMode: string;
+  /** 关键指标 */
+  metrics: Record<string, string>;
+  /** 一行总览 */
+  oneLiner: string;
+}
+
+/**
+ * 生成认知状态总览
+ *
+ * 汇总所有活跃认知模块的状态，生成简洁的 COGNITIVE STATE
+ * 总览供 LLM 理解当前系统状态。
+ */
+export function generateCognitiveStateSummary(context: {
+  phase?: string;
+  phaseConfidence?: number;
+  flowPattern?: string;
+  flowConfidence?: number;
+  rhythm?: string;
+  rhythmConfidence?: number;
+  emotionalIntensity?: number;
+  emotionalValence?: number;
+  healthScore?: number;
+  expertiseDomains?: string[];
+  behaviorMode?: string;
+  overallAttention?: number;
+  hasActiveGoals?: boolean;
+  topicCount?: number;
+}): CognitiveStateSummary {
+  const activeModules: string[] = [];
+  const metrics: Record<string, string> = {};
+
+  if (context.phase && context.phaseConfidence && context.phaseConfidence > 0.3) {
+    activeModules.push(`phase:${context.phase}`);
+    metrics['phase'] = `${context.phase} (${(context.phaseConfidence * 100).toFixed(0)}%)`;
+  }
+
+  if (context.flowPattern && context.flowConfidence && context.flowConfidence > 0.3) {
+    activeModules.push(`flow:${context.flowPattern}`);
+  }
+
+  if (context.rhythm && context.rhythmConfidence && context.rhythmConfidence > 0.3) {
+    activeModules.push(`rhythm:${context.rhythm}`);
+  }
+
+  if (context.emotionalIntensity && context.emotionalIntensity > 0.2) {
+    activeModules.push('emotion');
+    const mood = (context.emotionalValence ?? 0) > 0.1 ? 'positive' : (context.emotionalValence ?? 0) < -0.1 ? 'negative' : 'neutral';
+    metrics['emotion'] = `${mood} (${(context.emotionalIntensity * 100).toFixed(0)}%)`;
+  }
+
+  if (context.healthScore !== undefined && context.healthScore < 0.8) {
+    activeModules.push('health-monitor');
+    metrics['health'] = `${(context.healthScore * 100).toFixed(0)}%`;
+  }
+
+  if (context.expertiseDomains && context.expertiseDomains.length > 0) {
+    activeModules.push(`expertise:${context.expertiseDomains.slice(0, 3).join(',')}`);
+  }
+
+  if (context.hasActiveGoals) {
+    activeModules.push('goals');
+  }
+
+  if (context.topicCount && context.topicCount > 1) {
+    metrics['topics'] = `${context.topicCount}`;
+  }
+
+  if (context.overallAttention !== undefined) {
+    metrics['attention'] = `${(context.overallAttention * 100).toFixed(0)}%`;
+  }
+
+  const behaviorMode = context.behaviorMode ?? 'balanced';
+  const oneLiner = activeModules.length > 0
+    ? `Mode: ${behaviorMode} | Active: ${activeModules.join(', ')}`
+    : `Mode: ${behaviorMode} | Standard operation`;
+
+  return { activeModules, behaviorMode, metrics, oneLiner };
 }

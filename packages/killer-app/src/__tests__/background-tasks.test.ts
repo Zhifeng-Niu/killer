@@ -53,6 +53,7 @@ import {
   adaptCognitiveParams,
   DEFAULT_COGNITIVE_TUNING,
   deduplicateSections,
+  generateCognitiveStateSummary,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -2564,6 +2565,60 @@ describe('background-tasks', () => {
       expect(result.length).toBe(1);
       expect(result[0].label).toContain('Y');
       expect(result[0].label).toContain('Z');
+    });
+  });
+
+  describe('generateCognitiveStateSummary', () => {
+    it('should return balanced mode for empty context', () => {
+      const summary = generateCognitiveStateSummary({});
+      expect(summary.behaviorMode).toBe('balanced');
+      expect(summary.activeModules).toEqual([]);
+      expect(summary.oneLiner).toContain('Standard operation');
+    });
+
+    it('should list active modules', () => {
+      const summary = generateCognitiveStateSummary({
+        phase: 'deep-work',
+        phaseConfidence: 0.8,
+        emotionalIntensity: 0.5,
+        emotionalValence: -0.3,
+        hasActiveGoals: true,
+      });
+      expect(summary.activeModules).toContain('phase:deep-work');
+      expect(summary.activeModules).toContain('emotion');
+      expect(summary.activeModules).toContain('goals');
+    });
+
+    it('should include metrics for active modules', () => {
+      const summary = generateCognitiveStateSummary({
+        phase: 'exploration',
+        phaseConfidence: 0.7,
+        emotionalIntensity: 0.6,
+        emotionalValence: 0.5,
+        healthScore: 0.4,
+        overallAttention: 0.8,
+      });
+      expect(summary.metrics['phase']).toContain('exploration');
+      expect(summary.metrics['emotion']).toContain('positive');
+      expect(summary.metrics['health']).toBeDefined();
+      expect(summary.metrics['attention']).toBe('80%');
+    });
+
+    it('should generate oneLiner with behavior mode', () => {
+      const summary = generateCognitiveStateSummary({
+        behaviorMode: 'focused',
+        phase: 'deep-work',
+        phaseConfidence: 0.9,
+      });
+      expect(summary.oneLiner).toContain('focused');
+      expect(summary.oneLiner).toContain('phase:deep-work');
+    });
+
+    it('should include expertise domains', () => {
+      const summary = generateCognitiveStateSummary({
+        expertiseDomains: ['frontend', 'backend'],
+      });
+      expect(summary.activeModules).toContain('expertise:frontend,backend');
     });
   });
 });
