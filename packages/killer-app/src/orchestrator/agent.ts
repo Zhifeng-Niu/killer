@@ -162,6 +162,10 @@ export class KillerAgent {
   private backgroundTimers: Array<ReturnType<typeof setInterval>> = [];
   private lastActivityAt = 0;
 
+  // 梦境学习成果 — 最近一次 dream cycle 的洞察
+  private lastDreamInsights: string[] = [];
+  private lastDreamAt = 0;
+
   constructor(config: AgentConfig) {
     this.config = config;
     this.sessionDir = config.sessionDir ?? path.join(os.homedir(), '.killer', 'sessions');
@@ -542,7 +546,14 @@ export class KillerAgent {
    * 触发梦境周期
    */
   async triggerDreamCycle(): Promise<DreamCycleResult> {
-    return await this.hippocampus.dreamCycle();
+    const result = await this.hippocampus.dreamCycle();
+    // 存储梦境洞察
+    if (result.insights.length > 0) {
+      this.lastDreamInsights = result.insights;
+      this.lastDreamAt = Date.now();
+    }
+    this.captureDreamInsights();
+    return result;
   }
 
   /**
@@ -1424,7 +1435,30 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
    * 触发自动梦境周期（后台运行，不影响用户交互）
    */
   private async triggerAutoDream(): Promise<void> {
-    return triggerAutoDream(this.hippocampus, this.consciousness, this.logger);
+    await triggerAutoDream(this.hippocampus, this.consciousness, this.logger);
+    // 存储梦境洞察到行为层
+    this.captureDreamInsights();
+  }
+
+  /**
+   * 从最近一次 dream cycle 捕获洞察到行为层
+   */
+  private captureDreamInsights(): void {
+    try {
+      const narrative = this.hippocampus.getNarrative();
+      // 从叙事中提取最近的 dream 洞察
+      const recentChapters = narrative.chapters.slice(-1);
+      if (recentChapters.length > 0) {
+        const lastChapter = recentChapters[0];
+        if (lastChapter.summary) {
+          this.lastDreamInsights = [lastChapter.summary];
+          this.lastDreamAt = Date.now();
+          this.logger.info(`Dream insights captured: ${lastChapter.summary.slice(0, 60)}`);
+        }
+      }
+    } catch {
+      // Dream insight capture should not disrupt
+    }
   }
 
   /**
@@ -2833,6 +2867,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       currentInput,
       isFirstBoot,
       activePlans: this.planExecutor.getActivePlans(),
+      lastDreamInsights: this.lastDreamInsights,
     });
   }
 

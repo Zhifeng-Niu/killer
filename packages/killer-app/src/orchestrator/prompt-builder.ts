@@ -26,6 +26,8 @@ export interface PromptBuilderDeps {
   isFirstBoot?: boolean;
   /** 活跃计划列表（前额叶皮层上下文） */
   activePlans?: Plan[];
+  /** 最近一次 dream cycle 的洞察 */
+  lastDreamInsights?: string[];
 }
 
 /**
@@ -240,6 +242,15 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
     }
   }
   } // end if (userProfile)
+
+  // === 梦境学习成果 ===
+  if (deps.lastDreamInsights && deps.lastDreamInsights.length > 0) {
+    parts.push('\nDREAM INSIGHTS — While you were resting, your subconscious noticed:');
+    for (const insight of deps.lastDreamInsights.slice(0, 3)) {
+      parts.push(`  - ${insight}`);
+    }
+    parts.push('Let these patterns inform your current responses without explicitly mentioning them unless relevant.');
+  }
 
   // === 活跃计划（前额叶皮层） ===
   if (deps.activePlans && deps.activePlans.length > 0) {
