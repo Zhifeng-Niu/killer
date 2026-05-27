@@ -632,44 +632,70 @@ export class KillerAgent {
   }
 
   /**
-   * 处理目标提取 - 从感官输入中识别目标
+   * 处理目标提取 - 从感官输入中识别复杂任务
+   *
+   * 使用 LLM 判断输入是否包含需要规划的多步骤任务。
+   * 如果是，自动创建目标并通过 LLM Planner 分解为步骤。
    */
-  private extractGoalFromInput(input: SensoryInput): Goal | null {
-    const content = input.content.toLowerCase();
+  private async handleGoalInInput(input: SensoryInput): Promise<void> {
+    // 快速过滤：太短的输入不值得分析
+    if (input.content.length < 20) return;
 
-    // 检测目标关键词
-    const goalPatterns = [
-      { pattern: /我需要|我要|i need|i want/i, priority: 0.7 },
-      { pattern: /请|help|can you/i, priority: 0.5 },
-      { pattern: /必须|urgent|critical/i, priority: 0.9 },
-    ];
+    // 检查是否已有太多活跃计划
+    const activePlans = this.planExecutor.getActivePlans();
+    if (activePlans.length >= 5) return;
 
-    for (const { pattern, priority } of goalPatterns) {
-      if (pattern.test(content)) {
-        return {
-          id: generateId('goal'),
-          description: input.content,
-          priority,
-          status: 'pending',
-          createdAt: Date.now(),
-        };
+    try {
+      const analysis = await this.analyzeInputForGoal(input.content);
+      if (analysis) {
+        const goal = await this.createGoal(analysis.description, analysis.priority);
+        if (goal) {
+          this.logger.info(`Auto-created goal from input: ${goal.description.slice(0, 60)}`);
+        }
       }
+    } catch {
+      // Goal extraction should never block the main flow
     }
-
-    return null;
   }
 
   /**
-   * 处理输入中的目标
+   * 用 LLM 分析输入是否包含可规划的任务
    */
-  private async handleGoalInInput(input: SensoryInput): Promise<void> {
-    const goal = this.extractGoalFromInput(input);
-    if (goal) {
-      await this.createGoal(goal.description, goal.priority);
-      this.outputManager.sendResult(
-        `🎯 Goal detected: "${goal.description.substring(0, 50)}${goal.description.length > 50 ? '...' : ''}"\n` +
-        `   Priority: ${(goal.priority * 100).toFixed(0)}%`
-      );
+  private async analyzeInputForGoal(
+    content: string,
+  ): Promise<{ description: string; priority: number } | null> {
+    const prompt = `Analyze this user message. Does it describe a complex, multi-step task that would benefit from being tracked as a goal with a plan?
+
+Message: "${content}"
+
+Respond with ONLY one of:
+- NO (simple question, greeting, or single-step request)
+- YES | <concise goal description> | <priority 0.0-1.0>
+
+Examples:
+- "What is React?" → NO
+- "Help me build a REST API with authentication" → YES | Build REST API with auth | 0.8
+- "Fix the login bug" → NO (single step)
+- "Refactor the entire auth module to support OAuth2 and add tests" → YES | Refactor auth module for OAuth2 with tests | 0.7`;
+
+    try {
+      const response = await this.callLLMWithRetry(prompt, '');
+      const trimmed = response.trim();
+
+      if (trimmed.startsWith('NO')) return null;
+
+      const match = trimmed.match(/^YES\s*\|\s*(.+?)\s*\|\s*([\d.]+)$/);
+      if (match) {
+        const description = match[1].trim();
+        const priority = Math.max(0, Math.min(1, parseFloat(match[2])));
+        if (description.length >= 5) {
+          return { description, priority };
+        }
+      }
+
+      return null;
+    } catch {
+      return null;
     }
   }
 

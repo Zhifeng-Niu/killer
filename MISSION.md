@@ -3,9 +3,9 @@ orientation: [engineer]
 status: active
 started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
-baseline_metric: null
-best_metric: null
-total_waypoints: 0
+baseline_metric: 747
+best_metric: 1222
+total_waypoints: 1
 consecutive_discards: 0
 ---
 
