@@ -498,3 +498,85 @@ export function clearPendingItems(): void {
   const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
   pendingItems = pendingItems.filter(item => !item.reminded || item.detectedAt > oneDayAgo);
 }
+
+// ── Attention Priority System ──
+
+/**
+ * 事件优先级评分
+ *
+ * 不同类型的意识事件有不同的注意力权重
+ */
+const EVENT_PRIORITY: Record<string, number> = {
+  'goal.completed': 10,
+  'goal.created': 8,
+  'tool.created': 7,
+  'skill.learned': 7,
+  'mission.created': 7,
+  'evolution.skill_evolved': 6,
+  'narrative.auto-update': 4,
+  'emotion.update': 2,
+  'prediction.update': 3,
+  'loop.phase_change': 1,
+};
+
+/**
+ * 注意力状态快照
+ */
+export interface AttentionState {
+  topFocus: string;
+  topPriority: number;
+  recentHighPriority: Array<{ type: string; priority: number; age: number }>;
+  focusRecommendation: string;
+}
+
+/**
+ * 计算当前注意力状态
+ *
+ * 扫描最近的 consciousness 事件，计算优先级排序，
+ * 返回当前应关注的焦点和建议行动
+ */
+export function computeAttentionState(
+  consciousness: ConsciousnessStream,
+): AttentionState {
+  const recentEvents = consciousness.getRecentEvents(20);
+  if (recentEvents.length === 0) {
+    return { topFocus: 'idle', topPriority: 0, recentHighPriority: [], focusRecommendation: '' };
+  }
+
+  const now = Date.now();
+  let topEvent = recentEvents[0];
+  let topScore = 0;
+  const highPriority: Array<{ type: string; priority: number; age: number }> = [];
+
+  for (const event of recentEvents) {
+    const basePriority = EVENT_PRIORITY[event.type] ?? 3;
+    // 新鲜度衰减：每秒衰减 0.1，最低 0.5
+    const ageSeconds = (now - event.timestamp) / 1000;
+    const freshness = Math.max(0.5, 1 - ageSeconds * 0.01);
+    const score = basePriority * freshness;
+
+    if (score > topScore) {
+      topScore = score;
+      topEvent = event;
+    }
+
+    if (basePriority >= 6) {
+      highPriority.push({ type: event.type, priority: Math.round(score), age: Math.round(ageSeconds) });
+    }
+  }
+
+  // 生成焦点建议
+  let recommendation = '';
+  if (topScore >= 7) {
+    recommendation = `High-priority event: ${topEvent.type}. Consider addressing this immediately.`;
+  } else if (topScore >= 4) {
+    recommendation = `Moderate focus: ${topEvent.type}. Can be handled in background.`;
+  }
+
+  return {
+    topFocus: topEvent.type,
+    topPriority: Math.round(topScore),
+    recentHighPriority: highPriority.slice(0, 5),
+    focusRecommendation: recommendation,
+  };
+}

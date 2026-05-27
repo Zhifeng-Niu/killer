@@ -121,6 +121,13 @@ export class ConsciousnessStream {
   }
 
   /**
+   * 获取最近 N 条事件
+   */
+  getRecentEvents(count: number): ConsciousnessEvent[] {
+    return this.events.slice(-count);
+  }
+
+  /**
    * 获取当前意识状态
    */
   getCurrentState(): ConsciousnessEvent[] {

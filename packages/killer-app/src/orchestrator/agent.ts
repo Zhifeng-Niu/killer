@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -169,6 +169,9 @@ export class KillerAgent {
   // 元认知追踪
   private responseTimes: number[] = [];
   private recentTopics: string[] = [];
+
+  // 注意力优先级状态
+  private lastAttentionState: import('./background-tasks.js').AttentionState | null = null;
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -1616,6 +1619,16 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     }, 30 * 60 * 1000); // 30 min check
     this.backgroundTimers.push(checkinTimer);
 
+    // 注意力优先级扫描：每 2 分钟计算一次当前注意力状态
+    const attentionTimer = setInterval(() => {
+      try {
+        this.lastAttentionState = computeAttentionState(this.consciousness);
+      } catch {
+        // 注意力计算失败不影响主循环
+      }
+    }, 2 * 60 * 1000);
+    this.backgroundTimers.push(attentionTimer);
+
     // 关系里程碑：每次 processInput 后检查（在 processInput 中调用）
     // 不需要额外定时器，直接在 processInput 末尾调用
   }
@@ -2969,6 +2982,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         recentTopics: [...new Set(this.recentTopics)].slice(-5),
         repetitionDetected: this.detectResponseRepetition(),
       },
+      attentionState: this.lastAttentionState ?? undefined,
     });
   }
 

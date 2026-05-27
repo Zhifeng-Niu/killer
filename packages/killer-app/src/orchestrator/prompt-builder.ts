@@ -35,6 +35,13 @@ export interface PromptBuilderDeps {
     recentTopics: string[];
     repetitionDetected: boolean;
   };
+  /** 注意力优先级状态 */
+  attentionState?: {
+    topFocus: string;
+    topPriority: number;
+    recentHighPriority: Array<{ type: string; priority: number; age: number }>;
+    focusRecommendation: string;
+  };
 }
 
 /**
@@ -278,6 +285,19 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
     if (metaParts.length > 0) {
       parts.push(`\nMETA-COGNITION — Self-awareness: ${metaParts.join(' ')}`);
     }
+  }
+
+  // === 注意力优先级 ===
+  if (deps.attentionState && deps.attentionState.topPriority > 0) {
+    const att = deps.attentionState;
+    const attParts: string[] = [`Top focus: ${att.topFocus} (priority ${att.topPriority})`];
+    if (att.recentHighPriority.length > 0) {
+      attParts.push(`High-priority events: ${att.recentHighPriority.map(e => `${e.type}(${e.priority})`).join(', ')}`);
+    }
+    if (att.focusRecommendation) {
+      attParts.push(att.focusRecommendation);
+    }
+    parts.push(`\nATTENTION STATE — ${attParts.join('. ')}`);
   }
 
   // === 活跃计划（前额叶皮层） ===
