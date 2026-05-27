@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 1222
-total_waypoints: 5
+total_waypoints: 6
 consecutive_discards: 0
 ---
 
@@ -50,6 +50,7 @@ npm test 2>&1
 3. **Autonomous Goal + Experiment Loop** (waypoint 3): LLM-powered input analysis for goal extraction, Cerebellum mission auto-trigger on plan failure
 4. **Learning Task Delegation** (waypoint 4): Cell profiling with success rate tracking, LLM prompt injection of historical performance data
 5. **Cortex-Cerebellum Feedback Loop** (waypoint 5): Experiment results auto-feed Cortex skills, emotional arousal modulates risk tolerance, skill.learned consciousness event
+6. **Predictive Behavior Adaptation** (waypoint 6): User model drives output format, decision style, risk tolerance blending, predicted needs proactive context injection
 
 ### Dead Ends
 {Auto-updated by engine.}
