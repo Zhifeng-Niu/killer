@@ -2866,6 +2866,7 @@ export function scoreSectionRelevance(
     'RESTORED CONTEXT': 0.6,
     'STRATEGY COHERENCE': 0.7,
     'COGNITIVE STATE': 0.7,
+    'COMPOSITE RESPONSE STRATEGY': 0.75,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -3827,4 +3828,123 @@ export function generateCognitiveStateSummary(context: {
     : `Mode: ${behaviorMode} | Standard operation`;
 
   return { activeModules, behaviorMode, metrics, oneLiner };
+}
+
+/**
+ * 综合回复策略指导
+ *
+ * 基于 flow/phase/rhythm/emotion/expertise/behaviorMode/quality
+ * 生成具体的回复策略指导（tone、structure、detail_level）。
+ */
+export interface ResponseStrategyGuidance {
+  /** 语气指导 */
+  tone: string;
+  /** 结构建议 */
+  structure: string;
+  /** 细节级别 */
+  detailLevel: string;
+  /** 优先行动 */
+  priorityAction: string;
+  /** 格式化输出 */
+  formatted: string;
+}
+
+export function generateResponseStrategyGuidance(context: {
+  flowPattern?: string;
+  phase?: string;
+  rhythm?: string;
+  emotionalStrategy?: string;
+  behaviorMode?: string;
+  expertiseHint?: string;
+  lastQualityOverall?: number;
+  lastQualityTags?: string[];
+  healthScore?: number;
+}): ResponseStrategyGuidance | null {
+  const signals: string[] = [];
+
+  // 基于行为模式
+  let tone = 'balanced and helpful';
+  let structure = 'natural conversation';
+  let detailLevel = 'moderate';
+  let priorityAction = 'address the user\'s request';
+
+  const mode = context.behaviorMode ?? 'balanced';
+
+  if (mode === 'urgent') {
+    tone = 'calm and focused';
+    structure = 'numbered steps, skip preamble';
+    detailLevel = 'essential only';
+    priorityAction = 'resolve the immediate issue';
+    signals.push('urgent-mode');
+  } else if (mode === 'supportive') {
+    tone = 'warm and patient';
+    structure = 'acknowledge feelings, then solution';
+    detailLevel = 'thorough with empathy';
+    priorityAction = 'show understanding, then help';
+    signals.push('supportive-mode');
+  } else if (mode === 'focused') {
+    tone = 'precise and efficient';
+    structure = 'direct answer first, details after';
+    detailLevel = 'technical depth';
+    priorityAction = 'deliver the exact answer';
+    signals.push('focused-mode');
+  } else if (mode === 'exploratory') {
+    tone = 'curious and collaborative';
+    structure = 'offer options, discuss tradeoffs';
+    detailLevel = 'broad coverage';
+    priorityAction = 'explore possibilities together';
+    signals.push('exploratory-mode');
+  }
+
+  // 基于对话流
+  if (context.flowPattern === 'debug-diagnose-fix') {
+    structure = 'systematic: symptom → diagnosis → fix → verify';
+    priorityAction = 'follow the debug workflow';
+    signals.push('debug-flow');
+  } else if (context.flowPattern === 'explore-deepen-implement') {
+    structure = 'layered: concept → example → implementation';
+    signals.push('explore-flow');
+  }
+
+  // 基于质量反馈
+  if (context.lastQualityOverall !== undefined && context.lastQualityOverall < 0.4) {
+    tone = 'more direct, avoid repetition';
+    signals.push('quality-correction');
+    if (context.lastQualityTags?.includes('verbose')) {
+      detailLevel = 'concise, use bullet points';
+    }
+    if (context.lastQualityTags?.includes('off-topic')) {
+      priorityAction = 'stay focused on the user\'s actual question';
+    }
+  }
+
+  // 基于情感策略
+  if (context.emotionalStrategy) {
+    if (context.emotionalStrategy.includes('step-by-step')) {
+      structure = 'numbered steps with clear transitions';
+    }
+    if (context.emotionalStrategy.includes('concise')) {
+      detailLevel = 'brief, action-oriented';
+    }
+  }
+
+  // 基于专长
+  if (context.expertiseHint?.includes('freely')) {
+    detailLevel = 'technical, skip basics';
+    tone = 'peer-to-peer';
+  } else if (context.expertiseHint?.includes('explain')) {
+    detailLevel = 'include context and examples';
+  }
+
+  // 基于健康度
+  if (context.healthScore !== undefined && context.healthScore < 0.5) {
+    priorityAction = 'check if user needs a different approach';
+    tone = 'adaptive, try a new angle';
+    signals.push('low-health');
+  }
+
+  if (signals.length === 0) return null;
+
+  const formatted = `Tone: ${tone} | Structure: ${structure} | Detail: ${detailLevel} | Priority: ${priorityAction}`;
+  return { tone, structure, detailLevel, priorityAction, formatted };
 }

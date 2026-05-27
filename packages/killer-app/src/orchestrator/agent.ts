@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -3494,6 +3494,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       behaviorMode: this.lastBehaviorMode ?? undefined,
       strategyCoherence: this.computeStrategyCoherence(perception),
       cognitiveState: this.computeCognitiveState(perception),
+      responseStrategy: this.computeResponseStrategy(perception),
     });
   }
 
@@ -3795,6 +3796,29 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     const metricParts = Object.entries(summary.metrics).map(([k, v]) => `${k}=${v}`).join(' ');
     const tuning = `tuning=[em:${this.cognitiveTuning.emotionThreshold.toFixed(2)} rh:${this.cognitiveTuning.rhythmThreshold.toFixed(2)} fus:${this.cognitiveTuning.fusionAttentionThreshold.toFixed(2)}]`;
     return `${summary.oneLiner} | ${metricParts} | ${tuning}`;
+  }
+
+  private computeResponseStrategy(p?: { flow?: ReturnType<typeof predictConversationFlow>; phase?: { phase: string; confidence: number }; health?: ReturnType<typeof monitorConversationHealth>; rhythm?: ReturnType<typeof analyzeConversationRhythm>; expertise?: ReturnType<typeof buildUserExpertiseProfile> }): string | undefined {
+    const flow = p?.flow;
+    const rhythm = p?.rhythm;
+    const expertise = p?.expertise;
+    const es = this.persona.emotionalState.getState();
+    const strategy = es.intensity >= this.cognitiveTuning.emotionThreshold
+      ? mapEmotionToResponseStrategy({ valence: es.current.valence, arousal: es.current.arousal, intensity: es.intensity, primaryEmotion: es.primaryEmotion })
+      : undefined;
+
+    const guidance = generateResponseStrategyGuidance({
+      flowPattern: flow?.currentPattern,
+      phase: p?.phase?.phase,
+      rhythm: rhythm?.rhythm,
+      emotionalStrategy: strategy ? `Tone: ${strategy.toneHint} Length: ${strategy.lengthHint}` : undefined,
+      behaviorMode: this.lastBehaviorMode ?? undefined,
+      expertiseHint: expertise?.terminologyHint,
+      lastQualityOverall: this.lastQualityOverall,
+      lastQualityTags: this.lastQualityTags.length > 0 ? this.lastQualityTags : undefined,
+      healthScore: p?.health?.score,
+    });
+    return guidance?.formatted;
   }
 
   /**

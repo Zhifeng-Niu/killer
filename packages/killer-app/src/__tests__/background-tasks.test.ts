@@ -54,6 +54,7 @@ import {
   DEFAULT_COGNITIVE_TUNING,
   deduplicateSections,
   generateCognitiveStateSummary,
+  generateResponseStrategyGuidance,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -2640,6 +2641,49 @@ describe('background-tasks', () => {
       });
       expect(summary.activeModules).not.toContain('self-assessment');
       expect(summary.metrics['quality']).toBeUndefined();
+    });
+  });
+
+  describe('generateResponseStrategyGuidance', () => {
+    it('should return null for balanced mode with no signals', () => {
+      const guidance = generateResponseStrategyGuidance({ behaviorMode: 'balanced' });
+      expect(guidance).toBeNull();
+    });
+
+    it('should generate guidance for urgent mode', () => {
+      const guidance = generateResponseStrategyGuidance({ behaviorMode: 'urgent' });
+      expect(guidance).not.toBeNull();
+      expect(guidance!.tone).toContain('calm');
+      expect(guidance!.structure).toContain('numbered steps');
+      expect(guidance!.formatted).toContain('calm and focused');
+    });
+
+    it('should adjust for debug flow', () => {
+      const guidance = generateResponseStrategyGuidance({
+        behaviorMode: 'focused',
+        flowPattern: 'debug-diagnose-fix',
+      });
+      expect(guidance).not.toBeNull();
+      expect(guidance!.structure).toContain('systematic');
+    });
+
+    it('should correct for low quality', () => {
+      const guidance = generateResponseStrategyGuidance({
+        behaviorMode: 'balanced',
+        lastQualityOverall: 0.3,
+        lastQualityTags: ['verbose', 'off-topic'],
+      });
+      expect(guidance).not.toBeNull();
+      expect(guidance!.tone).toContain('direct');
+    });
+
+    it('should adapt for expert users', () => {
+      const guidance = generateResponseStrategyGuidance({
+        behaviorMode: 'focused',
+        expertiseHint: 'Use technical terms freely',
+      });
+      expect(guidance).not.toBeNull();
+      expect(guidance!.detailLevel).toContain('technical');
     });
   });
 });

@@ -108,6 +108,7 @@ export interface PromptBuilderDeps {
   strategyCoherence?: string;
   /** 认知状态总览 */
   cognitiveState?: string;
+  responseStrategy?: string;
 }
 
 /**
@@ -352,6 +353,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 认知状态总览 ===
   if (deps.cognitiveState) {
     parts.push(`\nCOGNITIVE STATE — ${deps.cognitiveState}`);
+  }
+
+  // === 回复策略指导 ===
+  if (deps.responseStrategy) {
+    parts.push(`\nCOMPOSITE RESPONSE STRATEGY — ${deps.responseStrategy}`);
   }
 
   // === 自主行动建议 ===
