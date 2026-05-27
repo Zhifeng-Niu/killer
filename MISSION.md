@@ -5,7 +5,7 @@ started_at: 2026-05-27T09:41:25Z
 expedition_branch: odyssey/20260527-174125
 baseline_metric: null
 best_metric: null
-total_waypoints: 3
+total_waypoints: 4
 consecutive_discards: 0
 ---
 
@@ -48,7 +48,8 @@ pnpm build 2>&1
 ### Wins
 1. **Waypoint 1**: self_read/self_modify/self_list tools + Cerebellum wired to agent. Build passes. 4 new autonomous capabilities.
 2. **Waypoint 2**: AutoMissionTool — agent creates self-improvement missions as tool calls. Full Cerebellum lifecycle.
-3. **Waypoint 3**: Limitation-aware tool chain loop — agent detects when it hits a capability wall and is guided to self-modify. Bundle ready (748KB).
+3. **Waypoint 3**: Limitation-aware tool chain loop — agent detects when it hits a capability wall and is guided to self-modify.
+4. **Waypoint 4**: Dark intelligence identity — system prompt declares agent as self-evolving, autonomous intelligence designer.
 
 ### Dead Ends
 {Auto-updated by engine.}
@@ -57,8 +58,16 @@ pnpm build 2>&1
 {Unexpected findings. Auto-updated in creative mode.}
 
 ## Current Best
-- metric: (baseline not yet measured)
-- Baseline: (pending)
+- metric: build passes
+- Baseline: build passes
+- 9 autonomous self-modification capabilities wired up
 
 ## Ideas Backlog
-{Auto-populated. Can be manually edited.}
+1. ~~Self-modification tools (self_read/self_modify/self_list)~~ → DONE (WP1)
+2. ~~Cerebellum integration (auto_mission)~~ → DONE (WP2)
+3. ~~Limitation-aware tool chain loop~~ → DONE (WP3)
+4. ~~Dark intelligence identity in system prompt~~ → DONE (WP4)
+5. Auto-restart after source code changes (watcher or in-process rebuild)
+6. Git-based checkpoint/rollback in Cerebellum experiments
+7. Dashboard integration for Cerebellum mission visualization
+8. Periodic self-reflection → auto-create missions during idle time
