@@ -166,6 +166,10 @@ export class KillerAgent {
   private lastDreamInsights: string[] = [];
   private lastDreamAt = 0;
 
+  // 元认知追踪
+  private responseTimes: number[] = [];
+  private recentTopics: string[] = [];
+
   constructor(config: AgentConfig) {
     this.config = config;
     this.sessionDir = config.sessionDir ?? path.join(os.homedir(), '.killer', 'sessions');
@@ -2208,6 +2212,12 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           const detectedTopics = this.detectTopics(innerCtx.input);
           this.persona.recordInteraction(responseTimeMs, estimatedSatisfaction, detectedTopics);
 
+          // 元认知追踪
+          this.responseTimes.push(responseTimeMs);
+          if (this.responseTimes.length > 20) this.responseTimes.shift();
+          this.recentTopics.push(...detectedTopics);
+          if (this.recentTopics.length > 30) this.recentTopics = this.recentTopics.slice(-30);
+
           // 4. 存储 episodic memory
           this.hippocampus.storeEpisode({
             title: innerCtx.input.slice(0, 50),
@@ -2761,6 +2771,17 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
   /**
    * 检测用户输入的话题
    */
+  /**
+   * 检测最近回复是否重复——连续 3 个助手回复的前 50 字符相似度
+   */
+  private detectResponseRepetition(): boolean {
+    const assistantMsgs = this.conversationHistory.filter(m => m.role === 'assistant');
+    if (assistantMsgs.length < 3) return false;
+    const last3 = assistantMsgs.slice(-3).map(m => m.content.slice(0, 50).toLowerCase().trim());
+    // 简单去重：如果 3 个回复开头完全相同
+    return last3[0] === last3[1] || last3[1] === last3[2];
+  }
+
   private detectTopics(input: string): string[] {
     const topics: string[] = [];
     const topicPatterns: Array<[RegExp, string]> = [
@@ -2868,6 +2889,14 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       isFirstBoot,
       activePlans: this.planExecutor.getActivePlans(),
       lastDreamInsights: this.lastDreamInsights,
+      conversationMeta: {
+        turnCount: this.conversationHistory.filter(m => m.role === 'user').length,
+        avgResponseTimeMs: this.responseTimes.length > 0
+          ? this.responseTimes.reduce((a, b) => a + b, 0) / this.responseTimes.length
+          : 0,
+        recentTopics: [...new Set(this.recentTopics)].slice(-5),
+        repetitionDetected: this.detectResponseRepetition(),
+      },
     });
   }
 

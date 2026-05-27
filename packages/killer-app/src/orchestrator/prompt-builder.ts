@@ -28,6 +28,13 @@ export interface PromptBuilderDeps {
   activePlans?: Plan[];
   /** 最近一次 dream cycle 的洞察 */
   lastDreamInsights?: string[];
+  /** 对话元认知统计 */
+  conversationMeta?: {
+    turnCount: number;
+    avgResponseTimeMs: number;
+    recentTopics: string[];
+    repetitionDetected: boolean;
+  };
 }
 
 /**
@@ -250,6 +257,27 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
       parts.push(`  - ${insight}`);
     }
     parts.push('Let these patterns inform your current responses without explicitly mentioning them unless relevant.');
+  }
+
+  // === 元认知自我意识 ===
+  if (deps.conversationMeta) {
+    const meta = deps.conversationMeta;
+    const metaParts: string[] = [];
+    if (meta.turnCount > 5) {
+      metaParts.push(`We've been talking for ${meta.turnCount} turns.`);
+    }
+    if (meta.repetitionDetected) {
+      metaParts.push('SELF-CHECK: You may be repeating yourself. Try a different angle or ask the user if they need something specific.');
+    }
+    if (meta.recentTopics.length > 2) {
+      metaParts.push(`Topics covered: ${meta.recentTopics.slice(-3).join(', ')}.`);
+    }
+    if (meta.avgResponseTimeMs > 0) {
+      metaParts.push(`Your avg response time: ${(meta.avgResponseTimeMs / 1000).toFixed(1)}s.`);
+    }
+    if (metaParts.length > 0) {
+      parts.push(`\nMETA-COGNITION — Self-awareness: ${metaParts.join(' ')}`);
+    }
   }
 
   // === 活跃计划（前额叶皮层） ===
