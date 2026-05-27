@@ -95,3 +95,13 @@ export type {
   ForgeResult,
   PromptFragment,
 } from './tool-forge.js';
+
+// Self-modification — agent reads and modifies its own source code
+export {
+  SelfReadTool,
+  SelfModifyTool,
+  SelfListTool,
+} from './self-modify-tools.js';
+export type {
+  SelfModifyDeps,
+} from './self-modify-tools.js';

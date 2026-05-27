@@ -46,6 +46,10 @@ import {
   SelfReflectTool,
   EssenceForge,
   EvolveEssenceTool,
+  SelfReadTool,
+  SelfModifyTool,
+  SelfListTool,
+  Cerebellum,
 } from '@killer/core';
 import { SensoryRouter, CLIChannel, OutputManager } from '../sensory/index.js';
 import { WebhookChannel } from '../sensory/webhook/index.js';
@@ -130,6 +134,7 @@ export class KillerAgent {
   pluginManager!: PluginManager;
   toolForge!: ToolForge;
   essenceForge!: EssenceForge;
+  cerebellum!: Cerebellum;
   readonly hooks: LifecycleHooks = new LifecycleHooks();
   readonly middleware: MiddlewarePipeline = new MiddlewarePipeline();
   readonly contextWindow: ContextWindowManager = new ContextWindowManager();
@@ -937,6 +942,27 @@ export class KillerAgent {
     // EssenceForge — 运行时本质演化（prompt 片段注入）
     this.essenceForge = new EssenceForge();
     this.tools.register(new EvolveEssenceTool(this.essenceForge));
+
+    // Self-modification — agent 能读取和修改自身源码
+    const projectRoot = path.resolve(process.cwd());
+    this.tools.register(new SelfReadTool(projectRoot));
+    this.tools.register(new SelfModifyTool({
+      projectRoot,
+      onBeforeModify: (filePath: string, _content: string) => {
+        this.logger.info(`SelfModify: modifying ${path.relative(projectRoot, filePath)}`);
+        return true;
+      },
+      onAfterModify: (filePath: string, _content: string) => {
+        this.hooks.emit('tool:result', {
+          tool: 'self_modify',
+          file: path.relative(projectRoot, filePath),
+        });
+      },
+    }));
+    this.tools.register(new SelfListTool(projectRoot));
+
+    // Cerebellum — 实验编排器（自主迭代引擎）
+    this.cerebellum = new Cerebellum();
   }
 
   /**
