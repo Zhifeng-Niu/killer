@@ -16,6 +16,7 @@ import {
   extractFactsFromMessage,
   storeExtractedFacts,
   detectGoalConflicts,
+  consolidateMemories,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -659,6 +660,111 @@ describe('background-tasks', () => {
 
       const stored = storeExtractedFacts(facts, mockHippocampus as never);
       expect(stored).toBe(5);
+    });
+  });
+
+  describe('consolidateMemories', () => {
+    it('should return empty when fewer than 3 episodes', () => {
+      const hippocampus = createMockHippocampus({
+        getRecentEpisodes: vi.fn().mockReturnValue([
+          { tags: ['coding'], emotionalWeight: 0.5 },
+          { tags: ['testing'], emotionalWeight: 0.3 },
+        ]),
+      });
+
+      const insights = consolidateMemories(hippocampus as never);
+      expect(insights.length).toBe(0);
+    });
+
+    it('should detect recurring tags appearing 3+ times', () => {
+      const episodes = [
+        { tags: ['coding', 'debugging'], emotionalWeight: 0.5 },
+        { tags: ['coding', 'testing'], emotionalWeight: 0.6 },
+        { tags: ['coding'], emotionalWeight: 0.4 },
+        { tags: ['debugging'], emotionalWeight: 0.3 },
+        { tags: ['coding', 'debugging'], emotionalWeight: 0.7 },
+      ];
+      const hippocampus = createMockHippocampus({
+        getRecentEpisodes: vi.fn().mockReturnValue(episodes),
+        getSemanticNodesByType: vi.fn().mockReturnValue([]),
+        addSemanticNode: vi.fn().mockReturnValue({ id: 'node-1' }),
+      });
+
+      const insights = consolidateMemories(hippocampus as never);
+      expect(insights.some(i => i.summary.includes('coding') && i.summary.includes('4 times'))).toBe(true);
+      expect(insights.some(i => i.summary.includes('debugging') && i.summary.includes('3 times'))).toBe(true);
+    });
+
+    it('should detect high-emotion themes', () => {
+      const episodes = [
+        { tags: ['deployment', 'stress'], emotionalWeight: 0.8 },
+        { tags: ['deployment', 'fix'], emotionalWeight: 0.9 },
+        { tags: ['coding'], emotionalWeight: 0.3 },
+        { tags: ['deployment'], emotionalWeight: 0.75 },
+      ];
+      const hippocampus = createMockHippocampus({
+        getRecentEpisodes: vi.fn().mockReturnValue(episodes),
+        getSemanticNodesByType: vi.fn().mockReturnValue([]),
+        addSemanticNode: vi.fn().mockReturnValue({ id: 'node-1' }),
+      });
+
+      const insights = consolidateMemories(hippocampus as never);
+      expect(insights.some(i => i.tags.includes('emotional-pattern'))).toBe(true);
+    });
+
+    it('should store insights as semantic nodes with dedup', () => {
+      const episodes = [
+        { tags: ['coding'], emotionalWeight: 0.5 },
+        { tags: ['coding'], emotionalWeight: 0.5 },
+        { tags: ['coding'], emotionalWeight: 0.5 },
+      ];
+      const hippocampus = createMockHippocampus({
+        getRecentEpisodes: vi.fn().mockReturnValue(episodes),
+        getSemanticNodesByType: vi.fn().mockReturnValue([]),
+        addSemanticNode: vi.fn().mockReturnValue({ id: 'node-1' }),
+      });
+
+      consolidateMemories(hippocampus as never);
+      expect(hippocampus.addSemanticNode).toHaveBeenCalled();
+      const callArgs = (hippocampus.addSemanticNode as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(callArgs.type).toBe('concept');
+      expect(callArgs.label).toBe('consolidated-insight');
+    });
+
+    it('should skip duplicate insights already in semantic memory', () => {
+      const episodes = [
+        { tags: ['coding'], emotionalWeight: 0.5 },
+        { tags: ['coding'], emotionalWeight: 0.5 },
+        { tags: ['coding'], emotionalWeight: 0.5 },
+      ];
+      const summary = 'Recurring topic: "coding" appeared 3 times recently (has some friction)';
+      const hippocampus = createMockHippocampus({
+        getRecentEpisodes: vi.fn().mockReturnValue(episodes),
+        getSemanticNodesByType: vi.fn().mockReturnValue([
+          { label: 'consolidated-insight', properties: { summary } },
+        ]),
+        addSemanticNode: vi.fn().mockReturnValue({ id: 'node-1' }),
+      });
+
+      consolidateMemories(hippocampus as never);
+      expect(hippocampus.addSemanticNode).not.toHaveBeenCalled();
+    });
+
+    it('should store at most 3 insights', () => {
+      const episodes = Array.from({ length: 15 }, (_, i) => ({
+        tags: [`tag-${i % 5}`],
+        emotionalWeight: 0.5,
+      }));
+      // All 5 tags appear exactly 3 times
+      const hippocampus = createMockHippocampus({
+        getRecentEpisodes: vi.fn().mockReturnValue(episodes),
+        getSemanticNodesByType: vi.fn().mockReturnValue([]),
+        addSemanticNode: vi.fn().mockReturnValue({ id: 'node-1' }),
+      });
+
+      const insights = consolidateMemories(hippocampus as never);
+      // Function stores at most 3 insights
+      expect((hippocampus.addSemanticNode as ReturnType<typeof vi.fn>).mock.calls.length).toBeLessThanOrEqual(3);
     });
   });
 

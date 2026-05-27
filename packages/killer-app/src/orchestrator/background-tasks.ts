@@ -940,3 +940,103 @@ export function detectGoalConflicts(
 
   return conflicts;
 }
+
+// ============================================================
+// Idle-Time Memory Consolidation
+// ============================================================
+
+/**
+ * 从近期记忆中提炼的洞察
+ */
+export interface ConsolidatedInsight {
+  /** 洞察摘要 */
+  summary: string;
+  /** 相关标签 */
+  tags: string[];
+  /** 来源记忆数量 */
+  sourceCount: number;
+}
+
+/**
+ * 空闲时记忆整合 — 无需 LLM 的规则式洞察提炼
+ *
+ * 扫描近期情景记忆，识别重复出现的标签、高频情感主题、
+ * 以及行为模式，将其浓缩为语义节点长期存储。
+ */
+export function consolidateMemories(
+  hippocampus: HippocampusEngine,
+): ConsolidatedInsight[] {
+  const insights: ConsolidatedInsight[] = [];
+
+  // 1. 获取近期情景记忆
+  const recentEpisodes = hippocampus.getRecentEpisodes(20);
+  if (recentEpisodes.length < 3) return insights;
+
+  // 2. 统计标签频率
+  const tagCounts = new Map<string, number>();
+  const tagEmotions = new Map<string, { total: number; positive: number }>();
+
+  for (const ep of recentEpisodes) {
+    for (const tag of ep.tags) {
+      tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+      const current = tagEmotions.get(tag) ?? { total: 0, positive: 0 };
+      current.total++;
+      if (ep.emotionalWeight > 0.5) current.positive++;
+      tagEmotions.set(tag, current);
+    }
+  }
+
+  // 3. 高频标签 → 洞察（出现 3+ 次）
+  for (const [tag, count] of tagCounts) {
+    if (count >= 3) {
+      const emotionData = tagEmotions.get(tag);
+      const sentimentHint = emotionData && emotionData.positive > emotionData.total / 2
+        ? '(mostly positive associations)'
+        : emotionData && emotionData.positive < emotionData.total / 3
+          ? '(has some friction)'
+          : '';
+
+      insights.push({
+        summary: `Recurring topic: "${tag}" appeared ${count} times recently ${sentimentHint}`,
+        tags: [tag, 'consolidated'],
+        sourceCount: count,
+      });
+    }
+  }
+
+  // 4. 高情感权重记忆聚合
+  const highEmotionEpisodes = recentEpisodes.filter(ep => ep.emotionalWeight > 0.7);
+  if (highEmotionEpisodes.length >= 2) {
+    const themes = [...new Set(highEmotionEpisodes.flatMap(ep => ep.tags))].slice(0, 3);
+    if (themes.length > 0) {
+      insights.push({
+        summary: `Emotionally significant themes: ${themes.join(', ')}`,
+        tags: ['emotional-pattern', ...themes],
+        sourceCount: highEmotionEpisodes.length,
+      });
+    }
+  }
+
+  // 5. 存储洞察到语义记忆（去重）
+  for (const insight of insights.slice(0, 3)) {
+    const existing = hippocampus.getSemanticNodesByType('concept');
+    const isDuplicate = existing.some(
+      n => n.label === 'consolidated-insight' && n.properties.summary === insight.summary,
+    );
+    if (!isDuplicate) {
+      hippocampus.addSemanticNode({
+        type: 'concept',
+        label: 'consolidated-insight',
+        properties: {
+          summary: insight.summary,
+          tags: insight.tags,
+          sourceCount: insight.sourceCount,
+          consolidatedAt: Date.now(),
+        },
+        strength: Math.min(1, insight.sourceCount / 5),
+      });
+    }
+  }
+
+  return insights;
+}

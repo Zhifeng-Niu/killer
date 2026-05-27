@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 1969
-total_waypoints: 24
+total_waypoints: 25
 consecutive_discards: 0
 ---
 
@@ -68,6 +68,7 @@ npm test 2>&1
 21. **Semantic Memory Auto-Extraction** (waypoint 22): Rule-based extraction of preferences, skills, project names, deadlines, and user names from conversation without LLM calls — facts auto-stored in hippocampus semantic memory with deduplication
 22. **Cross-Goal Conflict Detection** (waypoint 23): Jaccard similarity + keyword contradiction patterns detect duplicate/overlapping/contradictory goals — conflicts injected into system prompt for LLM to coordinate or merge
 23. **Tool Chain Templates** (waypoint 24): Predefined multi-step tool call sequences for debug/feature/refactor/research cycles — LLM executes proven workflows instead of improvising each step
+24. **Idle-Time Memory Consolidation** (waypoint 25): Rule-based consolidation scans recent episodic memories for recurring tags (3+ occurrences) and high-emotion patterns, stores condensed insights as semantic nodes with deduplication — runs during idle checkin timer
 
 ### Dead Ends
 {Auto-updated by engine.}
