@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -172,6 +172,8 @@ export class KillerAgent {
   // 元认知追踪
   private responseTimes: number[] = [];
   private recentTopics: string[] = [];
+  private lastInteractionTimestamp: number | null = null;
+  private previousInteractionTimestamp: number | null = null;
 
   // 注意力优先级状态
   private lastAttentionState: import('./background-tasks.js').AttentionState | null = null;
@@ -2460,7 +2462,9 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     onStatus?: (status: string) => void,
   ): Promise<{ content: string }> {
     // 标记活跃时间，用于后台任务判断空闲
+    this.previousInteractionTimestamp = this.lastInteractionTimestamp;
     this.lastActivityAt = Date.now();
+    this.lastInteractionTimestamp = Date.now();
 
     // 检测用户消息中的承诺/计划/待办（用于后续提醒）
     detectCommitments(content);
@@ -3366,6 +3370,11 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       })(),
       goalConflicts: this.goalConflicts.length > 0 ? [...this.goalConflicts] : undefined,
       toolFailurePatterns: getFailurePatterns().length > 0 ? getFailurePatterns() : undefined,
+      temporalContext: (() => {
+        const eventNodes = this.hippocampus.getSemanticNodesByType('event');
+        const ctx = generateTemporalContext(this.previousInteractionTimestamp, eventNodes);
+        return ctx.formatted || undefined;
+      })(),
     });
   }
 

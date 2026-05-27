@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 1969
-total_waypoints: 36
+total_waypoints: 37
 consecutive_discards: 0
 ---
 
@@ -80,6 +80,7 @@ npm test 2>&1
 33. **Dynamic Prompt Section Priority** (waypoint 34): Prompt pruning now adjusts section priority based on conversational phase — deep-work preserves plans/tools, exploration preserves behaviors/facts, wrap-up preserves goals/metrics, review preserves tool performance
 34. **Execution Progress Reporter** (waypoint 35): Generate structured progress reports for multi-step plan execution with ASCII progress bar, completion percentage, current step status, and remaining step count
 35. **Temporal Context Injection** (waypoint 36): Time-of-day detection (6 periods), time-since-last-interaction formatting, deadline extraction from semantic memory with urgency assessment (low/normal/high), timezone-safe local date comparison
+36. **Temporal Context in System Prompt** (waypoint 37): Wired generateTemporalContext() into prompt builder — time-of-day, interaction gap, and deadline urgency now injected as TEMPORAL CONTEXT section in system prompt, using hippocampus event nodes for deadline detection
 
 ### Dead Ends
 {Auto-updated by engine.}

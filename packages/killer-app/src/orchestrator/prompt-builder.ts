@@ -71,6 +71,8 @@ export interface PromptBuilderDeps {
   goalConflicts?: Array<{ type: string; description: string; suggestion: string }>;
   /** 工具失败模式 */
   toolFailurePatterns?: string[];
+  /** 时间上下文（时段、交互间隔、截止日期） */
+  temporalContext?: string;
 }
 
 /**
@@ -235,6 +237,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   const emotionalFragment = deps.persona.emotionalState.getEmotionalPromptFragment();
   if (emotionalFragment) {
     parts.push(`\n${emotionalFragment}`);
+  }
+
+  // === 时间上下文 ===
+  if (deps.temporalContext) {
+    parts.push(`\nTEMPORAL CONTEXT — ${deps.temporalContext}`);
   }
 
   // === 生命叙事 ===
