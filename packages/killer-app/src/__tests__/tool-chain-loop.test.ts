@@ -265,14 +265,12 @@ describe('Tool Chain Loop', () => {
   });
 
   it('should self-converge when LLM stops calling tools', async () => {
-    // LLM calls tools 3 times then naturally converges
+    // Two-phase approach: Phase 1 text call + tool execution + Phase 2 follow-up
     const toolResponse = '```tool\n{"tool":"loop_tool","params":{}}\n```';
 
     llm = new MultiTurnMockLLM([
-      toolResponse,  // round 1
-      toolResponse,  // round 2
-      toolResponse,  // round 3
-      'I have gathered enough information. Here is my final answer.',
+      toolResponse,  // Phase 1: text response with tool call
+      'I have gathered enough information. Here is my final answer.',  // Phase 2: follow-up after tool results
     ]);
 
     agent = new KillerAgent({
@@ -291,8 +289,8 @@ describe('Tool Chain Loop', () => {
     const result = await agent.processInput('Research this topic');
 
     expect(result.content).toBeTruthy();
-    // 3 tool calls + 1 final response = 4 LLM calls
-    expect(llm.callCount).toBe(4);
+    // Two-phase: Phase 1 (text + tool) + Phase 2 (follow-up) = 2 LLM calls
+    expect(llm.callCount).toBe(2);
   });
 
   it('should skip unknown tools silently without breaking chain', async () => {

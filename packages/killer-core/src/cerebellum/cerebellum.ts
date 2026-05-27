@@ -20,6 +20,7 @@ import type {
   VerificationResult,
 } from './types.js';
 import { DEFAULT_MISSION_CONFIG } from './types.js';
+import type { CommandExecutor } from './command-executor.js';
 import { Compass } from './compass.js';
 import { Evaluator } from './evaluator.js';
 import { ExperimentTracker } from './experiment-tracker.js';
@@ -38,14 +39,16 @@ export class Cerebellum {
   private readonly compass: Compass;
   private readonly tracker: ExperimentTracker;
   private readonly evaluators: Map<string, Evaluator> = new Map();
+  private readonly executor: CommandExecutor | null;
 
   private activeMission: Mission | null = null;
   private activeExperiment: Experiment | null = null;
   private waypointCounter: number = 0;
 
-  constructor() {
+  constructor(executor?: CommandExecutor) {
     this.compass = new Compass();
     this.tracker = new ExperimentTracker();
+    this.executor = executor ?? null;
   }
 
   // ── Mission Management ──
@@ -82,6 +85,7 @@ export class Cerebellum {
         mission.metrics,
         mission.guard?.command,
         mission.guard?.timeout,
+        this.executor ?? undefined,
       ),
     );
 

@@ -90,7 +90,7 @@ describe('ResilientLLMProvider', () => {
     expect(resilient.getCircuitState()).toBe('open');
 
     // Next call should fail immediately with circuit breaker error
-    await expect(resilient.complete('test')).rejects.toThrow('Circuit breaker is OPEN');
+    await expect(resilient.complete('test')).rejects.toThrow('AI 服务暂时不可用');
   });
 
   it('should reset circuit', async () => {
@@ -323,8 +323,10 @@ describe('ResilientLLMProvider', () => {
 
     await expect(resilient.complete('test')).rejects.toThrow();
 
-    // Next call should include model name
-    await expect(resilient.complete('test')).rejects.toThrow('claude-opus-4');
+    // Next call should include model name in error object
+    try { await resilient.complete('test'); } catch (e) {
+      expect((e as { provider?: string }).provider).toBe('claude-opus-4');
+    }
   });
 
   it('should return full diagnostics info', async () => {

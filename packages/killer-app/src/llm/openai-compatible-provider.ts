@@ -10,8 +10,10 @@
  * - 支持 streaming (SSE)
  */
 
-import type { LLMProvider, LLMCompletion } from '@killer/core';
+import type { LLMProvider, LLMCompletion, LLMToolCallCompletion, ToolDefinition, ToolCall, ChatMessage } from '@killer/core';
 import type { LLMProviderConfig } from './types.js';
+
+// ChatMessage is now imported from @killer/core
 
 /**
  * 预配置的服务商预设
@@ -32,6 +34,10 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
   anthropicBaseUrl?: string;
   /** Anthropic 协议下可用的模型（可能与 OpenAI 协议不同） */
   anthropicModels?: string[];
+  /** API key 格式前缀（用于自动检测） */
+  keyPrefix?: string;
+  /** 获取 API key 的帮助链接 */
+  helpUrl?: string;
 }> = {
   minimax: {
     baseUrl: 'https://api.minimaxi.com/v1/chat/completions',
@@ -39,6 +45,7 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     models: ['MiniMax-M2.7', 'MiniMax-M2.7-highspeed'],
     envKey: 'MINIMAX_API_KEY',
     description: 'MiniMax (海螺 AI)',
+    helpUrl: 'https://platform.minimaxi.com/',
     anthropicBaseUrl: 'https://api.minimaxi.com/anthropic/v1/messages',
     anthropicModels: ['MiniMax-M2.7', 'MiniMax-M2.7-highspeed'],
   },
@@ -48,6 +55,7 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     models: ['glm-5.1', 'glm-5', 'glm-4.7', 'glm-4.5-air'],
     envKey: 'GLM_API_KEY',
     description: 'GLM / 智谱 AI',
+    helpUrl: 'https://open.bigmodel.cn/',
     anthropicBaseUrl: 'https://open.bigmodel.cn/api/anthropic/v1/messages',
     anthropicModels: ['glm-5.1', 'glm-5', 'glm-4.7', 'glm-4.5-air'],
   },
@@ -57,6 +65,8 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     models: ['deepseek-chat', 'deepseek-reasoner'],
     envKey: 'DEEPSEEK_API_KEY',
     description: 'DeepSeek',
+    keyPrefix: 'sk-',
+    helpUrl: 'https://platform.deepseek.com/api_keys',
   },
   qwen: {
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
@@ -64,6 +74,7 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     models: ['qwen-max', 'qwen-plus', 'qwen-turbo'],
     envKey: 'DASHSCOPE_API_KEY',
     description: 'Qwen / 通义千问 (阿里云)',
+    helpUrl: 'https://dashscope.console.aliyun.com/',
   },
   moonshot: {
     baseUrl: 'https://api.moonshot.cn/v1/chat/completions',
@@ -71,6 +82,7 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
     envKey: 'MOONSHOT_API_KEY',
     description: 'Moonshot / Kimi (月之暗面)',
+    helpUrl: 'https://platform.moonshot.cn/',
   },
   baichuan: {
     baseUrl: 'https://api.baichuan-ai.com/v1/chat/completions',
@@ -92,6 +104,7 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     models: ['deepseek-ai/DeepSeek-V3', 'deepseek-ai/DeepSeek-V3.2', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen2.5-72B-Instruct'],
     envKey: 'SILICONFLOW_API_KEY',
     description: 'SiliconFlow / 硅基流动',
+    helpUrl: 'https://cloud.siliconflow.cn/',
   },
   volcengine: {
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
@@ -106,21 +119,18 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     models: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'],
     envKey: 'GEMINI_API_KEY',
     description: 'Google Gemini',
+    helpUrl: 'https://aistudio.google.com/apikey',
   },
 };
 
 const DEFAULT_MAX_TOKENS = 4096;
 
 /**
- * OpenAI 消息格式
+ * OpenAI 消息格式 — 已统一使用 @killer/core 的 ChatMessage
  */
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
 
 interface ChatChoice {
-  message: { content: string };
+  message: { content: string; tool_calls?: RawToolCall[] };
   finish_reason: string;
 }
 
@@ -130,6 +140,20 @@ interface ChatUsage {
 }
 
 interface ChatResponse {
+  choices: ChatChoice[];
+  model: string;
+  usage?: ChatUsage;
+}
+
+/** API 返回的原始 tool_call 格式 */
+interface RawToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
+
+/** 带工具调用的 API 响应 */
+interface ToolCallChatResponse {
   choices: ChatChoice[];
   model: string;
   usage?: ChatUsage;
@@ -168,8 +192,9 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     if (!response.ok) {
       const err = (await response.json().catch(() => ({}))) as ErrorResponse;
+      const friendly = formatProviderError(this.providerName, response.status);
       throw new Error(
-        `${this.providerName} API error ${response.status}: ${err.error?.message || response.statusText}`,
+        `${friendly}\n原始错误: ${err.error?.message || response.statusText}`,
       );
     }
 
@@ -193,7 +218,6 @@ export class OpenAICompatibleProvider implements LLMProvider {
     const response = await this.doRequest(messages, true);
 
     if (!response.ok) {
-      // 回退到 complete
       const completion = await this.complete(prompt, context);
       yield completion.content;
       return;
@@ -247,6 +271,103 @@ export class OpenAICompatibleProvider implements LLMProvider {
     this.model = model;
   }
 
+  /**
+   * 使用原生 function calling 的完成请求
+   *
+   * 发送 messages + tools 参数，解析 tool_calls 响应。
+   * 这是 tool chain loop 的核心——模型返回结构化的工具调用，
+   * 而不是从文本中 regex 挖掘。
+   */
+  async completeWithTools(
+    messages: ChatMessage[],
+    tools: ToolDefinition[],
+  ): Promise<LLMToolCallCompletion> {
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${this.apiKey}`,
+      'Content-Type': 'application/json',
+    };
+
+    const body: Record<string, unknown> = {
+      model: this.model,
+      max_tokens: this.maxTokens,
+      messages,
+      tools,
+      tool_choice: 'auto',
+    };
+
+    let response: Response;
+    try {
+      response = await fetch(this.baseUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      throw new Error(
+        `${this.providerName} request failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    // 429 重试一次
+    if (response.status === 429) {
+      await new Promise(r => setTimeout(r, 1000));
+      try {
+        response = await fetch(this.baseUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+        });
+      } catch (error) {
+        throw new Error(
+          `${this.providerName} retry failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({})) as ErrorResponse;
+      const friendly = formatProviderError(this.providerName, response.status);
+      throw new Error(
+        `${friendly}\n原始错误: ${err.error?.message || response.statusText}`,
+      );
+    }
+
+    const data = await response.json() as ToolCallChatResponse;
+
+    const choice = data.choices[0];
+    if (!choice) {
+      return { content: '', model: data.model || this.model, finishReason: 'stop' };
+    }
+
+    const content = choice.message?.content || '';
+    const toolCalls = choice.message?.tool_calls?.map((tc: RawToolCall): ToolCall => ({
+      id: tc.id,
+      type: 'function',
+      function: {
+        name: tc.function.name,
+        arguments: tc.function.arguments,
+      },
+    }));
+
+    const finishReason = choice.finish_reason === 'tool_calls'
+      ? 'tool_calls' as const
+      : choice.finish_reason === 'length'
+        ? 'length' as const
+        : 'stop' as const;
+
+    const tokensUsed = data.usage
+      ? data.usage.prompt_tokens + data.usage.completion_tokens
+      : undefined;
+
+    return {
+      content,
+      model: data.model || this.model,
+      tokensUsed,
+      finishReason,
+      ...(toolCalls && toolCalls.length > 0 && { toolCalls }),
+    };
+  }
+
   private buildMessages(prompt: string, context?: string): ChatMessage[] {
     const messages: ChatMessage[] = [];
     if (context) messages.push({ role: 'system', content: context });
@@ -297,5 +418,33 @@ export class OpenAICompatibleProvider implements LLMProvider {
     }
 
     return response;
+  }
+}
+
+/**
+ * 格式化 Provider 特定的友好错误信息
+ *
+ * 将 HTTP 状态码转换为用户可读的提示，包含获取新 key 的链接。
+ */
+export function formatProviderError(
+  provider: string,
+  status: number,
+  _message?: string,
+): string {
+  const preset = OPENAI_COMPATIBLE_PROVIDERS[provider];
+  const helpUrl = preset?.helpUrl;
+  const helpSuffix = helpUrl ? `\n获取新 key: ${helpUrl}` : '';
+
+  switch (status) {
+    case 401:
+      return `API key 无效或已过期。${helpSuffix}`;
+    case 403:
+      return `无权访问该模型。请检查账户权限和套餐。${helpSuffix}`;
+    case 429:
+      return `请求频率超限，请等待 30 秒后重试。如持续出现，检查账户配额。`;
+    case 500: case 502: case 503:
+      return `${preset?.description ?? provider} 暂时不可用，请稍后重试。`;
+    default:
+      return `${preset?.description ?? provider} 请求失败 (${status})。${helpSuffix}`;
   }
 }

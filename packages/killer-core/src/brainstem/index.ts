@@ -26,7 +26,12 @@ export type {
 
 export type {
   LLMCompletion,
+  LLMToolCallCompletion,
   LLMProvider,
+  ToolDefinition,
+  ToolCall,
+  ToolResultMessage,
+  ChatMessage,
 } from './llm.js';
 
 export type {

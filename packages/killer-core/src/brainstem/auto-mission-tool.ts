@@ -87,6 +87,13 @@ export class AutoMissionTool implements Tool {
     const mission = this.cerebellum.createMission({
       goal,
       orientation: orientation ?? 'engineer',
+      guard: 'pnpm build 2>&1',
+      metrics: [{
+        name: 'type_error_count',
+        unit: 'errors',
+        measureCommand: 'npx tsc --noEmit 2>&1 | grep -c "error TS" || echo 0',
+        direction: 'lower',
+      }],
     });
 
     this.cerebellum.activateMission(mission);
@@ -98,7 +105,9 @@ export class AutoMissionTool implements Tool {
         missionId: mission.id,
         goal: mission.goal,
         orientation: mission.orientation,
-        message: `Mission created: "${goal}". Use "waypoint" to start experimenting.`,
+        guard: 'pnpm build',
+        metric: 'type_error_count (lower is better)',
+        message: `Mission created: "${goal}". Build verification enabled. Use "waypoint" to start experimenting.`,
       },
     };
   }

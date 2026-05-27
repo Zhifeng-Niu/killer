@@ -11,27 +11,73 @@ export interface LLMCompletion {
   content: string;
   model: string;
   tokensUsed?: number;
-  finishReason?: 'stop' | 'length' | 'error';
+  finishReason?: 'stop' | 'length' | 'tool_calls' | 'error';
 }
+
+/**
+ * 工具定义（OpenAI function calling 格式）
+ */
+export interface ToolDefinition {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters?: Record<string, unknown>;
+  };
+}
+
+/**
+ * LLM 请求中的工具调用
+ */
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+/**
+ * 包含工具调用的完成结果
+ */
+export interface LLMToolCallCompletion extends LLMCompletion {
+  toolCalls?: ToolCall[];
+}
+
+/**
+ * 工具结果消息（role: "tool"）
+ */
+export interface ToolResultMessage {
+  role: 'tool';
+  toolCallId: string;
+  content: string;
+}
+
+/**
+ * 聊天消息（支持多角色）
+ */
+export type ChatMessage =
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string }
+  | { role: 'assistant'; content: string; tool_calls?: ToolCall[] }
+  | ToolResultMessage;
 
 /**
  * LLM Provider 接口
  */
 export interface LLMProvider {
-  /**
-   * 同步完成
-   */
   complete(prompt: string, context?: string): Promise<LLMCompletion>;
-
-  /**
-   * 流式完成
-   */
   stream(prompt: string, context?: string): AsyncIterable<string>;
+  getModel(): string;
 
   /**
-   * 获取模型名称
+   * 使用原生 function calling 的完成请求
+   *
+   * 支持 OpenAI-compatible providers 的 tools 参数。
+   * 返回结果可能包含 toolCalls，调用者应循环处理。
    */
-  getModel(): string;
+  completeWithTools?(messages: ChatMessage[], tools: ToolDefinition[]): Promise<LLMToolCallCompletion>;
 }
 
 /**

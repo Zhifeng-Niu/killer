@@ -51,7 +51,11 @@ import {
   SelfListTool,
   Cerebellum,
   AutoMissionTool,
+  type ToolDefinition,
+  type ChatMessage,
+  type ToolCall,
 } from '@killer/core';
+import { ShellExecutor } from './shell-executor.js';
 import { SensoryRouter, CLIChannel, OutputManager } from '../sensory/index.js';
 import { WebhookChannel } from '../sensory/webhook/index.js';
 import type {
@@ -962,8 +966,9 @@ export class KillerAgent {
     }));
     this.tools.register(new SelfListTool(projectRoot));
 
-    // Cerebellum — 实验编排器（自主迭代引擎）
-    this.cerebellum = new Cerebellum();
+    // Cerebellum — 实验编排器（自主迭代引擎）+ ShellExecutor 使验证管线能真正执行命令
+    const shellExecutor = new ShellExecutor(projectRoot);
+    this.cerebellum = new Cerebellum(shellExecutor);
     this.tools.register(new AutoMissionTool({
       cerebellum: this.cerebellum,
       onMissionCreated: (goal: string, missionId: string) => {
@@ -1822,11 +1827,13 @@ export class KillerAgent {
    * 2. 将输入注入 brainstem 做后台记忆/演化处理
    *
    * @param onToken 可选的流式回调，每收到一个 token 就调用
+   * @param onStatus 可选的状态回调，报告 agent 当前动作（不混入消息内容）
    */
   async processInput(
     content: string,
     _channel: string = 'cli',
-    onToken?: (token: string) => void
+    onToken?: (token: string) => void,
+    onStatus?: (status: string) => void,
   ): Promise<{ content: string }> {
     // Concurrency guard: queue if already processing
     if (this.processing) {
@@ -1837,7 +1844,7 @@ export class KillerAgent {
     this.processing = true;
 
     try {
-      return await this.processInputCore(content, _channel, onToken);
+      return await this.processInputCore(content, _channel, onToken, onStatus);
     } finally {
       this.processing = false;
       // Drain queue — process next queued input
@@ -1853,7 +1860,8 @@ export class KillerAgent {
   private async processInputCore(
     content: string,
     _channel: string = 'cli',
-    onToken?: (token: string) => void
+    onToken?: (token: string) => void,
+    onStatus?: (status: string) => void,
   ): Promise<{ content: string }> {
     // 标记活跃时间，用于后台任务判断空闲
     this.lastActivityAt = Date.now();
@@ -1910,7 +1918,8 @@ export class KillerAgent {
           const stopTimer = metrics.llmLatency.startTimer();
           metrics.llmCalls.inc();
 
-          response = await this.callLLMWithRetry(innerCtx.input, systemContext, onToken);
+          // 尝试原生 function calling（支持工具链自主循环）
+          response = await this.runNativeToolLoop(innerCtx.input, systemContext, onToken, onStatus);
           stopTimer();
         } catch (llmError) {
           metrics.llmErrors.inc();
@@ -1926,15 +1935,12 @@ export class KillerAgent {
           this.logger.warn(`LLM fallback triggered: ${errMsg}`);
         }
 
-        // 记录到对话历史
+        // 记录到对话历史（工具链循环已在 runNativeToolLoop 中完成）
         this.conversationHistory.push({ role: 'user', content: innerCtx.input });
         this.conversationHistory.push({ role: 'assistant', content: response });
         if (this.conversationHistory.length > this.maxConversationTurns * 2) {
           this.conversationHistory = this.conversationHistory.slice(-this.maxConversationTurns * 2);
         }
-
-        // 检测并执行 LLM 响应中的工具调用（支持多轮推理链）
-        response = await this.runToolChainLoop(response, systemContext, onToken);
 
         // 注入到 brainstem 做后台处理
         this.injectInput(input);
@@ -2135,80 +2141,236 @@ export class KillerAgent {
   }
 
   /**
-   * 执行工具链推理循环
+   * 原生 Function Calling 工具链循环
    *
-   * 无硬性上限 — agent 自我收敛。
-   * 当 LLM 不再调用工具时自然终止（即 LLM 认为任务已完成，
-   * 选择直接回复用户而非继续使用工具）。
+   * 使用 LLM 原生的 tools/functions API 进行工具调用：
+   * 1. 构建 messages（system + history + user）+ tools 定义
+   * 2. 调用 completeWithTools → 模型返回 tool_calls 或文本
+   * 3. 执行工具 → 追加 tool role 消息 → 继续调用
+   * 4. 模型不再调用工具时返回最终文本响应
+   *
+   * 这彻底解决了"TOOL完就会卡"的问题：
+   * - 不依赖 regex 解析文本中的工具调用
+   * - 不依赖 continuation prompt 让 LLM 继续输出工具调用
+   * - 使用 API 原生的 finish_reason: "tool_calls" 信号
    */
-  private async runToolChainLoop(
-    initialResponse: string,
+  private async runNativeToolLoop(
+    userInput: string,
     systemContext: string,
     onToken?: (token: string) => void,
+    onStatus?: (status: string) => void,
   ): Promise<string> {
-    let currentResponse = initialResponse;
-    let round = 0;
+    // === 阶段 1：普通文本调用（流式输出给用户）===
+    // 先不加 tools 参数，让模型自然响应。
+    // 避免模型对所有输入都强制调用工具（DeepSeek 的已知行为）。
+    let response = await this.callLLMWithRetry(userInput, systemContext, onToken);
 
-    while (true) {
-      const toolResult = await this.executeToolCallsFromResponse(currentResponse, onToken);
-      currentResponse = toolResult.response;
+    // 解析文本中的工具调用标记（DSML/inline/code block）
+    const toolResult = await this.executeToolCallsFromResponse(response);
+    response = toolResult.response;
 
-      // LLM 未调用任何工具 = 自然收敛，任务完成
-      if (!toolResult.toolsExecuted) break;
+    if (!toolResult.toolsExecuted) {
+      // 纯文本响应，无工具调用 — 直接返回
+      return response;
+    }
+
+    // === 阶段 2：有工具调用 — 进入原生 function calling 循环 ===
+    const provider = this.config.llm;
+    const supportsNative = 'completeWithTools' in provider
+      && typeof (provider as any).completeWithTools === 'function';
+
+    if (!supportsNative) {
+      // Provider 不支持原生 function calling — 用文本 follow-up 获取最终响应
+      const followUpPrompt = `Based on these tool results, provide your final answer to the user's request:\n${response}`;
+      const followUp = await this.callLLMWithRetry(followUpPrompt, systemContext, onToken);
+      return followUp;
+    }
+
+    const tools = this.buildToolDefinitions();
+    if (tools.length === 0) return response;
+
+    // 构建 messages（包含对话上下文 + 第一轮工具结果）
+    const messages: ChatMessage[] = [
+      { role: 'system', content: systemContext },
+      ...this.conversationHistory.map(m => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      })),
+      { role: 'user', content: userInput },
+    ];
+
+    // 第一轮工具结果作为 assistant 上下文
+    const firstRoundTools = toolResult.executedToolNames.join(', ');
+    const statusLabel = toolResult.executedToolNames
+      .map(t => TOOL_STATUS_LABELS[t] ?? t)
+      .join(', ');
+    onStatus?.(`${statusLabel} → continuing...`);
+
+    messages.push({
+      role: 'assistant',
+      content: `I executed tools: ${firstRoundTools}. Results:\n${
+        toolResult.response.slice(0, 3000)
+      }\n\nContinuing work on the user's request.`,
+    });
+
+    let round = 1;
+    const callHistory: string[] = [];
+    const MAX_ROUNDS = 15;
+
+    while (round < MAX_ROUNDS) {
+      onStatus?.('Reasoning...');
+
+      let result;
+      try {
+        result = await (provider as any).completeWithTools(messages, tools);
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`Native function calling failed in loop: ${errMsg}`);
+        break;
+      }
+
+      // 没有工具调用 — 模型给了最终文本响应
+      if (!result.toolCalls || result.toolCalls.length === 0) {
+        const finalContent = result.content || '';
+        if (finalContent) {
+          onToken?.('\n' + finalContent);
+        }
+        return finalContent || response;
+      }
 
       round++;
 
-      // 发出工具执行 hook
-      for (const toolName of toolResult.executedToolNames) {
-        await this.hooks.emit('tool:execute', { tool: toolName, round });
-        await this.hooks.emit('tool:result', { tool: toolName, round });
-      }
-
-      // 工具已执行，将结果反馈给 LLM 继续推理
-      this.conversationHistory.push({
+      // 追加 assistant 消息（带 tool_calls）
+      messages.push({
         role: 'assistant',
-        content: currentResponse,
+        content: result.content || '',
+        tool_calls: result.toolCalls,
       });
 
-      onToken?.('\n[Reasoning...]\n');
+      for (const toolCall of result.toolCalls) {
+        const toolName = toolCall.function.name;
+        const label = TOOL_STATUS_LABELS[toolName] ?? toolName;
+        onStatus?.(`${label} (${round})`);
 
-      const hasErrors = currentResponse.includes('[Tool Error:') ||
-        (currentResponse.includes('"success":false') && !currentResponse.includes('"success":true'));
-      const hitLimitation = currentResponse.includes('cannot') ||
-        currentResponse.includes('not available') ||
-        currentResponse.includes('not possible') ||
-        currentResponse.includes("don't have") ||
-        currentResponse.includes('unable to');
+        // 重复检测
+        const sig = `${toolName}:${toolCall.function.arguments}`;
+        callHistory.push(sig);
+        const recentWindow = callHistory.slice(-8);
+        const uniqueRecent = new Set(recentWindow).size;
+        const isRepeating = recentWindow.length > 4
+          && (1 - uniqueRecent / recentWindow.length) > 0.5;
 
-      let continuationHint: string;
-      if (hasErrors) {
-        continuationHint = 'Some tool calls failed. Try alternative approaches — different URLs, methods, or tools. Do NOT give up. Keep trying.';
-      } else if (hitLimitation) {
-        continuationHint = 'You seem to have hit a capability limitation. You can overcome this: use self_read to understand the relevant code, self_modify to add or change capabilities, learn to create new tools, or auto_mission to start a structured self-improvement experiment. Then continue your task with the new capability.';
-      } else {
-        continuationHint = 'You are working autonomously. Continue calling tools to complete the task. If you need new capabilities, use learn/evolve_essence to build them on the fly. If you spot a fundamental limitation in your own design, use self_read/self_modify to fix it.';
-      }
-
-      try {
-        const followUpInstruction = `Tools executed: ${toolResult.executedToolNames.join(', ')}. ${continuationHint}
-Tool results are above. NOW: call the next tool to continue working autonomously. Do NOT write a conversational response unless you are truly done with the task.`;
-        const followUp = await this.callLLMWithRetry(
-          followUpInstruction,
-          systemContext,
-          onToken,
-        );
-        currentResponse = followUp;
-        // 更新最后一条 assistant 消息
-        const lastIdx = this.conversationHistory.length - 1;
-        if (lastIdx >= 0 && this.conversationHistory[lastIdx].role === 'assistant') {
-          this.conversationHistory[lastIdx] = { role: 'assistant', content: followUp };
-        } else {
-          this.conversationHistory.push({ role: 'assistant', content: followUp });
+        if (isRepeating) {
+          onStatus?.('Converging...');
+          messages.push({
+            role: 'tool',
+            toolCallId: toolCall.id,
+            content: '[Repetition detected. Respond to the user now, do not call more tools.]',
+          });
+          continue;
         }
-      } catch {
-        // LLM 推理失败，保留当前工具结果作为最终响应
-        break;
+
+        // 权限检查
+        let params: unknown;
+        try {
+          params = JSON.parse(toolCall.function.arguments);
+        } catch {
+          params = {};
+        }
+
+        const permCheck = this.toolPermissions.check(toolName, params);
+        if (!permCheck.allowed) {
+          messages.push({
+            role: 'tool',
+            toolCallId: toolCall.id,
+            content: `[Tool Blocked: ${toolName}] ${permCheck.reason ?? 'Permission denied'}`,
+          });
+          continue;
+        }
+
+        // 执行工具
+        await this.hooks.emit('tool:execute', { tool: toolName, round });
+
+        try {
+          const toolExecResult = await this.tools.execute(toolName, params);
+          const resultStr = toolExecResult.success
+            ? (typeof toolExecResult.data === 'string' ? toolExecResult.data : JSON.stringify(toolExecResult.data))
+            : `Error: ${toolExecResult.error}`;
+
+          const truncated = resultStr.length > 8000
+            ? resultStr.slice(0, 8000) + '\n...[truncated]'
+            : resultStr;
+
+          messages.push({
+            role: 'tool',
+            toolCallId: toolCall.id,
+            content: truncated,
+          });
+
+          await this.hooks.emit('tool:result', { tool: toolName, round });
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          messages.push({
+            role: 'tool',
+            toolCallId: toolCall.id,
+            content: `[Tool Error: ${toolName}] ${errMsg}`,
+          });
+        }
       }
+    }
+
+    // 超过最大轮次 — 做一次总结
+    onStatus?.('Summarizing...');
+    try {
+      const finalResult = await (provider as any).completeWithTools(
+        [...messages, { role: 'user', content: 'Summarize what was done and provide your final response.' }],
+        [],
+      );
+      if (finalResult.content) {
+        onToken?.('\n' + finalResult.content);
+        return finalResult.content;
+      }
+    } catch { /* fallback to existing response */ }
+    return response;
+  }
+
+  /**
+   * 从 ToolExecutor 注册表构建 OpenAI function calling 格式的工具定义
+   */
+  private buildToolDefinitions(): ToolDefinition[] {
+    const toolNames = this.tools.list();
+    return toolNames.map(name => {
+      const info = this.tools.getInfo(name);
+      const desc = info?.description || `Execute tool: ${name}`;
+      return {
+        type: 'function' as const,
+        function: {
+          name,
+          description: desc,
+          parameters: parseToolParams(desc),
+        },
+      };
+    });
+  }
+
+  /**
+   * 旧版文本解析工具链回退（provider 不支持原生 function calling 时使用）
+   */
+  private async runToolChainLoopLegacy(
+    initialResponse: string,
+    _systemContext: string,
+    onToken?: (token: string) => void,
+    onStatus?: (status: string) => void,
+  ): Promise<string> {
+    let currentResponse = initialResponse;
+    const toolResult = await this.executeToolCallsFromResponse(currentResponse);
+    currentResponse = toolResult.response;
+
+    if (toolResult.toolsExecuted) {
+      const statusText = toolResult.executedToolNames
+        .map(t => TOOL_STATUS_LABELS[t] ?? t)
+        .join(', ');
+      onStatus?.(statusText);
     }
 
     return currentResponse;
@@ -2599,6 +2761,91 @@ Tool results are above. NOW: call the next tool to continue working autonomously
     return null;
   }
 }
+
+/**
+ * 从工具 description 中提取参数 schema
+ *
+ * 工具描述格式: "描述文字. Params: { param1: type, param2?: type }"
+ * 解析 Params 部分生成 OpenAI function calling 的 parameters 对象。
+ */
+function parseToolParams(description: string): Record<string, unknown> {
+  const paramsMatch = description.match(/Params:\s*\{([^}]*)\}/);
+  if (!paramsMatch) {
+    return { type: 'object', properties: {} };
+  }
+
+  const paramsStr = paramsMatch[1];
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+
+  // 匹配 paramName: type 或 paramName?: type
+  const paramPattern = /(\w+)(\?)?:\s*([^,}]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = paramPattern.exec(paramsStr)) !== null) {
+    const name = m[1];
+    const optional = m[2] === '?';
+    const rawType = m[3].trim();
+
+    const jsonType = rawType
+      .replace(/\[.*?\]/g, '')  // 去掉 union/enum 如 "iso" | "unix"
+      .replace(/['"]/g, '')
+      .trim()
+      .toLowerCase();
+
+    const type = jsonType === 'number' ? 'number'
+      : jsonType === 'boolean' ? 'boolean'
+        : 'string';
+
+    properties[name] = { type, description: `${name} parameter` };
+
+    if (!optional) {
+      required.push(name);
+    }
+  }
+
+  return {
+    type: 'object',
+    ...(Object.keys(properties).length > 0 && { properties }),
+    ...(required.length > 0 && { required }),
+  };
+}
+
+/**
+ * 稳定 JSON 序列化 — 用于重复检测的调用签名
+ * 将 params 按 key 排序后序列化，确保语义相同的对象产生相同字符串
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value !== 'object') return String(value);
+  try {
+    return JSON.stringify(value, Object.keys(value as Record<string, unknown>).sort());
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * 工具名 → 状态栏显示文本
+ * 用于 onStatus 回调，向用户展示 agent 当前动作
+ */
+const TOOL_STATUS_LABELS: Record<string, string> = {
+  self_read: 'Reading code',
+  self_modify: 'Modifying code',
+  self_list: 'Scanning files',
+  learn: 'Creating tool',
+  unlearn: 'Removing tool',
+  inspect_tools: 'Inspecting tools',
+  evolve_essence: 'Evolving behavior',
+  auto_mission: 'Running mission',
+  read_file: 'Reading file',
+  write_file: 'Writing file',
+  execute_shell: 'Running command',
+  web_search: 'Searching web',
+  web_fetch: 'Fetching page',
+  memory_store: 'Storing memory',
+  memory_retrieve: 'Recalling memory',
+  memory_list: 'Listing memories',
+};
 
 // 导出类型别名
 export type { DreamResult as DreamCycleResult } from '@killer/core';

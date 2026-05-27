@@ -10,6 +10,7 @@ import * as path from 'path';
 import * as os from 'os';
 import type { KillerAgent } from '../orchestrator/index.js';
 import { Cerebellum } from '@killer/core';
+import { ShellExecutor } from '../orchestrator/shell-executor.js';
 import { c, kv, divider, renderMarkdown } from './format.js';
 import { generateBootGreeting } from './greeting.js';
 
@@ -755,9 +756,10 @@ const CLI_COMMANDS: CLICommand[] = [
     name: 'mission',
     description: 'Manage experiment missions (Cerebellum)',
     handler: async (args, _agent) => {
-      // Lazy-init cerebellum
+      // Lazy-init cerebellum with shell executor for real verification
       if (!cliCerebellum) {
-        cliCerebellum = new Cerebellum();
+        const projectRoot = process.cwd();
+        cliCerebellum = new Cerebellum(new ShellExecutor(projectRoot));
       }
       const cerebellum = cliCerebellum;
 

@@ -7,9 +7,11 @@
  * - Compass: 策略指南针
  * - Evaluator: 4层验证管道
  * - ExperimentTracker: 实验追踪
+ * - CommandExecutor: 命令执行抽象接口
  */
 
 export * from './types.js';
+export type { CommandExecutor, CommandResult } from './command-executor.js';
 export { Cerebellum } from './cerebellum.js';
 export { Compass } from './compass.js';
 export { Evaluator } from './evaluator.js';

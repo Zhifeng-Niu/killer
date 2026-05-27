@@ -115,7 +115,7 @@ describe('LLM Resilience E2E', () => {
       expect(provider.getCircuitState()).toBe('open');
 
       // Circuit open → immediate rejection
-      await expect(provider.complete('c')).rejects.toThrow('Circuit breaker');
+      await expect(provider.complete('c')).rejects.toThrow('AI 服务暂时不可用');
 
       // Wait for reset timeout → half-open
       await new Promise(r => setTimeout(r, 150));

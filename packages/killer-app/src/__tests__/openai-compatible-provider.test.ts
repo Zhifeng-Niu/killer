@@ -121,7 +121,7 @@ describe('OpenAICompatibleProvider', () => {
         apiKey: 'bad-key',
       });
 
-      await expect(provider.complete('test')).rejects.toThrow('minimax API error 401');
+      await expect(provider.complete('test')).rejects.toThrow('API key 无效或已过期');
     });
   });
 

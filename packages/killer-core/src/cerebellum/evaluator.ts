@@ -16,6 +16,7 @@ import type {
   VerificationResult,
   LayerResult,
 } from './types.js';
+import type { CommandExecutor } from './command-executor.js';
 
 /**
  * 验证管道 — 对实验结果进行 4 层检查
@@ -24,15 +25,18 @@ export class Evaluator {
   private readonly metrics: MetricDefinition[];
   private readonly guardCommand: string;
   private readonly guardTimeout: number;
+  private readonly executor: CommandExecutor | null;
 
   constructor(
     metrics: MetricDefinition[],
     guardCommand?: string,
     guardTimeout?: number,
+    executor?: CommandExecutor,
   ) {
     this.metrics = metrics;
     this.guardCommand = guardCommand ?? '';
     this.guardTimeout = guardTimeout ?? 120_000;
+    this.executor = executor ?? null;
   }
 
   /**
@@ -117,13 +121,16 @@ export class Evaluator {
 
   private async runGuard(): Promise<LayerResult> {
     const start = Date.now();
+    if (!this.executor || !this.guardCommand) {
+      return { passed: true, duration: 0, output: this.guardCommand ? 'no executor available' : 'no guard defined' };
+    }
     try {
-      // 在运行时环境中，guard 命令由外部执行器运行
-      // 这里仅返回占位结果，实际执行在 Cerebellum 编排器中
+      const result = await this.executor.execute(this.guardCommand, this.guardTimeout);
       return {
-        passed: true,
+        passed: result.exitCode === 0,
         duration: Date.now() - start,
-        output: 'guard evaluation delegated to executor',
+        output: result.stdout.slice(-500) || undefined,
+        error: result.exitCode !== 0 ? result.stderr.slice(-500) || `exit code ${result.exitCode}` : undefined,
       };
     } catch (error) {
       return {
@@ -142,8 +149,20 @@ export class Evaluator {
     const improved: Record<string, boolean> = {};
 
     for (const metric of this.metrics) {
-      // 占位 — 实际测量值由外部执行器提供
-      const currentValue = previousBest[metric.name] ?? null;
+      let currentValue: number | null = previousBest[metric.name] ?? null;
+
+      if (this.executor && metric.measureCommand) {
+        try {
+          const result = await this.executor.execute(metric.measureCommand, 600_000);
+          if (result.exitCode === 0 || result.stdout.trim()) {
+            const parsed = parseMetricOutput(result.stdout);
+            if (parsed !== null) currentValue = parsed;
+          }
+        } catch {
+          // measurement failed — keep previous value
+        }
+      }
+
       const prev = previousBest[metric.name] ?? null;
 
       values[metric.name] = {
@@ -164,7 +183,7 @@ export class Evaluator {
     }
 
     return {
-      passed: Object.values(improved).some(v => v),
+      passed: Object.values(improved).some(v => v) || this.metrics.length === 0,
       duration: Date.now() - start,
       values,
       improved,
@@ -274,4 +293,27 @@ export class Evaluator {
   private emptyQualityLayer(): QualityLayerResult {
     return { passed: true, duration: 0, warnings: [], summary: 'skipped' };
   }
+}
+
+/**
+ * 从命令输出中解析数字指标值
+ *
+ * 支持格式:
+ * - 纯数字: "42\n"
+ * - "key: value": "type_error_count: 3"
+ * - 最后一行数字: 任意输出取最后一行中的数字
+ */
+function parseMetricOutput(output: string): number | null {
+  const trimmed = output.trim();
+  if (!trimmed) return null;
+
+  // 纯数字
+  const pureNum = trimmed.match(/^(-?\d+(?:\.\d+)?)$/);
+  if (pureNum) return parseFloat(pureNum[1]);
+
+  // 最后一行中的数字
+  const lines = trimmed.split('\n').filter(l => l.trim());
+  const lastLine = lines[lines.length - 1];
+  const numMatch = lastLine?.match(/(-?\d+(?:\.\d+)?)/);
+  return numMatch ? parseFloat(numMatch[1]) : null;
 }

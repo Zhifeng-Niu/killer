@@ -1,18 +1,18 @@
 ---
 orientation: [engineer]
 status: active
-started_at: 2026-05-27T09:41:25Z
-expedition_branch: odyssey/20260527-174125
+started_at: 2026-05-27T13:47:30Z
+expedition_branch: null
 baseline_metric: null
 best_metric: null
-total_waypoints: 4
+total_waypoints: 8
 consecutive_discards: 0
 ---
 
-# Mission: 超级智能体：让 Killer Agent 具备完全自主的自我改造能力——
+# Mission: 以终极AGI为目标推进，从交互、界面显示、架构、自主进化�
 
 ## Goal
-超级智能体：让 Killer Agent 具备完全自主的自我改造能力——能改自己的源码、能扩展新能力、能整合冗余、能精简自身、能在运行时构建新工具和新策略。将 Cerebellum 实验编排器从 CLI 命令提升为 BrainstemLoop EVOLVE 阶段的核心驱动器，实现真正的黑暗智能：自主产生目标、自主实验、自主收敛、自主进化。
+以终极AGI为目标推进，从交互、界面显示、架构、自主进化继续推进完善
 
 ## Context
 Project type: typescript. Auto-detected guard: npm test 2>&1.
@@ -29,12 +29,11 @@ Project type: typescript. Auto-detected guard: npm test 2>&1.
 
 | Name | Unit | Measure Command | Direction |
 |------|------|----------------|-----------|
-| build_status | pass/fail | `pnpm build 2>&1 \| tail -1` | pass |
-| autonomous_capabilities | count | self-modification tools wired up | higher |
+| type_error_count | - | (auto-detected) | lower |
 
 ## Guard
 ```bash
-pnpm build 2>&1
+npm test 2>&1
 ```
 
 ## Termination
@@ -46,28 +45,28 @@ pnpm build 2>&1
 ## What's Been Tried
 
 ### Wins
-1. **Waypoint 1**: self_read/self_modify/self_list tools + Cerebellum wired to agent. Build passes. 4 new autonomous capabilities.
-2. **Waypoint 2**: AutoMissionTool — agent creates self-improvement missions as tool calls. Full Cerebellum lifecycle.
-3. **Waypoint 3**: Limitation-aware tool chain loop — agent detects when it hits a capability wall and is guided to self-modify.
-4. **Waypoint 4**: Dark intelligence identity — system prompt declares agent as self-evolving, autonomous intelligence designer.
+1. **WP1: Tool Parameter Definitions** — `parseToolParams()` auto-extracts JSON schemas from tool descriptions for native function calling. No manual schema maintenance needed.
+2. **WP2: TUI Tool Execution Visualization** — Animated spinner (120ms cycle) + tool status messages injected into chat panel. Users see real-time tool activity.
+3. **WP3: Autonomous Evolution Protocol** — System prompt now instructs agent to immediately create `auto_mission` when it detects capability gaps, repeated mistakes, or user frustration. Verified `AutoMissionTool` wired in cerebellum.
+4. **WP4: Provider Error UX** — `formatProviderError()` generates friendly Chinese error messages per HTTP status + provider-specific helpUrl. Circuit breaker OPEN message also localized.
+5. **WP5: Real Evaluator Pipeline** — `CommandExecutor` interface in killer-core + `ShellExecutor` implementation in killer-app (child_process). Cerebellum guard and metric layers now execute real shell commands instead of returning stubs.
+6. **WP6: Experiment Loop System Prompt** — 8-step experimental loop in system prompt guides agent through: create mission → hypothesis → self_read → self_modify → build → fix → decide → rollback.
+7. **WP7: ToolForge Persistence** — Verified existing `loadPersisted()` loads dynamic tools from `~/.killer/plugins/dynamic/` on boot. Already working, no changes needed.
+8. **WP8: Auto-Mission Build Verification** — `auto_mission create` auto-injects `pnpm build` guard + `type_error_count` metric. Self-evolution loop is now verifiable: agent modifies code → cerebellum runs real build → decides keep/discard based on actual compilation.
 
 ### Dead Ends
-{Auto-updated by engine.}
+{None yet.}
 
 ### Surprises
-{Unexpected findings. Auto-updated in creative mode.}
+- DeepSeek aggressively calls tools for ALL inputs (including "hi") when `tools` parameter is passed with `tool_choice: "auto"` → fixed with two-phase approach (Phase 1: text-only, Phase 2: native tool loop only if tool markers detected)
 
 ## Current Best
-- metric: build passes
-- Baseline: build passes
-- 9 autonomous self-modification capabilities wired up
+- metric: 0 type errors, 1222/1222 tests pass
+- Baseline: existing tool chain (regex-based, single-shot)
 
 ## Ideas Backlog
-1. ~~Self-modification tools (self_read/self_modify/self_list)~~ → DONE (WP1)
-2. ~~Cerebellum integration (auto_mission)~~ → DONE (WP2)
-3. ~~Limitation-aware tool chain loop~~ → DONE (WP3)
-4. ~~Dark intelligence identity in system prompt~~ → DONE (WP4)
-5. Auto-restart after source code changes (watcher or in-process rebuild)
-6. Git-based checkpoint/rollback in Cerebellum experiments
-7. Dashboard integration for Cerebellum mission visualization
-8. Periodic self-reflection → auto-create missions during idle time
+- Boot-time key validation warning (lightweight `complete('Hi', {maxTokens: 5})` probe)
+- Init wizard zero-interaction path for single detected key
+- Data-driven provider registry (single source of truth for presets)
+- Cross-mission knowledge transfer (cerebellum shares insights between missions)
+- Cell network emergent behavior (cells learn from each other's results)

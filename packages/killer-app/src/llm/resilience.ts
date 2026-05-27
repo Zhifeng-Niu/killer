@@ -4,7 +4,7 @@
  * 为 LLM 调用提供容错能力
  */
 
-import type { LLMProvider, LLMCompletion } from '@killer/core';
+import type { LLMProvider, LLMCompletion, LLMToolCallCompletion, ToolDefinition, ChatMessage } from '@killer/core';
 import { LLMError } from '@killer/core';
 
 /**
@@ -110,6 +110,22 @@ export class ResilientLLMProvider implements LLMProvider {
   }
 
   /**
+   * 透传原生 function calling — 带断路器和重试保护
+   */
+  async completeWithTools(
+    messages: ChatMessage[],
+    tools: ToolDefinition[],
+  ): Promise<LLMToolCallCompletion> {
+    if (!this.inner.completeWithTools) {
+      throw new LLMError(
+        `Provider "${this.inner.getModel()}" does not support native function calling`,
+        this.inner.getModel(),
+      );
+    }
+    return this.executeWithResilience(() => this.inner.completeWithTools!(messages, tools));
+  }
+
+  /**
    * 获取断路器状态
    */
   getCircuitState(): CircuitState {
@@ -134,7 +150,7 @@ export class ResilientLLMProvider implements LLMProvider {
     if (this.circuitState === 'open') {
       this.maybeTransitionToHalfOpen();
       if (this.circuitState === 'open') {
-        throw new LLMError(`Circuit breaker is OPEN — LLM provider "${this.inner.getModel()}" is unavailable. Last failure: ${new Date(this.lastFailureTime).toISOString()}`, this.inner.getModel());
+        throw new LLMError(`AI 服务暂时不可用（连续多次失败），将自动重试。如持续出现，请检查 API key 或运行 /health 诊断。`, this.inner.getModel());
       }
     }
 

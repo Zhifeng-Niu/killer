@@ -10,7 +10,7 @@ import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { ChatPanel, type ChatMessage } from './chat-panel.js';
 import { Sidebar, type SidebarData } from './sidebar.js';
 import { InputArea } from './input-area.js';
-import { colors, box, statusDot, statusColor } from './theme.js';
+import { colors, box, statusDot, statusColor, spinners } from './theme.js';
 import type { KillerAgent } from '../orchestrator/index.js';
 import { generateBootGreeting } from '../cli/greeting.js';
 
@@ -40,8 +40,19 @@ export function KillerTUI({ agent }: KillerTUIProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isThinking, setIsThinking] = useState(false);
   const [agentStatus, setAgentStatus] = useState<'idle' | 'thinking' | 'streaming' | 'error'>('idle');
+  const [statusDetail, setStatusDetail] = useState<string>('');
+  const [spinnerFrame, setSpinnerFrame] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const lastUserInputRef = useRef<string | null>(null);
+
+  // Spinner 动画 — 思考时循环帧
+  useEffect(() => {
+    if (agentStatus !== 'thinking' && agentStatus !== 'streaming') return;
+    const timer = setInterval(() => {
+      setSpinnerFrame(f => (f + 1) % spinners.thinking.length);
+    }, 120);
+    return () => clearInterval(timer);
+  }, [agentStatus]);
 
   // 采集 sidebar 数据
   const sidebarData = useSidebarData(agent, agentStatus);
@@ -176,6 +187,7 @@ export function KillerTUI({ agent }: KillerTUIProps) {
     abortRef.current = ac;
     setIsThinking(true);
     setAgentStatus('thinking');
+    setStatusDetail('');
     const startTime = Date.now();
 
     const agentMsgId = `msg-${++msgCounter}`;
@@ -188,12 +200,13 @@ export function KillerTUI({ agent }: KillerTUIProps) {
       let lastFlush = 0;
       let statusSet = false;
       const FLUSH_MS = 60;
-      await agent.processInput(input, 'cli', (token) => {
+      const result = await agent.processInput(input, 'cli', (token) => {
         if (ac.signal.aborted) return;
         fullResponse += token;
         if (!statusSet) {
           statusSet = true;
           setAgentStatus('streaming');
+          setStatusDetail('');
         }
         const now = Date.now();
         if (now - lastFlush >= FLUSH_MS) {
@@ -203,11 +216,21 @@ export function KillerTUI({ agent }: KillerTUIProps) {
             m.id === agentMsgId ? { ...m, content: snapshot } : m
           ));
         }
+      }, (status) => {
+        if (ac.signal.aborted) return;
+        setAgentStatus('thinking');
+        setStatusDetail(status);
+        // 工具执行状态注入聊天面板（让用户看到 agent 在做什么）
+        if (status.includes('(') && !status.startsWith('Thinking') && !status.startsWith('Reasoning') && !status.startsWith('Summarizing') && !status.startsWith('Converging')) {
+          setMessages(prev => [...prev, createMessage('system', `  ${spinners.thinking[spinnerFrame]} ${status}`)]);
+        }
       });
 
       if (!ac.signal.aborted) {
         const elapsed = Date.now() - startTime;
-        const finalContent = fullResponse;
+        // 使用 processInput 返回值作为最终内容（包含工具链循环的最终结果）
+        // 如果返回值非空就用它，否则 fallback 到流式累积的内容
+        const finalContent = result?.content?.trim() || fullResponse;
         setMessages(prev => prev.map(m =>
           m.id === agentMsgId ? { ...m, content: finalContent, streaming: false, duration: elapsed } : m
         ));
@@ -222,6 +245,7 @@ export function KillerTUI({ agent }: KillerTUIProps) {
       abortRef.current = null;
       setIsThinking(false);
       setAgentStatus('idle');
+      setStatusDetail('');
     }
   }, [agent]);
 
@@ -229,7 +253,7 @@ export function KillerTUI({ agent }: KillerTUIProps) {
     <Box flexDirection="column" height="100%">
       {/* Header — 极简状态栏 */}
       <Box borderStyle="single" borderBottom={true} borderLeft={false} borderRight={false} borderColor={colors.dimmed} paddingX={1}>
-        <Text color={colors.primary} bold>{statusDot[agentStatus]} Killer</Text>
+        <Text color={statusDetail ? colors.primary : colors.primary} bold>{statusDot[agentStatus]} Killer</Text>
         {sidebarData.model.startsWith('mock') && (
           <>
             <Text color={colors.dimmed}> {box.v} </Text>
@@ -242,6 +266,12 @@ export function KillerTUI({ agent }: KillerTUIProps) {
         <Text color={colors.muted}>{sidebarData.uptime}</Text>
         <Text color={colors.dimmed}> {box.v} </Text>
         <Text color={colors.muted}>{messages.length}msg</Text>
+        {statusDetail && (
+          <>
+            <Text color={colors.dimmed}> {box.v} </Text>
+            <Text color={colors.primary}>{spinners.thinking[spinnerFrame]} {statusDetail}</Text>
+          </>
+        )}
       </Box>
 
       {/* Main body: Chat + Sidebar */}
@@ -256,7 +286,7 @@ export function KillerTUI({ agent }: KillerTUIProps) {
       <InputArea
         onSubmit={handleSubmit}
         isProcessing={isThinking}
-        placeholder={agentStatus === 'thinking' ? '思考中...' : agentStatus === 'streaming' ? '输出中...' : undefined}
+        placeholder={statusDetail ? statusDetail : agentStatus === 'thinking' ? '思考中...' : agentStatus === 'streaming' ? '输出中...' : undefined}
       />
     </Box>
   );
