@@ -58,6 +58,12 @@ import {
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
+  createDefaultSectionWeights,
+  recordActiveSections,
+  updateSectionWeights,
+  getSectionWeightOffset,
+  exportSectionWeights,
+  importSectionWeights,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -2703,6 +2709,84 @@ describe('background-tasks', () => {
       });
       expect(guidance).not.toBeNull();
       expect(guidance!.priorityAction).toContain('recap');
+    });
+  });
+
+  describe('Adaptive Section Weight Learning', () => {
+    it('should start with zero offsets', () => {
+      const w = createDefaultSectionWeights();
+      expect(getSectionWeightOffset(w, 'TOOL PRIORITY')).toBe(0);
+      expect(w.updates).toBe(0);
+    });
+
+    it('should record active sections', () => {
+      const w = createDefaultSectionWeights();
+      const updated = recordActiveSections(w, ['TOOL PRIORITY', 'USER EXPERTISE']);
+      expect(updated.lastActiveSections).toEqual(['TOOL PRIORITY', 'USER EXPERTISE']);
+    });
+
+    it('should boost weights on high quality feedback', () => {
+      let w = createDefaultSectionWeights();
+      w = recordActiveSections(w, ['TOOL PRIORITY', 'CONVERSATION FLOW']);
+      w = updateSectionWeights(w, 0.9);
+      expect(getSectionWeightOffset(w, 'TOOL PRIORITY')).toBeGreaterThan(0);
+      expect(getSectionWeightOffset(w, 'CONVERSATION FLOW')).toBeGreaterThan(0);
+      expect(w.updates).toBe(1);
+    });
+
+    it('should reduce weights on low quality feedback', () => {
+      let w = createDefaultSectionWeights();
+      w = recordActiveSections(w, ['DREAM INSIGHTS', 'META-COGNITION']);
+      w = updateSectionWeights(w, 0.2);
+      expect(getSectionWeightOffset(w, 'DREAM INSIGHTS')).toBeLessThan(0);
+      expect(getSectionWeightOffset(w, 'META-COGNITION')).toBeLessThan(0);
+    });
+
+    it('should not change weights on neutral quality', () => {
+      let w = createDefaultSectionWeights();
+      w = recordActiveSections(w, ['TOOL PRIORITY']);
+      w = updateSectionWeights(w, 0.5);
+      expect(getSectionWeightOffset(w, 'TOOL PRIORITY')).toBe(0);
+      expect(w.updates).toBe(0);
+    });
+
+    it('should clamp weights within bounds', () => {
+      let w = createDefaultSectionWeights();
+      for (let i = 0; i < 100; i++) {
+        w = recordActiveSections(w, ['TOOL PRIORITY']);
+        w = updateSectionWeights(w, 1.0);
+      }
+      const offset = getSectionWeightOffset(w, 'TOOL PRIORITY');
+      expect(offset).toBeLessThanOrEqual(0.15);
+      expect(offset).toBeGreaterThanOrEqual(-0.15);
+    });
+
+    it('should export and import weights', () => {
+      let w = createDefaultSectionWeights();
+      w = recordActiveSections(w, ['TOOL PRIORITY']);
+      w = updateSectionWeights(w, 0.9);
+      const exported = exportSectionWeights(w);
+      expect(Object.keys(exported).length).toBeGreaterThan(0);
+
+      const imported = importSectionWeights(exported);
+      expect(getSectionWeightOffset(imported, 'TOOL PRIORITY')).toBeCloseTo(
+        getSectionWeightOffset(w, 'TOOL PRIORITY'),
+        5,
+      );
+    });
+
+    it('should apply learned offset in scoreSectionRelevance', () => {
+      const result = scoreSectionRelevance('TOOL PRIORITY', {
+        phase: 'deep-work',
+        flowPattern: 'detected',
+        healthScore: 0.9,
+        recentTopics: [],
+        hasActiveGoals: false,
+        turnCount: 10,
+        learnedOffset: 0.1,
+      });
+      expect(result.score).toBeGreaterThan(0.55);
+      expect(result.reason).toContain('learned');
     });
   });
 });

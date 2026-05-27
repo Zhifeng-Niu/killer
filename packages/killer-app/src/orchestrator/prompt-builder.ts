@@ -109,6 +109,8 @@ export interface PromptBuilderDeps {
   /** 认知状态总览 */
   cognitiveState?: string;
   responseStrategy?: string;
+  /** 自适应 section 权重偏移 */
+  sectionWeightOffsets?: Record<string, number>;
 }
 
 /**
@@ -913,6 +915,7 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
         hasActiveGoals: (deps.goalDependencyTree?.length ?? 0) > 0,
         turnCount: deps.conversationMeta?.turnCount ?? 0,
         behaviorMode: deps.behaviorMode,
+        learnedOffset: deps.sectionWeightOffsets?.[prefix],
       }))
       .sort((a, b) => a.score - b.score); // lowest relevance first
 

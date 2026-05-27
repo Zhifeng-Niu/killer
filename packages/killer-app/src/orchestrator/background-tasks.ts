@@ -2837,6 +2837,7 @@ export function scoreSectionRelevance(
     hasActiveGoals: boolean;
     turnCount: number;
     behaviorMode?: 'focused' | 'exploratory' | 'supportive' | 'urgent' | 'balanced';
+    learnedOffset?: number;
   },
 ): SectionScore {
   const baseScores: Record<string, number> = {
@@ -2957,6 +2958,11 @@ export function scoreSectionRelevance(
       score += 0.1;
       reason.push('exploratory mode boost (discovery)');
     }
+  }
+
+  if (context.learnedOffset !== undefined && context.learnedOffset !== 0) {
+    score += context.learnedOffset;
+    reason.push(`learned: ${context.learnedOffset >= 0 ? '+' : ''}${context.learnedOffset.toFixed(3)}`);
   }
 
   score = Math.max(0, Math.min(1, score));
@@ -3962,4 +3968,92 @@ export function generateResponseStrategyGuidance(context: {
   const tag = signals.length > 0 ? ` [${signals.join(', ')}]` : '';
   const formatted = `Tone: ${tone} | Structure: ${structure} | Detail: ${detailLevel} | Priority: ${priorityAction}${tag}`;
   return { tone, structure, detailLevel, priorityAction, formatted };
+}
+
+// ============================================================
+// Adaptive Section Weight Learning
+// ============================================================
+
+/** 每个 prompt section 的学习权重 */
+export interface SectionWeights {
+  /** section prefix → EMA-adjusted weight offset (-0.15 ~ +0.15) */
+  offsets: Record<string, number>;
+  /** 最近一次 prompt 中活跃的 section prefixes */
+  lastActiveSections: string[];
+  /** 更新次数 */
+  updates: number;
+}
+
+const WEIGHT_ALPHA = 0.1;
+const WEIGHT_CLAMP = 0.15;
+
+export function createDefaultSectionWeights(): SectionWeights {
+  return { offsets: {}, lastActiveSections: [], updates: 0 };
+}
+
+/** 记录当前 prompt 中活跃的 sections（在 prompt build 后调用） */
+export function recordActiveSections(
+  weights: SectionWeights,
+  activeSections: string[],
+): SectionWeights {
+  return {
+    ...weights,
+    lastActiveSections: activeSections,
+    updates: weights.updates,
+  };
+}
+
+/** 基于回复质量反馈更新 section 权重 */
+export function updateSectionWeights(
+  weights: SectionWeights,
+  qualityOverall: number,
+): SectionWeights {
+  const newOffsets = { ...weights.offsets };
+  const active = weights.lastActiveSections;
+
+  // quality > 0.6 → 正反馈，增强活跃 section
+  // quality < 0.4 → 负反馈，减弱活跃 section
+  const delta = qualityOverall > 0.6
+    ? (qualityOverall - 0.6) * 0.05
+    : qualityOverall < 0.4
+      ? (qualityOverall - 0.4) * 0.05
+      : 0;
+
+  if (delta === 0) return weights;
+
+  for (const section of active) {
+    const current = newOffsets[section] ?? 0;
+    newOffsets[section] = Math.max(
+      -WEIGHT_CLAMP,
+      Math.min(WEIGHT_CLAMP, current + WEIGHT_ALPHA * (delta - current)),
+    );
+  }
+
+  return {
+    offsets: newOffsets,
+    lastActiveSections: [],
+    updates: weights.updates + 1,
+  };
+}
+
+/** 获取 section 的学习权重偏移 */
+export function getSectionWeightOffset(
+  weights: SectionWeights,
+  sectionPrefix: string,
+): number {
+  return weights.offsets[sectionPrefix] ?? 0;
+}
+
+/** 导出权重用于持久化 */
+export function exportSectionWeights(weights: SectionWeights): Record<string, number> {
+  return { ...weights.offsets };
+}
+
+/** 从持久化数据恢复权重 */
+export function importSectionWeights(data: Record<string, number>): SectionWeights {
+  const offsets: Record<string, number> = {};
+  for (const [k, v] of Object.entries(data)) {
+    offsets[k] = Math.max(-WEIGHT_CLAMP, Math.min(WEIGHT_CLAMP, v));
+  }
+  return { offsets, lastActiveSections: [], updates: 0 };
 }

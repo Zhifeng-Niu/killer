@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL, createDefaultSectionWeights, recordActiveSections, updateSectionWeights, getSectionWeightOffset, exportSectionWeights, importSectionWeights, type SectionWeights } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -187,6 +187,9 @@ export class KillerAgent {
   // 回复质量自评（上一轮评分，注入认知状态）
   private lastQualityOverall: number | undefined;
   private lastQualityTags: string[] = [];
+
+  // 自适应 section 权重学习
+  private sectionWeights: SectionWeights = createDefaultSectionWeights();
 
   // 实验驱动的行为洞察（成功的实验模式，注入系统 prompt）
   private behavioralInsights: string[] = [];
@@ -3281,6 +3284,11 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       }
 
       profile.strategyScores = scores;
+
+      // 基于 reply quality 反馈更新 section weights
+      if (this.sectionWeights.lastActiveSections.length > 0) {
+        this.sectionWeights = updateSectionWeights(this.sectionWeights, score.overall);
+      }
     } catch {
       // 质量评估失败不影响主循环
     }
@@ -3424,6 +3432,18 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
    * 构建系统 prompt（包含 persona、记忆和对话历史上下文）
    */
   private buildSystemPrompt(currentInput?: string): string {
+    const SECTION_PREFIXES = [
+      'You have ', 'DREAM INSIGHTS', 'META-COGNITION', 'ATTENTION STATE',
+      'RESPONSE STRATEGY', 'PRELOADED CONTEXT', 'TOOL PERFORMANCE',
+      'TOOL FAILURE PATTERNS', 'LEARNED BEHAVIORS', 'TEMPORAL CONTEXT',
+      'CONVERSATION FLOW', 'LENGTH PREFERENCE', 'TOOL PRIORITY',
+      'CONVERSATION HEALTH', 'MULTI-INTENT', 'INPUT AMBIGUITY',
+      'GOAL DEPENDENCIES', 'TOPIC TRANSITION', 'SUGGESTED ACTIONS',
+      'CONVERSATION RHYTHM', 'USER EXPERTISE', 'EMOTIONAL RESPONSE STRATEGY',
+      'PERCEPTION FUSION', 'RESTORED CONTEXT', 'STRATEGY COHERENCE',
+      'COGNITIVE STATE', 'COMPOSITE RESPONSE STRATEGY',
+    ];
+
     const memoryStats = this.hippocampus.getStats();
     const userModel = this.persona.getUserModel();
     const isFirstBoot = memoryStats.episodes === 0 && userModel.interactionSummary.totalInteractions === 0;
@@ -3495,7 +3515,13 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       strategyCoherence: this.computeStrategyCoherence(perception),
       cognitiveState: this.computeCognitiveState(perception),
       responseStrategy: this.computeResponseStrategy(perception),
+      sectionWeightOffsets: exportSectionWeights(this.sectionWeights),
     });
+
+    // 记录活跃 sections 用于后续权重学习
+    const active = SECTION_PREFIXES.filter(p => result.includes(p));
+    this.sectionWeights = recordActiveSections(this.sectionWeights, active);
+    return result;
   }
 
   private computeConversationalPhaseForPrompt() {
