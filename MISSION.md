@@ -5,8 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 1969
-total_waypoints: 32
-consecutive_discards: 0
+total_waypoints: 35consecutive_discards: 0
 ---
 
 # Mission: 以终极AGI为目标推进，继续推进智能化编排
@@ -76,6 +75,9 @@ npm test 2>&1
 29. **Importance-Weighted Context Retention** (waypoint 30): Context window overflow now preserves high-importance older turns (score > 0.6) as "Important earlier context" instead of summarizing them. Low-importance turns go to summary. Connects turn scoring to context management
 30. **Topic Transition Detection** (waypoint 31): Extract conversation topics from messages using 9 keyword domain patterns (debugging, testing, deployment, performance, security, architecture, database, API, infrastructure). Track topic history, detect transitions, and identify returns to previous topics
 31. **Input Ambiguity Detection** (waypoint 32): Detect vague verbs (fix/optimize without target), missing targets (the thing, it), underspecified scope (everything), and pronoun references. Returns clarification suggestions so agent asks instead of guessing
+32. **Cross-Goal Dependency Graph** (waypoint 33): Build dependency graph between active goals by extracting shared resources (database, API, auth, tests, deployment, config, frontend, architecture) and detecting resource conflicts, prerequisites (refactor before optimize), and shared components
+33. **Dynamic Prompt Section Priority** (waypoint 34): Prompt pruning now adjusts section priority based on conversational phase — deep-work preserves plans/tools, exploration preserves behaviors/facts, wrap-up preserves goals/metrics, review preserves tool performance
+34. **Execution Progress Reporter** (waypoint 35): Generate structured progress reports for multi-step plan execution with ASCII progress bar, completion percentage, current step status, and remaining step count
 
 ### Dead Ends
 {Auto-updated by engine.}
