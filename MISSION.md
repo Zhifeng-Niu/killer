@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 1222
-total_waypoints: 10
+total_waypoints: 11
 consecutive_discards: 0
 ---
 
@@ -55,6 +55,7 @@ npm test 2>&1
 8. **Meta-Cognitive Self-Reflection** (waypoint 8): Conversation meta-awareness, repetition detection, self-correction prompts
 9. **Autonomous Tool Creation** (waypoint 9): ToolForge auto-creates missing tools via LLM code generation, plan steps self-heal
 10. **Consciousness Priority System** (waypoint 10): Event priority scoring with freshness decay, attention state computed every 2 min, injected into system prompt as ATTENTION STATE section
+11. **Cross-Session Learning Persistence** (waypoint 11): Skills + delegate profiles survive restarts via session V3, SkillEcosystem.restore()/exportAll(), TaskDelegate.exportProfiles()/importProfiles()
 
 ### Dead Ends
 {Auto-updated by engine.}
