@@ -89,6 +89,8 @@ export interface PromptBuilderDeps {
   goalDependencies?: string[];
   /** 话题切换检测 */
   topicTransition?: string;
+  /** 自主行动建议 */
+  autonomousActions?: string[];
 }
 
 /**
@@ -298,6 +300,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 话题切换 ===
   if (deps.topicTransition) {
     parts.push(`\nTOPIC TRANSITION — ${deps.topicTransition}`);
+  }
+
+  // === 自主行动建议 ===
+  if (deps.autonomousActions && deps.autonomousActions.length > 0) {
+    parts.push(`\nSUGGESTED ACTIONS — Based on conversation context, consider:\n${deps.autonomousActions.join('\n')}`);
   }
 
   // === 生命叙事 ===

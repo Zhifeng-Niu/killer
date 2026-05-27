@@ -2437,3 +2437,227 @@ export function suggestToolPriority(
     reason: parts.length > 0 ? `Based on: ${parts.join(', ')}` : 'No specific context',
   };
 }
+
+// ============================================================
+// 对话健康监测 (Conversation Health Monitoring)
+// ============================================================
+
+/** 对话健康状态 */
+export interface ConversationHealth {
+  /** 健康分数 (0=很差, 1=很好) */
+  score: number;
+  /** 是否卡住 */
+  isStuck: boolean;
+  /** 参与度趋势 */
+  engagementTrend: 'improving' | 'stable' | 'declining';
+  /** 挫折信号强度 */
+  frustrationLevel: 'none' | 'low' | 'medium' | 'high';
+  /** 诊断信息 */
+  issues: string[];
+  /** 建议 */
+  recommendation: string;
+}
+
+const FRUSTRATION_WORDS = /(?:frustrated|annoyed|angry|useless|broken|doesn'?t work|waste|horrible|terrible|this is wrong|still not working|give up|烦|无语|垃圾|没用|不行|还是不行|算了|受不了)/i;
+const NEGATIVE_PATTERNS = /(?:no|wrong|incorrect|bad|not right|不对|错误|不好|不对)/i;
+
+/**
+ * 监测对话健康状态
+ */
+export function monitorConversationHealth(
+  recentMessages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  recentTopics: string[],
+): ConversationHealth {
+  const userMsgs = recentMessages.filter(m => m.role === 'user').slice(-10);
+  const issues: string[] = [];
+
+  // === 卡住检测：最近 5 轮话题相同且无进展 ===
+  const isStuck = recentTopics.length >= 5 &&
+    new Set(recentTopics.slice(-5)).size === 1;
+  if (isStuck) issues.push('Stuck on same topic without progress');
+
+  // === 参与度趋势：用户消息长度变化 ===
+  let engagementTrend: 'improving' | 'stable' | 'declining' = 'stable';
+  if (userMsgs.length >= 4) {
+    const firstHalf = userMsgs.slice(0, Math.floor(userMsgs.length / 2));
+    const secondHalf = userMsgs.slice(Math.floor(userMsgs.length / 2));
+    const avgFirst = firstHalf.reduce((s, m) => s + m.content.length, 0) / firstHalf.length;
+    const avgSecond = secondHalf.reduce((s, m) => s + m.content.length, 0) / secondHalf.length;
+
+    if (avgSecond < avgFirst * 0.5) {
+      engagementTrend = 'declining';
+      issues.push('User messages getting shorter — possible disengagement');
+    } else if (avgSecond > avgFirst * 1.5) {
+      engagementTrend = 'improving';
+    }
+  }
+
+  // === 挫折信号检测 ===
+  let frustrationCount = 0;
+  for (const msg of userMsgs.slice(-5)) {
+    if (FRUSTRATION_WORDS.test(msg.content)) frustrationCount += 2;
+    else if (NEGATIVE_PATTERNS.test(msg.content)) frustrationCount += 1;
+  }
+  const frustrationLevel: 'none' | 'low' | 'medium' | 'high' =
+    frustrationCount >= 4 ? 'high' :
+    frustrationCount >= 2 ? 'medium' :
+    frustrationCount >= 1 ? 'low' : 'none';
+  if (frustrationLevel !== 'none') issues.push(`Frustration detected (${frustrationLevel})`);
+
+  // === 重复提问检测 ===
+  const recentQuestions = userMsgs.slice(-5).filter(m => /\?/.test(m.content));
+  if (recentQuestions.length >= 3) {
+    // 检查是否是相似问题
+    const contents = recentQuestions.map(q => q.content.toLowerCase());
+    const uniqueContents = new Set(contents);
+    if (uniqueContents.size <= 2) {
+      issues.push('User asking similar questions repeatedly');
+    }
+  }
+
+  // === 综合健康分数 ===
+  let score = 1.0;
+  if (isStuck) score -= 0.3;
+  if (engagementTrend === 'declining') score -= 0.2;
+  if (frustrationLevel === 'high') score -= 0.4;
+  else if (frustrationLevel === 'medium') score -= 0.2;
+  else if (frustrationLevel === 'low') score -= 0.1;
+  score = Math.max(0, Math.min(1, score));
+
+  // === 建议 ===
+  let recommendation: string;
+  if (score >= 0.8) {
+    recommendation = 'Conversation flowing well.';
+  } else if (score >= 0.5) {
+    recommendation = 'Consider changing approach or asking if the user needs something different.';
+  } else {
+    recommendation = 'Conversation struggling. Try: asking clarifying questions, switching topics, or offering to help differently.';
+  }
+
+  return { score, isStuck, engagementTrend, frustrationLevel, issues, recommendation };
+}
+
+/**
+ * 自主行动类型
+ */
+export type AutonomousActionType =
+  | 'memory_search'
+  | 'web_search'
+  | 'goal_check'
+  | 'context_refresh'
+  | 'clarification_ask'
+  | 'summary_offer'
+  | 'topic_switch_suggest';
+
+export interface AutonomousAction {
+  type: AutonomousActionType;
+  reason: string;
+  urgency: 'low' | 'medium' | 'high';
+  query?: string;
+}
+
+/**
+ * 基于对话上下文自主决定需要执行的下一步行动
+ *
+ * 整合 flow、phase、health、intents、ambiguity 等信号，
+ * 生成建议的自主行动列表
+ */
+export function decideAutonomousActions(context: {
+  flowPattern: string;
+  phase: string;
+  healthScore: number;
+  intentCount: number;
+  hasAmbiguity: boolean;
+  topicTransition: boolean;
+  turnCount: number;
+  recentTopics: string[];
+  hasActiveGoals: boolean;
+}): AutonomousAction[] {
+  const actions: AutonomousAction[] = [];
+
+  // 1. 对话卡住 → 建议切换话题或询问澄清
+  if (context.healthScore < 0.4) {
+    actions.push({
+      type: 'clarification_ask',
+      reason: 'Conversation health is low — proactively ask what the user needs',
+      urgency: 'high',
+    });
+  } else if (context.healthScore < 0.6) {
+    actions.push({
+      type: 'topic_switch_suggest',
+      reason: 'Conversation may be stagnating — suggest a change of direction',
+      urgency: 'medium',
+    });
+  }
+
+  // 2. 长对话 → 提供总结
+  if (context.turnCount > 15 && context.phase === 'deep-work') {
+    actions.push({
+      type: 'summary_offer',
+      reason: 'Long deep-work session — offer to summarize progress',
+      urgency: 'low',
+    });
+  }
+
+  // 3. 多意图 → 建议内存搜索以支持上下文切换
+  if (context.intentCount > 2) {
+    actions.push({
+      type: 'memory_search',
+      reason: 'Multiple intents detected — search memory for relevant context',
+      urgency: 'medium',
+      query: context.recentTopics.join(' '),
+    });
+  }
+
+  // 4. 话题切换 → 刷新上下文
+  if (context.topicTransition && context.recentTopics.length > 1) {
+    actions.push({
+      type: 'context_refresh',
+      reason: 'Topic shifted — refresh context for new topic',
+      urgency: 'medium',
+      query: context.recentTopics[context.recentTopics.length - 1],
+    });
+  }
+
+  // 5. debug/探索流程 → 主动搜索
+  if (
+    (context.flowPattern === 'debug-diagnose-fix' || context.flowPattern === 'explore-deepen-implement') &&
+    context.phase === 'deep-work'
+  ) {
+    const topic = context.recentTopics[context.recentTopics.length - 1] ?? '';
+    if (topic) {
+      actions.push({
+        type: 'web_search',
+        reason: `${context.flowPattern} flow in deep-work — proactively search for solutions`,
+        urgency: 'medium',
+        query: topic,
+      });
+    }
+  }
+
+  // 6. 活跃目标 → 定期检查进度
+  if (context.hasActiveGoals && context.phase === 'idle') {
+    actions.push({
+      type: 'goal_check',
+      reason: 'Active goals exist but user is idle — review goal progress',
+      urgency: 'low',
+    });
+  }
+
+  // 7. 模糊输入 → 搜索相关记忆辅助理解
+  if (context.hasAmbiguity) {
+    actions.push({
+      type: 'memory_search',
+      reason: 'Ambiguous input — search memory for disambiguation context',
+      urgency: 'high',
+      query: context.recentTopics.join(' '),
+    });
+  }
+
+  // 按紧急度排序
+  const urgencyOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
+  actions.sort((a, b) => urgencyOrder[a.urgency] - urgencyOrder[b.urgency]);
+
+  // 最多返回 3 个行动
+  return actions.slice(0, 3);
+}

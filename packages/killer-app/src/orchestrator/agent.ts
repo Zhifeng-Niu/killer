@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -3496,6 +3496,27 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         const parts = [`Topic shifted to "${transition.currentTopic}"`];
         if (transition.returnedTo) parts.push(`(returned to "${transition.returnedTo}")`);
         return parts.join(' ');
+      })(),
+      autonomousActions: (() => {
+        const flow = predictConversationFlow(this.conversationHistory);
+        const phase = this.contextWindow.getCurrentPhase();
+        const health = monitorConversationHealth(this.conversationHistory, this.recentTopics);
+        const lastUser = this.conversationHistory.filter(m => m.role === 'user').slice(-1)[0];
+        const intents = lastUser ? detectMultiIntent(lastUser.content) : [];
+        const ambiguities = lastUser ? detectAmbiguity(lastUser.content) : [];
+        const actions = decideAutonomousActions({
+          flowPattern: flow.currentPattern,
+          phase: phase.phase,
+          healthScore: health.score,
+          intentCount: intents.length,
+          hasAmbiguity: ambiguities.length > 0,
+          topicTransition: this.recentTopics.length >= 2 && this.recentTopics[this.recentTopics.length - 1] !== this.recentTopics[this.recentTopics.length - 2],
+          turnCount: this.conversationHistory.filter(m => m.role === 'user').length,
+          recentTopics: [...new Set(this.recentTopics)].slice(-5),
+          hasActiveGoals: this.listGoals().length > 0,
+        });
+        if (actions.length === 0) return undefined;
+        return actions.map(a => `- [${a.urgency}] ${a.type}: ${a.reason}${a.query ? ` (query: "${a.query}")` : ''}`);
       })(),
     });
   }

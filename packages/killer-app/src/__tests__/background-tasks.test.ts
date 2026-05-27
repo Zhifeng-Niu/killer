@@ -37,6 +37,8 @@ import {
   updateLengthPreference,
   createDefaultLengthPreference,
   suggestToolPriority,
+  monitorConversationHealth,
+  decideAutonomousActions,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -1659,6 +1661,168 @@ describe('background-tasks', () => {
       const suggestion = suggestToolPriority('unknown-pattern', 'unknown-phase', 'low');
       expect(suggestion.preferredTools).toEqual([]);
       expect(suggestion.reason).toBeTruthy();
+    });
+  });
+
+  describe('monitorConversationHealth', () => {
+    it('should report healthy for normal conversation', () => {
+      const health = monitorConversationHealth([
+        { role: 'user', content: 'How do I parse JSON in TypeScript?' },
+        { role: 'assistant', content: 'Use JSON.parse().' },
+        { role: 'user', content: 'What about error handling?' },
+      ], ['typescript', 'json', 'error-handling']);
+      expect(health.score).toBeGreaterThanOrEqual(0.8);
+      expect(health.isStuck).toBe(false);
+      expect(health.frustrationLevel).toBe('none');
+    });
+
+    it('should detect stuck conversation on same topic', () => {
+      const health = monitorConversationHealth(
+        [
+          { role: 'user', content: 'Fix the auth bug' },
+          { role: 'assistant', content: 'Try restarting the server.' },
+          { role: 'user', content: 'Still not working' },
+          { role: 'assistant', content: 'Check the config.' },
+          { role: 'user', content: 'Same error' },
+        ],
+        ['auth', 'auth', 'auth', 'auth', 'auth'],
+      );
+      expect(health.isStuck).toBe(true);
+      expect(health.score).toBeLessThan(0.8);
+    });
+
+    it('should detect declining engagement', () => {
+      const health = monitorConversationHealth([
+        { role: 'user', content: 'I want to build a full-stack app with React and Node.js and PostgreSQL, can you help me plan the architecture?' },
+        { role: 'assistant', content: 'Sure!' },
+        { role: 'user', content: 'What about the database schema design?' },
+        { role: 'assistant', content: 'Here is the schema.' },
+        { role: 'user', content: 'ok' },
+        { role: 'assistant', content: 'Next step.' },
+        { role: 'user', content: 'yea' },
+      ], ['architecture']);
+      expect(health.engagementTrend).toBe('declining');
+    });
+
+    it('should detect high frustration', () => {
+      const health = monitorConversationHealth([
+        { role: 'user', content: 'This is useless, it still doesn\'t work' },
+        { role: 'assistant', content: 'Let me try again.' },
+        { role: 'user', content: 'I\'m frustrated, this is broken' },
+      ], ['debugging']);
+      expect(health.frustrationLevel).toBe('high');
+      expect(health.score).toBeLessThanOrEqual(0.6);
+    });
+
+    it('should detect Chinese frustration', () => {
+      const health = monitorConversationHealth([
+        { role: 'user', content: '还是不行，算了' },
+      ], ['debugging']);
+      expect(health.frustrationLevel).not.toBe('none');
+    });
+
+    it('should produce recommendation for unhealthy conversation', () => {
+      const health = monitorConversationHealth([
+        { role: 'user', content: 'this is terrible and broken' },
+        { role: 'user', content: 'useless' },
+      ], ['bug', 'bug', 'bug', 'bug', 'bug']);
+      expect(health.recommendation.length).toBeGreaterThan(0);
+      expect(health.issues.length).toBeGreaterThan(0);
+    });
+
+    it('should handle empty conversation gracefully', () => {
+      const health = monitorConversationHealth([], []);
+      expect(health.score).toBe(1);
+      expect(health.isStuck).toBe(false);
+    });
+  });
+
+  describe('decideAutonomousActions', () => {
+    const baseContext = {
+      flowPattern: 'question-answer',
+      phase: 'exploration',
+      healthScore: 0.8,
+      intentCount: 1,
+      hasAmbiguity: false,
+      topicTransition: false,
+      turnCount: 5,
+      recentTopics: ['testing'],
+      hasActiveGoals: false,
+    };
+
+    it('should return no actions for healthy simple conversation', () => {
+      const actions = decideAutonomousActions(baseContext);
+      expect(actions.length).toBe(0);
+    });
+
+    it('should suggest clarification when health is very low', () => {
+      const actions = decideAutonomousActions({ ...baseContext, healthScore: 0.3 });
+      expect(actions.length).toBeGreaterThan(0);
+      expect(actions.some(a => a.type === 'clarification_ask')).toBe(true);
+      expect(actions[0].urgency).toBe('high');
+    });
+
+    it('should suggest topic switch when health is moderate', () => {
+      const actions = decideAutonomousActions({ ...baseContext, healthScore: 0.5 });
+      expect(actions.some(a => a.type === 'topic_switch_suggest')).toBe(true);
+    });
+
+    it('should suggest summary in long deep-work sessions', () => {
+      const actions = decideAutonomousActions({ ...baseContext, phase: 'deep-work', turnCount: 20 });
+      expect(actions.some(a => a.type === 'summary_offer')).toBe(true);
+    });
+
+    it('should suggest memory search for multiple intents', () => {
+      const actions = decideAutonomousActions({ ...baseContext, intentCount: 3 });
+      expect(actions.some(a => a.type === 'memory_search')).toBe(true);
+    });
+
+    it('should suggest context refresh on topic transition', () => {
+      const actions = decideAutonomousActions({
+        ...baseContext,
+        topicTransition: true,
+        recentTopics: ['testing', 'deployment'],
+      });
+      expect(actions.some(a => a.type === 'context_refresh')).toBe(true);
+    });
+
+    it('should suggest web search in debug flow during deep-work', () => {
+      const actions = decideAutonomousActions({
+        ...baseContext,
+        flowPattern: 'debug-diagnose-fix',
+        phase: 'deep-work',
+        recentTopics: ['authentication'],
+      });
+      expect(actions.some(a => a.type === 'web_search')).toBe(true);
+    });
+
+    it('should suggest goal check when idle with active goals', () => {
+      const actions = decideAutonomousActions({ ...baseContext, phase: 'idle', hasActiveGoals: true });
+      expect(actions.some(a => a.type === 'goal_check')).toBe(true);
+    });
+
+    it('should suggest memory search on ambiguous input', () => {
+      const actions = decideAutonomousActions({ ...baseContext, hasAmbiguity: true });
+      expect(actions.some(a => a.type === 'memory_search' && a.urgency === 'high')).toBe(true);
+    });
+
+    it('should sort by urgency and cap at 3 actions', () => {
+      const actions = decideAutonomousActions({
+        ...baseContext,
+        healthScore: 0.3,
+        intentCount: 3,
+        hasAmbiguity: true,
+        topicTransition: true,
+        recentTopics: ['a', 'b', 'c'],
+        phase: 'deep-work',
+        turnCount: 20,
+        hasActiveGoals: true,
+      });
+      expect(actions.length).toBeLessThanOrEqual(3);
+      if (actions.length >= 2) {
+        const urgencyOrder = { high: 0, medium: 1, low: 2 };
+        expect(urgencyOrder[actions[0].urgency]).toBeLessThanOrEqual(urgencyOrder[actions[1].urgency]);
+      }
     });
   });
 });
