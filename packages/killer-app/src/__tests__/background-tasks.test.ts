@@ -3255,4 +3255,36 @@ describe('background-tasks', () => {
       expect(formatKnowledgeSummary(new Map(), [])).toBe('');
     });
   });
+
+  describe('KNOWLEDGE GRAPH prompt integration', () => {
+    it('should include KNOWLEDGE GRAPH in baseScores', () => {
+      const ctx = { phase: 'active' as const, flowPattern: 'question-answer' as const, healthScore: 0.8, recentTopics: [], hasActiveGoals: false, turnCount: 5 };
+      const result = scoreSectionRelevance('KNOWLEDGE GRAPH', ctx);
+      expect(result.score).toBeGreaterThanOrEqual(0.5);
+    });
+
+    it('should format multi-entity graph with relations', () => {
+      let entities = new Map();
+      entities.set('agent.ts', { name: 'agent.ts', type: 'file', mentions: 5, firstMentioned: 0 });
+      entities.set('react', { name: 'react', type: 'technology', mentions: 3, firstMentioned: 0 });
+      const relations = [{ from: 'agent.ts', to: 'react', relation: 'uses', confidence: 0.8 }];
+      const summary = formatKnowledgeSummary(entities, relations);
+      expect(summary).toContain('agent.ts');
+      expect(summary).toContain('react');
+      expect(summary).toContain('uses');
+    });
+
+    it('should accumulate entities across multiple messages', () => {
+      const now = Date.now();
+      let kg = createEmptyKnowledgeGraph();
+      kg.entities = extractEntitiesFromMessage('edit app.tsx and index.ts', now, kg.entities);
+      kg.entities = extractEntitiesFromMessage('fix bug in app.tsx', now + 1000, kg.entities);
+      kg.relations = [...kg.relations, ...extractRelationsFromMessage('app.tsx imports utils.helper')];
+      expect(kg.entities.get('app.tsx')!.mentions).toBe(2);
+      expect(kg.entities.get('index.ts')!.mentions).toBe(1);
+      expect(kg.relations.length).toBeGreaterThan(0);
+      const summary = formatKnowledgeSummary(kg.entities, kg.relations);
+      expect(summary).toContain('app.tsx');
+    });
+  });
 });

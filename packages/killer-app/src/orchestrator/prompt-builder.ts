@@ -115,6 +115,8 @@ export interface PromptBuilderDeps {
   intentEvolution?: string;
   /** 回复风格进化指导 */
   styleGuidance?: string;
+  /** 对话知识图谱摘要 */
+  knowledgeGraphSummary?: string;
 }
 
 /**
@@ -374,6 +376,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 回复风格进化 ===
   if (deps.styleGuidance) {
     parts.push(`\nSTYLE GUIDANCE — Based on learned preferences: ${deps.styleGuidance}`);
+  }
+
+  // === 对话知识图谱 ===
+  if (deps.knowledgeGraphSummary) {
+    parts.push(`\nKNOWLEDGE GRAPH — ${deps.knowledgeGraphSummary}`);
   }
 
   // === 自主行动建议 ===

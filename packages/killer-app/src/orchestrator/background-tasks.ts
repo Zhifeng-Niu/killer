@@ -2870,6 +2870,7 @@ export function scoreSectionRelevance(
     'COMPOSITE RESPONSE STRATEGY': 0.75,
     'INTENT EVOLUTION': 0.55,
     'STYLE GUIDANCE': 0.6,
+    'KNOWLEDGE GRAPH': 0.5,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -4426,11 +4427,12 @@ export function updateStyleEvolution(
 
 function normalizeFeature(key: keyof ResponseStyleFeatures, value: number | boolean): number {
   if (key === 'technical') return value ? 1 : 0;
-  if (key === 'length') return Math.min(1, value / 1000);
-  if (key === 'codeBlocks') return Math.min(1, value / 3);
-  if (key === 'listItems') return Math.min(1, value / 5);
-  if (key === 'explanationRatio') return value;
-  if (key === 'questionsAsked') return Math.min(1, value / 3);
+  const num = value as number;
+  if (key === 'length') return Math.min(1, num / 1000);
+  if (key === 'codeBlocks') return Math.min(1, num / 3);
+  if (key === 'listItems') return Math.min(1, num / 5);
+  if (key === 'explanationRatio') return num;
+  if (key === 'questionsAsked') return Math.min(1, num / 3);
   return 0;
 }
 
@@ -4753,6 +4755,7 @@ const ENTITY_PATTERNS: Array<{ pattern: RegExp; type: KnowledgeEntity['type'] }>
   { pattern: /\b(React|Next\.js|Vue|Angular|Express|Fastify|Django|Flask|PostgreSQL|MongoDB|Redis|Docker|Kubernetes|Git|npm|pnpm|yarn)\b/gi, type: 'technology' },
   { pattern: /\b(auth|database|api|router|middleware|config|logger|cache|queue|pipeline)\b/gi, type: 'concept' },
   { pattern: /\b(grep|find|search|test|build|deploy|install|run)\b/gi, type: 'tool' },
+  { pattern: /`([^`]+)`/g, type: 'concept' },
 ];
 
 // 关系检测模式
