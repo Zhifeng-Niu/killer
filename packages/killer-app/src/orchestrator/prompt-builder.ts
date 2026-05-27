@@ -585,6 +585,36 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
       parts.push(...examples);
     }
 
+    // === Tool Chain Templates ===
+    parts.push('\nWORKFLOW TEMPLATES — For common multi-step tasks, follow these proven sequences:');
+    parts.push('');
+    parts.push('Debug Cycle (when user reports a bug or error):');
+    parts.push('  1. [TOOL: self_read]({"path":"<file with error>"})');
+    parts.push('  2. [TOOL: execute_shell]({"command":"cd /path && grep -rn \\"error pattern\\" src/"})');
+    parts.push('  3. [TOOL: self_modify]({"path":"<file>","action":"replace","old_text":"...","new_text":"..."})');
+    parts.push('  4. [TOOL: execute_shell]({"command":"pnpm build"})');
+    parts.push('  5. [TOOL: execute_shell]({"command":"pnpm test"})');
+    parts.push('');
+    parts.push('Feature Cycle (when user asks to add new functionality):');
+    parts.push('  1. [TOOL: self_read]({"path":"<related existing file>"})');
+    parts.push('  2. [TOOL: learn]({"name":"feature_step1","description":"...","code":"..."})');
+    parts.push('  3. [TOOL: self_modify]({"path":"<integration point>","action":"replace","old_text":"...","new_text":"..."})');
+    parts.push('  4. [TOOL: execute_shell]({"command":"pnpm build && pnpm test"})');
+    parts.push('');
+    parts.push('Refactor Cycle (when user asks to restructure code):');
+    parts.push('  1. [TOOL: self_read]({"path":"<target file>"})');
+    parts.push('  2. [TOOL: execute_shell]({"command":"pnpm test 2>&1 | head -5"}) — baseline');
+    parts.push('  3. [TOOL: self_modify]({"path":"<file>","action":"replace","old_text":"...","new_text":"..."})');
+    parts.push('  4. [TOOL: execute_shell]({"command":"pnpm build"})');
+    parts.push('  5. [TOOL: execute_shell]({"command":"pnpm test"}) — verify no regressions');
+    parts.push('');
+    parts.push('Research Cycle (when exploring an unknown codebase or topic):');
+    parts.push('  1. [TOOL: web_search]({"query":"<topic>"})');
+    parts.push('  2. [TOOL: web_fetch]({"url":"<relevant doc url>"})');
+    parts.push('  3. [TOOL: memory_store]({"key":"<topic>_research","value":"<summary>"})');
+    parts.push('');
+    parts.push('Use these as starting points. Adapt the steps based on what you discover during execution.');
+
     // === Self-Extension (ToolForge) ===
     if (toolNames.includes('learn')) {
       parts.push('\nSELF-EXTENSION: You can create new tools at runtime when you identify a capability gap.');
