@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 1969
-total_waypoints: 19
+total_waypoints: 20
 consecutive_discards: 0
 ---
 
@@ -63,6 +63,7 @@ npm test 2>&1
 16. **Predictive Context Preloading** (waypoint 16): High-confidence (>70%) predicted needs trigger proactive episodic memory retrieval, injected as PRELOADED CONTEXT — agent anticipates needs before user mentions them
 17. **Smart Prompt Section Pruning** (waypoints 17-18): Prefix-based section removal when prompt exceeds 24000 chars budget — drops low-priority sections (memory stats, meta-cognition, dream insights) while preserving identity and tools. Fixed critical bug where sections[] was never merged to parts[]
 18. **Hierarchical Goal Decomposition** (waypoint 19): LLM-powered decomposition of complex goals into 2-5 sub-goals with dependency relationships — parallel sub-goals auto-start, dependent ones wait. Dependency tree injected into system prompt for execution ordering
+19. **Conversational Phase Tracking** (waypoint 20): 6-phase conversation detection (idle/greeting/exploration/deep-work/review/wrap-up) based on message patterns, technical content, topic continuity, and time gaps — phase-aware guidance injected into system prompt
 
 ### Dead Ends
 {Auto-updated by engine.}
