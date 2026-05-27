@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 1969
-total_waypoints: 25
+total_waypoints: 32
 consecutive_discards: 0
 ---
 
@@ -69,6 +69,13 @@ npm test 2>&1
 22. **Cross-Goal Conflict Detection** (waypoint 23): Jaccard similarity + keyword contradiction patterns detect duplicate/overlapping/contradictory goals — conflicts injected into system prompt for LLM to coordinate or merge
 23. **Tool Chain Templates** (waypoint 24): Predefined multi-step tool call sequences for debug/feature/refactor/research cycles — LLM executes proven workflows instead of improvising each step
 24. **Idle-Time Memory Consolidation** (waypoint 25): Rule-based consolidation scans recent episodic memories for recurring tags (3+ occurrences) and high-emotion patterns, stores condensed insights as semantic nodes with deduplication — runs during idle checkin timer
+25. **Adaptive Context Budget Allocation** (waypoint 26): Context window parameters dynamically adjust per conversational phase — deep-work gets 16 turns + 3000 chars for code detail, exploration gets broader summaries (2000 chars), wrap-up prioritizes facts (maxFacts=40), greeting uses compact window
+26. **Self-Healing Tool Execution** (waypoint 27): Failure classification (7 types: timeout/auth/rate_limit/invalid_args/not_found/network/resource_exhausted) with automatic recovery strategy selection — patterns tracked and injected into system prompt as TOOL FAILURE PATTERNS for LLM to learn from
+27. **Multi-Intent Detection** (waypoint 28): Rule-based detection of multiple intents in user input — supports numbered lists, semicolons, and multiple question marks. Returns structured DetectedIntent array for parallel task decomposition
+28. **Conversation Turn Importance Scoring** (waypoint 29): Multi-dimensional importance scoring for each turn — fact density (metrics/versions), decision markers, action verbs, emotional intensity, message role weighting. Returns 0-1 score with reason tags for context prioritization
+29. **Importance-Weighted Context Retention** (waypoint 30): Context window overflow now preserves high-importance older turns (score > 0.6) as "Important earlier context" instead of summarizing them. Low-importance turns go to summary. Connects turn scoring to context management
+30. **Topic Transition Detection** (waypoint 31): Extract conversation topics from messages using 9 keyword domain patterns (debugging, testing, deployment, performance, security, architecture, database, API, infrastructure). Track topic history, detect transitions, and identify returns to previous topics
+31. **Input Ambiguity Detection** (waypoint 32): Detect vague verbs (fix/optimize without target), missing targets (the thing, it), underspecified scope (everything), and pronoun references. Returns clarification suggestions so agent asks instead of guessing
 
 ### Dead Ends
 {Auto-updated by engine.}
