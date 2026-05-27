@@ -69,6 +69,10 @@ import {
   trackIntentEvolution,
   formatIntentEvolution,
   type IntentNode,
+  evaluateSignalUtilization,
+  updateUtilizationStats,
+  getUnderutilizedSections,
+  createDefaultUtilizationStats,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -2890,6 +2894,67 @@ describe('background-tasks', () => {
       const evolution = trackIntentEvolution(history);
       expect(evolution.transitions).toHaveLength(0);
       expect(evolution.dominantCategory).toBe('general');
+    });
+  });
+
+  describe('Signal Utilization Tracker', () => {
+    it('should detect utilized tool signals', () => {
+      const util = evaluateSignalUtilization(
+        ['TOOL PRIORITY', 'CONVERSATION HEALTH'],
+        'You can use the shell tool to run commands',
+      );
+      expect(util.utilization['TOOL PRIORITY']).toBe(true);
+      expect(util.ratio).toBeGreaterThan(0);
+    });
+
+    it('should detect wasted sections', () => {
+      const util = evaluateSignalUtilization(
+        ['CONVERSATION HEALTH', 'EMOTIONAL RESPONSE STRATEGY'],
+        'Here is the code you asked for.',
+      );
+      expect(util.wasted.length).toBeGreaterThan(0);
+    });
+
+    it('should always count meta sections as utilized', () => {
+      const util = evaluateSignalUtilization(
+        ['COMPOSITE RESPONSE STRATEGY', 'COGNITIVE STATE', 'PERCEPTION FUSION'],
+        'Simple response.',
+      );
+      expect(util.ratio).toBe(1);
+    });
+
+    it('should update utilization stats via EMA', () => {
+      let stats = createDefaultUtilizationStats();
+      stats = updateUtilizationStats(stats, {
+        utilization: { 'TOOL PRIORITY': true },
+        ratio: 1,
+        wasted: [],
+      });
+      expect(stats.evaluations).toBe(1);
+      expect(stats.sectionRatios['TOOL PRIORITY']).toBeGreaterThan(0.5);
+
+      // Repeated non-use should decrease
+      for (let i = 0; i < 10; i++) {
+        stats = updateUtilizationStats(stats, {
+          utilization: { 'TOOL PRIORITY': false },
+          ratio: 0,
+          wasted: ['TOOL PRIORITY'],
+        });
+      }
+      expect(stats.sectionRatios['TOOL PRIORITY']).toBeLessThan(0.5);
+    });
+
+    it('should identify underutilized sections', () => {
+      let stats = createDefaultUtilizationStats();
+      for (let i = 0; i < 10; i++) {
+        stats = updateUtilizationStats(stats, {
+          utilization: { 'CONVERSATION HEALTH': false },
+          ratio: 0,
+          wasted: ['CONVERSATION HEALTH'],
+        });
+      }
+      const under = getUnderutilizedSections(stats, 0.3);
+      expect(under).toContain('CONVERSATION HEALTH');
     });
   });
 });

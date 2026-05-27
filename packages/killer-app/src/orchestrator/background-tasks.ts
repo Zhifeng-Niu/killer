@@ -4227,3 +4227,93 @@ export function formatIntentEvolution(evolution: IntentEvolution): string {
   }
   return parts.join(' | ');
 }
+
+// ============================================================
+// Prompt Signal Utilization — 回复中认知信号利用率追踪
+// ============================================================
+
+export interface SignalUtilization {
+  /** section prefix → 是否在回复中被体现 */
+  utilization: Record<string, boolean>;
+  /** 利用率 (0-1) */
+  ratio: number;
+  /** 未被利用的 sections */
+  wasted: string[];
+}
+
+const SIGNAL_SECTION_DETECTORS: Record<string, (response: string) => boolean> = {
+  'TOOL PRIORITY': (r) => /tool|工具|command|命令/i.test(r),
+  'CONVERSATION HEALTH': (r) => /health|healthy|stuck|frustrat/i.test(r),
+  'EMOTIONAL RESPONSE STRATEGY': (r) => /understand|feel|sorry|empathy|共情|理解/i.test(r),
+  'USER EXPERTISE': (r) => /as you know|你已|since you're|as a/i.test(r),
+  'CONVERSATION RHYTHM': (r) => /briefly|short|quick|简短|简要/i.test(r),
+  'INTENT EVOLUTION': (r) => /continuing|back to|回到|继续|之前/i.test(r),
+  'TEMPORAL CONTEXT': (r) => /morning|afternoon|evening|早上|下午|晚上|today|今天/i.test(r),
+  'LEARNED BEHAVIORS': (r) => /as we|last time|上次|之前讨论/i.test(r),
+  'INPUT AMBIGUITY': (r) => /clarify|do you mean|你是说|具体/i.test(r),
+  'MULTI-INTENT': (r) => /first|second|also|首先|其次|另外/i.test(r),
+  'COMPOSITE RESPONSE STRATEGY': (r) => true, // always considered utilized (guides overall tone)
+  'COGNITIVE STATE': (r) => true, // always considered utilized (self-awareness)
+  'PERCEPTION FUSION': (r) => true, // always considered utilized (behavioral mode)
+  'STRATEGY COHERENCE': (r) => true, // always considered utilized
+};
+
+export function evaluateSignalUtilization(
+  activeSections: string[],
+  agentResponse: string,
+): SignalUtilization {
+  const utilization: Record<string, boolean> = {};
+  let used = 0;
+  const wasted: string[] = [];
+
+  for (const section of activeSections) {
+    const detector = SIGNAL_SECTION_DETECTORS[section];
+    if (detector) {
+      const isUsed = detector(agentResponse);
+      utilization[section] = isUsed;
+      if (isUsed) used++;
+      else wasted.push(section);
+    } else {
+      // 没有 detector 的 section 视为已利用
+      utilization[section] = true;
+      used++;
+    }
+  }
+
+  const ratio = activeSections.length > 0 ? used / activeSections.length : 1;
+  return { utilization, ratio, wasted };
+}
+
+export interface UtilizationStats {
+  /** section → 累计利用率 (0-1 EMA) */
+  sectionRatios: Record<string, number>;
+  /** 总评估次数 */
+  evaluations: number;
+}
+
+const UTIL_ALPHA = 0.15;
+
+export function createDefaultUtilizationStats(): UtilizationStats {
+  return { sectionRatios: {}, evaluations: 0 };
+}
+
+export function updateUtilizationStats(
+  stats: UtilizationStats,
+  utilization: SignalUtilization,
+): UtilizationStats {
+  const newRatios = { ...stats.sectionRatios };
+  for (const [section, used] of Object.entries(utilization.utilization)) {
+    const current = newRatios[section] ?? 0.5;
+    newRatios[section] = current + UTIL_ALPHA * ((used ? 1 : 0) - current);
+  }
+  return { sectionRatios: newRatios, evaluations: stats.evaluations + 1 };
+}
+
+export function getUnderutilizedSections(
+  stats: UtilizationStats,
+  threshold: number = 0.3,
+): string[] {
+  return Object.entries(stats.sectionRatios)
+    .filter(([, ratio]) => ratio < threshold)
+    .map(([section]) => section);
+}

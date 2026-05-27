@@ -4,8 +4,8 @@ status: active
 started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
-best_metric: 2251
-total_waypoints: 73
+best_metric: 2256
+total_waypoints: 74
 consecutive_discards: 0
 ---
 
@@ -117,6 +117,7 @@ npm test 2>&1
 70. **Interaction Gap Adaptive Response** (waypoint 71): generateResponseStrategyGuidance() adapts to time between interactions — rapid-fire (<30s) triggers minimal detail mode, return-after-gap (>300s) triggers context recap. Agent matches response brevity to user's interaction pace and provides context restoration after absences
 71. **Adaptive Section Weight Learning** (waypoint 72): SectionWeights tracks EMA-adjusted offsets per prompt section based on response quality feedback — high quality boosts active section weights, low quality reduces them. Weights clamp at ±0.15, persist via session, and feed into scoreSectionRelevance() as learnedOffset. Prompt pruning now adapts to which sections actually help responses
 72. **Intent Evolution Tracker** (waypoint 73): Cross-turn intent tracking with category classification (question/debug/feature/refactor/learn/config/review/deploy/general). Detects gradual shifts, sudden pivots, and intent returns. Active intent chains and dominant category injected as INTENT EVOLUTION section — LLM sees the user's evolving goals across the conversation
+73. **Prompt Signal Utilization Tracking** (waypoint 74): evaluateSignalUtilization() checks if injected cognitive signals are reflected in agent responses via keyword detectors per section. UtilizationStats tracks EMA ratios per section — underutilized sections (<0.3 ratio) are auto-downweighted and flagged in COGNITIVE STATE summary. Creates a closed-loop: inject → detect usage → adjust priority
 
 ### Dead Ends
 {Auto-updated by engine.}

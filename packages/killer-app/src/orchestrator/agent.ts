@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL, createDefaultSectionWeights, recordActiveSections, updateSectionWeights, getSectionWeightOffset, exportSectionWeights, importSectionWeights, type SectionWeights, classifyIntent, extractIntentSummary, trackIntentEvolution, formatIntentEvolution, type IntentNode, type IntentEvolution } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL, createDefaultSectionWeights, recordActiveSections, updateSectionWeights, getSectionWeightOffset, exportSectionWeights, importSectionWeights, type SectionWeights, classifyIntent, extractIntentSummary, trackIntentEvolution, formatIntentEvolution, type IntentNode, type IntentEvolution, evaluateSignalUtilization, updateUtilizationStats, getUnderutilizedSections, createDefaultUtilizationStats, type UtilizationStats } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -194,6 +194,9 @@ export class KillerAgent {
   // 意图演变追踪
   private intentHistory: IntentNode[] = [];
   private turnCounter = 0;
+
+  // 认知信号利用率追踪
+  private utilizationStats: UtilizationStats = createDefaultUtilizationStats();
 
   // 实验驱动的行为洞察（成功的实验模式，注入系统 prompt）
   private behavioralInsights: string[] = [];
@@ -3305,6 +3308,24 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       if (this.sectionWeights.lastActiveSections.length > 0) {
         this.sectionWeights = updateSectionWeights(this.sectionWeights, score.overall);
       }
+
+      // 评估认知信号利用率
+      if (this.sectionWeights.lastActiveSections.length > 0) {
+        const util = evaluateSignalUtilization(this.sectionWeights.lastActiveSections, agentResponse);
+        this.utilizationStats = updateUtilizationStats(this.utilizationStats, util);
+
+        // 持续低利用率的 section 自动降权
+        const underutilized = getUnderutilizedSections(this.utilizationStats, 0.3);
+        for (const section of underutilized) {
+          const current = this.sectionWeights.offsets[section] ?? 0;
+          if (current > -0.1) {
+            this.sectionWeights = {
+              ...this.sectionWeights,
+              offsets: { ...this.sectionWeights.offsets, [section]: current - 0.02 },
+            };
+          }
+        }
+      }
     } catch {
       // 质量评估失败不影响主循环
     }
@@ -3838,7 +3859,9 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     if (summary.activeModules.length < 2) return undefined;
     const metricParts = Object.entries(summary.metrics).map(([k, v]) => `${k}=${v}`).join(' ');
     const tuning = `tuning=[em:${this.cognitiveTuning.emotionThreshold.toFixed(2)} rh:${this.cognitiveTuning.rhythmThreshold.toFixed(2)} fus:${this.cognitiveTuning.fusionAttentionThreshold.toFixed(2)}]`;
-    return `${summary.oneLiner} | ${metricParts} | ${tuning}`;
+    const underutilized = getUnderutilizedSections(this.utilizationStats, 0.3);
+    const utilInfo = underutilized.length > 0 ? ` | low-util:[${underutilized.join(',')}]` : '';
+    return `${summary.oneLiner} | ${metricParts} | ${tuning}${utilInfo}`;
   }
 
   private computeResponseStrategy(p?: { flow?: ReturnType<typeof predictConversationFlow>; phase?: { phase: string; confidence: number }; health?: ReturnType<typeof monitorConversationHealth>; rhythm?: ReturnType<typeof analyzeConversationRhythm>; expertise?: ReturnType<typeof buildUserExpertiseProfile> }): string | undefined {
