@@ -6,9 +6,9 @@
  * 流式输出：光标闪烁动画。
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text, useStdout } from 'ink';
-import { colors, box, bubble, statusDot, statusColor } from './theme.js';
+import { colors, box, bubble, statusDot, statusColor, icons, spinners } from './theme.js';
 
 export interface ChatMessage {
   id: string;
@@ -53,17 +53,30 @@ function renderInline(text: string): React.ReactNode {
   return parts.length > 0 ? <>{parts}</> : text;
 }
 
-/** 渲染消息内容 — 标题/列表/代码块 */
+/** 渲染消息内容 — tool 调用/结果/错误 + 标题/列表/代码块 */
 function renderContent(text: string): React.ReactNode {
   const lines = text.split('\n');
   const elements: React.ReactNode[] = [];
   let inCodeBlock = false;
   let codeBuffer: string[] = [];
   let codeLang = '';
+  let inToolResult = false;
+  let toolResultTool = '';
+  let toolResultBuffer: string[] = [];
+
+  const flushToolResult = (idx: number) => {
+    elements.push(renderToolResult(toolResultTool, toolResultBuffer.join('\n'), idx));
+    inToolResult = false;
+    toolResultTool = '';
+    toolResultBuffer = [];
+  };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+
+    // ── Code block ──
     if (line.startsWith('```')) {
+      if (inToolResult) flushToolResult(i);
       if (inCodeBlock) {
         elements.push(renderCodeBlock(codeBuffer, codeLang, i));
         codeBuffer = [];
@@ -77,6 +90,90 @@ function renderContent(text: string): React.ReactNode {
     }
     if (inCodeBlock) { codeBuffer.push(line); continue; }
 
+    // ── Tool result data (multi-line) ──
+    if (inToolResult) {
+      if (/^\[.*\]/.test(line) || line.startsWith('#') || line.startsWith('---')) {
+        flushToolResult(i);
+      } else {
+        toolResultBuffer.push(line);
+        continue;
+      }
+    }
+
+    // ── [Reasoning...] ──
+    if (/^\[Reasoning[^]]*\]\s*$/.test(line)) {
+      elements.push(
+        <Box key={`reason-${i}`} marginTop={1} marginBottom={1}>
+          <Text color={colors.warning}>◐ </Text>
+          <Text color={colors.muted} italic>thinking</Text>
+        </Box>
+      );
+      continue;
+    }
+
+    // ── [Tool Result: name] (starts multi-line capture) ──
+    const resultMatch = line.match(/^\[Tool Result: (\w+)\]\s*$/);
+    if (resultMatch) {
+      inToolResult = true;
+      toolResultTool = resultMatch[1];
+      continue;
+    }
+
+    // ── [Tool Blocked: name] reason ──
+    const blockedMatch = line.match(/^\[Tool Blocked: (\w+)\]\s*(.*)/);
+    if (blockedMatch) {
+      elements.push(
+        <Box key={`blocked-${i}`} marginTop={1} marginLeft={1} borderStyle="bold" borderLeft borderRight={false} borderTop={false} borderBottom={false} borderColor={colors.warning} paddingX={1}>
+          <Box flexDirection="column">
+            <Text color={colors.warning} bold>{icons.warn} {blockedMatch[1]}</Text>
+            <Text color={colors.muted}>{blockedMatch[2] || 'requires confirmation'}</Text>
+            <Text color={colors.dimmed}> /approve {blockedMatch[1]}</Text>
+          </Box>
+        </Box>
+      );
+      continue;
+    }
+
+    // ── [Tool Error: name] error ──
+    const terrorMatch = line.match(/^\[Tool Error: (\w+)\]\s*(.*)/);
+    if (terrorMatch) {
+      elements.push(
+        <Box key={`terror-${i}`} marginTop={1} marginLeft={1} borderStyle="bold" borderLeft borderRight={false} borderTop={false} borderBottom={false} borderColor={colors.error} paddingX={1}>
+          <Box flexDirection="column">
+            <Text color={colors.error} bold>{icons.error} {terrorMatch[1]}</Text>
+            <Text color={colors.muted}>{terrorMatch[2]}</Text>
+          </Box>
+        </Box>
+      );
+      continue;
+    }
+
+    // ── [TOOL: name](params) — pre-execution call ──
+    const callMatch = line.match(/\[TOOL:\s*(\w+)\]\((.*?)\)/);
+    if (callMatch) {
+      const params = callMatch[2];
+      elements.push(
+        <Box key={`tool-${i}`} marginTop={1} marginLeft={1} borderStyle="single" borderLeft borderRight={false} borderTop={false} borderBottom={false} borderColor={colors.primaryDim} paddingX={1}>
+          <Box flexDirection="column">
+            <Text color={colors.primary}>{icons.cell} {callMatch[1]}</Text>
+            {params && <Text color={colors.dimmed}>{params.length > 120 ? params.slice(0, 120) + '…' : params}</Text>}
+          </Box>
+        </Box>
+      );
+      continue;
+    }
+
+    // ── Horizontal rule ──
+    if (/^---+\s*$/.test(line)) {
+      elements.push(
+        <Box key={`hr-${i}`} marginTop={1}>
+          <Text color={colors.faint}>{box.hDot.repeat(20)}</Text>
+        </Box>
+      );
+      continue;
+    }
+
+    // ── Markdown: headings, lists, quotes ──
     if (line.startsWith('### ')) {
       elements.push(
         <Box key={`h3-${i}`} marginTop={1}>
@@ -117,12 +214,25 @@ function renderContent(text: string): React.ReactNode {
     }
   }
 
-  // 未关闭的代码块
   if (inCodeBlock && codeBuffer.length > 0) {
     elements.push(renderCodeBlock(codeBuffer, codeLang, lines.length));
   }
+  if (inToolResult) flushToolResult(lines.length);
 
   return <Box flexDirection="column">{elements}</Box>;
+}
+
+/** Tool 结果渲染 — 带状态图标 + 可折叠数据 */
+function renderToolResult(tool: string, data: string, keyBase: number): React.ReactNode {
+  const truncated = data.length > 300 ? data.slice(0, 300) + '…' : data;
+  return (
+    <Box key={`result-${keyBase}`} marginTop={1} marginLeft={1} borderStyle="single" borderLeft borderRight={false} borderTop={false} borderBottom={false} borderColor={colors.accent} paddingX={1}>
+      <Box flexDirection="column">
+        <Text color={colors.accent}>{icons.success} {tool}</Text>
+        {data && <Text color={colors.dimmed}>{truncated}</Text>}
+      </Box>
+    </Box>
+  );
 }
 
 /** 代码块渲染 — 带标签 + 左边线 */
@@ -151,8 +261,8 @@ function renderCodeBlock(lines: string[], lang: string, keyBase: number): React.
 export function ChatPanel({ messages, isThinking }: ChatPanelProps) {
   const { stdout } = useStdout();
   const termHeight = stdout?.rows ?? 24;
-  // Header 1行 + Input 2行 + Spinner 2行 + 边距 2行
-  const reservedLines = 7;
+  const termWidth = stdout?.columns ?? 80;
+  const reservedLines = 10;
   const maxLines = Math.max(termHeight - reservedLines, 6);
 
   // 从最新消息往前推算可见区域
@@ -160,7 +270,7 @@ export function ChatPanel({ messages, isThinking }: ChatPanelProps) {
   let usedLines = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
-    const lines = estimateMessageLines(msg);
+    const lines = estimateMessageLines(msg, termWidth);
     if (usedLines + lines > maxLines && visible.length > 0) break;
     visible.unshift(msg);
     usedLines += lines;
@@ -185,28 +295,49 @@ export function ChatPanel({ messages, isThinking }: ChatPanelProps) {
   );
 }
 
-/** 思考中动画 */
+/** 流式输出光标 — 脉冲闪烁 */
+function StreamingCursor() {
+  const frames = spinners.streaming;
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setFrame(f => (f + 1) % frames.length), 350);
+    return () => clearInterval(timer);
+  }, [frames.length]);
+
+  return <Text color={colors.primary}> {frames[frame]}</Text>;
+}
+
+/** 思考中动画 — 月相旋转 */
 function ThinkingIndicator() {
+  const frames = spinners.thinking;
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setFrame(f => (f + 1) % frames.length), 180);
+    return () => clearInterval(timer);
+  }, [frames.length]);
+
   return (
     <Box marginLeft={2} marginTop={1}>
-      <Text color={colors.primary}>◎ </Text>
-      <Text color={colors.dimmed}>思考中</Text>
-      <Text color={colors.dimmed}> ...</Text>
+      <Text color={colors.primary}>{frames[frame]} </Text>
+      <Text color={colors.dimmed}>thinking</Text>
     </Box>
   );
 }
 
 /** 估算消息占用的终端行数 */
-function estimateMessageLines(msg: ChatMessage): number {
+function estimateMessageLines(msg: ChatMessage, termWidth: number): number {
+  const sidebarW = termWidth >= 80 ? 24 : 0;
+  const contentWidth = Math.max(termWidth - sidebarW - 6, 30);
   const wrappedLines = msg.content.split('\n').reduce((sum, line) => {
-    return sum + Math.max(1, Math.ceil(line.length / 80));
+    return sum + Math.max(1, Math.ceil(line.length / contentWidth));
   }, 0);
-  // 2 行头部 + 内容行
-  return 2 + Math.max(msg.content.split('\n').length, wrappedLines);
+  return 2 + Math.ceil(Math.max(msg.content.split('\n').length, wrappedLines) * 1.1);
 }
 
 /** 消息气泡 — 按角色区分视觉风格 */
-function MessageBubble({ message }: { message: ChatMessage }) {
+const MessageBubble = React.memo(function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user';
   const isAgent = message.role === 'agent';
   const isError = message.role === 'error';
@@ -259,16 +390,14 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         {message.duration != null && !message.streaming && (
           <Text color={colors.dimmed}> {formatDuration(message.duration)}</Text>
         )}
-        {message.streaming && (
-          <Text color={colors.primary}> ▊</Text>
-        )}
+        {message.streaming && <StreamingCursor />}
       </Box>
       <Box marginLeft={3} flexDirection="column">
         {renderContent(message.content)}
       </Box>
     </Box>
   );
-}
+});
 
 function formatTime(ts: number): string {
   const d = new Date(ts);

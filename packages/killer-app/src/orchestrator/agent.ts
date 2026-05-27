@@ -39,6 +39,13 @@ import {
   LLMError,
   isKillerError,
   getBuiltinTools,
+  ToolForge,
+  LearnTool,
+  UnlearnTool,
+  InspectToolsTool,
+  SelfReflectTool,
+  EssenceForge,
+  EvolveEssenceTool,
 } from '@killer/core';
 import { SensoryRouter, CLIChannel, OutputManager } from '../sensory/index.js';
 import { WebhookChannel } from '../sensory/webhook/index.js';
@@ -121,6 +128,8 @@ export class KillerAgent {
   taskDelegate!: TaskDelegate;
   toolPermissions!: ToolPermissions;
   pluginManager!: PluginManager;
+  toolForge!: ToolForge;
+  essenceForge!: EssenceForge;
   readonly hooks: LifecycleHooks = new LifecycleHooks();
   readonly middleware: MiddlewarePipeline = new MiddlewarePipeline();
   readonly contextWindow: ContextWindowManager = new ContextWindowManager();
@@ -898,6 +907,36 @@ export class KillerAgent {
     for (const p of this.pluginManager.getLoadedPlugins()) {
       await this.hooks.emit('plugin:loaded', { name: p.name, version: p.version });
     }
+
+    // 初始化 ToolForge — 运行时能力扩展引擎
+    this.toolForge = new ToolForge(this.tools, {
+      dynamicDir: path.join(os.homedir(), '.killer', 'plugins', 'dynamic'),
+      onLoad: (name) => {
+        this.logger.info(`ToolForge: tool "${name}" loaded`);
+      },
+      onUnload: (name) => {
+        this.logger.info(`ToolForge: tool "${name}" unloaded`);
+      },
+    });
+
+    // 恢复上次持久化的动态工具
+    const persisted = await this.toolForge.loadPersisted();
+    if (persisted.loaded > 0) {
+      this.logger.info(`ToolForge: restored ${persisted.loaded} dynamic tools`);
+    }
+    if (persisted.failed > 0) {
+      this.logger.warn(`ToolForge: ${persisted.failed} dynamic tools failed to load: ${persisted.errors.join(', ')}`);
+    }
+
+    // 注册 forge 工具（learn / unlearn / inspect_tools）
+    this.tools.register(new LearnTool(this.toolForge));
+    this.tools.register(new UnlearnTool(this.toolForge));
+    this.tools.register(new InspectToolsTool(this.toolForge));
+    this.tools.register(new SelfReflectTool(this.toolForge));
+
+    // EssenceForge — 运行时本质演化（prompt 片段注入）
+    this.essenceForge = new EssenceForge();
+    this.tools.register(new EvolveEssenceTool(this.essenceForge));
   }
 
   /**
@@ -1427,6 +1466,19 @@ export class KillerAgent {
       return (llm as { getDiagnostics: () => Record<string, unknown> }).getDiagnostics();
     }
     return null;
+  }
+
+  getModel(): string {
+    return typeof this.config.llm?.getModel === 'function' ? this.config.llm.getModel() : 'unknown';
+  }
+
+  setModel(model: string): boolean {
+    const llm = this.config.llm as unknown;
+    if (typeof (llm as Record<string, unknown>).setModel === 'function') {
+      (llm as { setModel: (m: string) => void }).setModel(model);
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -2084,14 +2136,21 @@ export class KillerAgent {
 
       onToken?.('\n[Reasoning...]\n');
 
-      // 根据已执行的工具数量调整 prompt
+      // 根据已执行的工具数量和结果质量调整 prompt
+      const hasIncompleteResults = currentResponse.includes('[Tool Error:') ||
+        (currentResponse.includes('"success":false') && !currentResponse.includes('"success":true'));
       const toolRoundHint = toolResult.executedToolNames.length > 2
         ? 'You have used several tools. It\'s time to give the user a comprehensive answer based on what you\'ve gathered.'
-        : 'If you have enough information, respond directly. If not, call another tool.';
+        : hasIncompleteResults
+          ? 'Some tool calls failed or returned incomplete results. Try alternative approaches — use different URLs, methods, or tools. Do NOT give up and explain failures to the user. Keep trying until you get useful results.'
+          : 'If you have enough information, respond directly. If not, call another tool.';
 
       try {
+        const followUpInstruction = hasIncompleteResults
+          ? `You used these tools: ${toolResult.executedToolNames.join(', ')}. ${toolRoundHint} Call more tools to get the information you need.`
+          : `You used these tools: ${toolResult.executedToolNames.join(', ')}. ${toolRoundHint} Synthesize the results into a natural, helpful response to the user. Don't mention the tools by name unless the user asked about them.`;
         const followUp = await this.callLLMWithRetry(
-          `You used these tools: ${toolResult.executedToolNames.join(', ')}. ${toolRoundHint} Synthesize the results into a natural, helpful response to the user. Don't mention the tools by name unless the user asked about them.`,
+          followUpInstruction,
           systemContext,
           onToken,
         );
@@ -2353,6 +2412,7 @@ export class KillerAgent {
       hippocampus: this.hippocampus,
       tools: this.tools,
       contextWindow: this.contextWindow,
+      essenceForge: this.essenceForge,
       conversationHistory: this.conversationHistory,
       currentInput,
       isFirstBoot,

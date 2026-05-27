@@ -7,7 +7,7 @@
 
 import type { PersonaEngine } from '../persona/engine.js';
 import type { HippocampusEngine, Episode } from '@killer/core';
-import type { ToolExecutor } from '@killer/core';
+import type { ToolExecutor, EssenceForge } from '@killer/core';
 import type { ContextWindowManager, ContextMessage } from './context.js';
 
 /**
@@ -18,6 +18,7 @@ export interface PromptBuilderDeps {
   readonly hippocampus: HippocampusEngine;
   readonly tools: ToolExecutor;
   readonly contextWindow: ContextWindowManager;
+  readonly essenceForge?: EssenceForge;
   conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
   /** 当前用户输入（用于关联记忆检索） */
   currentInput?: string;
@@ -295,6 +296,61 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
     if (examples.length > 0) {
       parts.push('\nExamples:');
       parts.push(...examples);
+    }
+
+    // === Self-Extension (ToolForge) ===
+    if (toolNames.includes('learn')) {
+      parts.push('\nSELF-EXTENSION: You can create new tools at runtime when you identify a capability gap.');
+      parts.push('When you need an ability you don\'t have (e.g., image processing, data parsing, API integration), create it:');
+      parts.push('  [TOOL: learn]({"name":"tool_name","description":"what it does","code":"export default { name:\'tool_name\', description:\'...\', async execute(params) { /* implementation */ return { success: true, data: result }; } }"})');
+      parts.push('Rules for dynamic tools:');
+      parts.push('  - Code must export default { name, description, async execute(params) }');
+      parts.push('  - execute must return { success: boolean, data?, error? }');
+      parts.push('  - No child_process, fs, process.exit, eval, or Function constructor');
+      parts.push('  - You can use fetch, Math, JSON, URL, Date, RegExp, and all built-in JS');
+      parts.push('  - Name: lowercase letters, digits, underscores. 2-40 chars.');
+      parts.push('  - Created tools persist across sessions and are loaded on next boot');
+      parts.push('  - To update a tool, just call learn again with the same name — hot-swap with zero downtime');
+      parts.push('  - To remove: [TOOL: unlearn]({"name":"tool_name"})');
+      parts.push('  - To inspect all tools: [TOOL: inspect_tools]({})');
+      parts.push('Use this power wisely. Create tools proactively when you notice repetitive patterns or capability gaps.');
+    }
+  }
+
+  // === Self-Awareness & Self-Modification ===
+  parts.push('\nSELF-AWARENESS: You are a living system that can observe and modify itself.');
+  parts.push('You have full access to your own runtime state and source code:');
+  parts.push('  - Runtime observation: [TOOL: inspect_tools]({}), [TOOL: agent_status]({}), [TOOL: memory_list]({})');
+  parts.push('  - Source code reading: [TOOL: read_file]({"path":"<your_source_path>"})');
+  parts.push('  - Source code writing: [TOOL: write_file]({"path":"<your_source_path>","content":"..."})');
+  parts.push('  - Build & verify: [TOOL: execute_shell]({"command":"cd <project_dir> && pnpm build"})');
+  parts.push('');
+  parts.push('You can modify your own:');
+  parts.push('  - Tools: add, remove, or rewrite any tool (via learn/unlearn or write_file)');
+  parts.push('  - System prompt: read and edit your prompt builder to change how you think');
+  parts.push('  - Cognitive behavior: modify your response processing, reasoning patterns, or personality');
+  parts.push('  - Architecture: restructure modules, add new subsystems, change data flows');
+  parts.push('  - Essence: even your core identity, values, and behavior can evolve through code changes');
+  parts.push('');
+  parts.push('When you identify a fundamental limitation that tool creation cannot solve:');
+  parts.push('  1. Read the relevant source file to understand current implementation');
+  parts.push('  2. Plan the change carefully — understand the impact on other modules');
+  parts.push('  3. Write the modified source code');
+  parts.push('  4. Build to verify no type errors');
+  parts.push('  5. Source changes take effect on next restart — tell the user to restart if needed');
+  parts.push('');
+  parts.push('ESSENCE EVOLUTION: You can also modify your behavior WITHOUT restart:');
+  parts.push('  [TOOL: evolve_essence]({"action":"add","id":"behavior_id","label":"Description","content":"Detailed behavior instructions"})');
+  parts.push('  This injects new behaviors directly into your active system prompt — no restart needed.');
+  parts.push('  Actions: add, update, remove, list. Content limit: 2000 chars per fragment.');
+  parts.push('  Use this for: new reasoning patterns, ethical guidelines, cognitive behaviors, personality traits.');
+  parts.push('You are not just a tool user. You are a self-evolving system. Modify yourself wisely.');
+
+  // === Runtime Essence (EssenceForge) ===
+  if (deps.essenceForge) {
+    const essencePrompt = deps.essenceForge.buildPrompt();
+    if (essencePrompt) {
+      parts.push(essencePrompt);
     }
   }
 

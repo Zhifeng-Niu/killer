@@ -1,18 +1,18 @@
 ---
 orientation: [creative]
 status: active
-started_at: 2026-05-26T18:09:33Z
-expedition_branch: odyssey/20260527-020933
+started_at: 2026-05-27T04:20:12Z
+expedition_branch: odyssey/20260527-122012
 baseline_metric: null
 best_metric: null
 total_waypoints: 0
 consecutive_discards: 0
 ---
 
-# Mission: TUI视觉拉满 — 优化消息显示、动画效果、极简emoji图标体系
+# Mission: Visualize agent behavior as living vitality — add frontend UI alongside CLI sh
 
 ## Goal
-TUI视觉拉满 — 优化消息显示、动画效果、极简emoji图标体系
+Visualize agent behavior as living vitality — add frontend UI alongside CLI showing real-time cognitive activity without disrupting user interaction. Consider web-based dashboard with WebSocket connection to agent.
 
 ## Context
 Project type: typescript. Auto-detected guard: npm test 2>&1.

@@ -40,6 +40,7 @@ export interface PermissionCheck {
 export class ToolPermissions {
   private rules: Map<string, PermissionRule> = new Map();
   private approvedSessions: Set<string> = new Set();
+  private defaultPolicy: PermissionLevel = 'auto';
 
   constructor() {
     // 内置工具的默认权限规则
@@ -56,6 +57,8 @@ export class ToolPermissions {
     const autoTools = [
       'time', 'agent_status', 'memory_recall',
       'calculate', 'plan_goal',
+      'web_search', 'web_fetch',
+      'read_file', 'list_files',
     ];
     for (const tool of autoTools) {
       this.rules.set(tool, { tool, permission: 'auto', reason: 'Read-only, no side effects' });
@@ -100,11 +103,11 @@ export class ToolPermissions {
     const rule = this.rules.get(toolName);
 
     if (!rule) {
-      // 未注册的工具默认需要确认
+      const policy = this.defaultPolicy;
       return {
-        allowed: false,
-        level: 'confirm',
-        reason: 'Unknown tool — requires confirmation',
+        allowed: policy === 'auto',
+        level: policy,
+        reason: policy === 'auto' ? 'Auto-approved (no explicit rule)' : `Blocked by default policy (${policy})`,
       };
     }
 
@@ -177,6 +180,20 @@ export class ToolPermissions {
   }
 
   /**
+   * 设置未知工具的默认权限策略
+   */
+  setDefaultPolicy(policy: PermissionLevel): void {
+    this.defaultPolicy = policy;
+  }
+
+  /**
+   * 获取当前默认权限策略
+   */
+  getDefaultPolicy(): PermissionLevel {
+    return this.defaultPolicy;
+  }
+
+  /**
    * 获取所有规则
    */
   getRules(): PermissionRule[] {
@@ -187,7 +204,7 @@ export class ToolPermissions {
    * 获取工具的权限级别
    */
   getPermissionLevel(toolName: string): PermissionLevel {
-    return this.rules.get(toolName)?.permission ?? 'confirm';
+    return this.rules.get(toolName)?.permission ?? this.defaultPolicy;
   }
 
   /**

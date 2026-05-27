@@ -4,6 +4,9 @@
  * 将 HTTP 请求连接到 KillerAgent 方法
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { APIServer, RouteHandler, WSConnection } from './types.js';
 import type { KillerAgent } from '../orchestrator/agent.js';
 import { MetricsCollector } from '../metrics/index.js';
@@ -393,12 +396,13 @@ export function registerRoutes(server: APIServer, agent: KillerAgent): void {
 
     const mission = cerebellum.createMission({
       goal: body.goal,
-      orientation: body.orientation,
-      guard: body.guard,
-      maxWaypoints: body.maxWaypoints,
+      ...(body.orientation && { orientation: body.orientation }),
+      ...(body.guard && { guard: body.guard }),
+      ...(body.maxWaypoints && { maxWaypoints: body.maxWaypoints }),
     });
 
     cerebellum.activateMission(mission);
+    server.pushSSE('mission:created', { mission });
 
     return { status: 201, body: { mission } };
   });
@@ -452,7 +456,146 @@ export function registerRoutes(server: APIServer, agent: KillerAgent): void {
       return { status: 200, body: { deactivated: false } };
     }
     sharedCerebellum.activateMission(null as unknown as Parameters<typeof sharedCerebellum.activateMission>[0]);
+    sharedCerebellum = null;
+    server.pushSSE('mission:stopped', {});
     return { status: 200, body: { deactivated: true } };
+  });
+
+  // === Cerebellum: Experiment Lifecycle ===
+
+  server.route('POST', '/mission/experiment', (req) => {
+    const cerebellum = getCerebellum();
+    if (!cerebellum.hasActiveMission()) {
+      return { status: 400, body: { error: 'No active mission' } };
+    }
+    const body = req.body as { hypothesis?: string };
+    if (!body.hypothesis || typeof body.hypothesis !== 'string') {
+      return { status: 400, body: { error: 'hypothesis is required' } };
+    }
+    return cerebellum.beginExperiment(body.hypothesis)
+      .then(experiment => {
+        server.pushSSE('experiment:begin', { experiment });
+        return { status: 201, body: { experiment } };
+      })
+      .catch(err => ({ status: 500, body: { error: err instanceof Error ? err.message : String(err) } }));
+  });
+
+  server.route('GET', '/mission/experiment', () => {
+    const cerebellum = getCerebellum();
+    const experiment = cerebellum.getActiveExperiment();
+    if (!experiment) {
+      return { status: 200, body: { active: false } };
+    }
+    return { status: 200, body: { active: true, experiment } };
+  });
+
+  server.route('GET', '/mission/compass', () => {
+    const cerebellum = getCerebellum();
+    if (!cerebellum.hasActiveMission()) {
+      return { status: 400, body: { error: 'No active mission' } };
+    }
+    const history = cerebellum.getHistory();
+    const reading = cerebellum.readCompass(history);
+    return { status: 200, body: { compass: reading } };
+  });
+
+  server.route('POST', '/mission/experiment/verify', async () => {
+    const cerebellum = getCerebellum();
+    const experiment = cerebellum.getActiveExperiment();
+    if (!experiment) {
+      return { status: 400, body: { error: 'No active experiment' } };
+    }
+    try {
+      const verification = await cerebellum.verify(experiment);
+      server.pushSSE('experiment:verified', { experimentId: experiment.id, verification });
+      return { status: 200, body: { experimentId: experiment.id, verification } };
+    } catch (err) {
+      return { status: 500, body: { error: err instanceof Error ? err.message : String(err) } };
+    }
+  });
+
+  server.route('POST', '/mission/experiment/decide', () => {
+    const cerebellum = getCerebellum();
+    const experiment = cerebellum.getActiveExperiment();
+    if (!experiment) {
+      return { status: 400, body: { error: 'No active experiment' } };
+    }
+    const history = cerebellum.getHistory();
+    const compassReading = cerebellum.readCompassForHypothesis(history, experiment.hypothesis);
+    return cerebellum.verify(experiment)
+      .then(verification => {
+        const decision = cerebellum.decide(experiment, verification, history);
+        server.pushSSE('experiment:decided', { experimentId: experiment.id, decision, verification });
+        return { status: 200, body: { decision, verification, compass: compassReading } };
+      })
+      .catch(err => ({ status: 500, body: { error: err instanceof Error ? err.message : String(err) } }));
+  });
+
+  server.route('POST', '/mission/experiment/record', (req) => {
+    const cerebellum = getCerebellum();
+    const experiment = cerebellum.getActiveExperiment();
+    if (!experiment) {
+      return { status: 400, body: { error: 'No active experiment' } };
+    }
+    const body = req.body as { decision?: string };
+    if (!body.decision || !['keep', 'discard', 'surprise'].includes(body.decision)) {
+      return { status: 400, body: { error: 'decision must be keep, discard, or surprise' } };
+    }
+    return cerebellum.verify(experiment)
+      .then(verification => {
+        cerebellum.recordOutcome(experiment, body.decision as 'keep' | 'discard' | 'surprise', verification);
+        server.pushSSE('experiment:recorded', { experimentId: experiment.id, decision: body.decision });
+        return { status: 200, body: { recorded: true, experimentId: experiment.id, decision: body.decision } };
+      })
+      .catch(err => ({ status: 500, body: { error: err instanceof Error ? err.message : String(err) } }));
+  });
+
+  // === Dashboard: static file serving ===
+
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const dashboardDir = path.resolve(__dirname, '../../dashboard');
+
+  const MIME_TYPES: Record<string, string> = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+  };
+
+  server.streamRoute('GET', '/dashboard', async (_req, res) => {
+    const filePath = path.join(dashboardDir, 'index.html');
+    try {
+      const content = await fs.promises.readFile(filePath);
+      res.writeHead(200, { 'Content-Type': MIME_TYPES['.html']! });
+      res.end(content);
+    } catch {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Dashboard not found' }));
+    }
+  });
+
+  server.streamRoute('GET', '/dashboard/:file', async (_req, res, params) => {
+    const fileName = params['file'];
+    if (!fileName || fileName.includes('..')) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid file name' }));
+      return;
+    }
+    const ext = path.extname(fileName).toLowerCase();
+    const contentType = MIME_TYPES[ext];
+    if (!contentType) {
+      res.writeHead(415, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unsupported file type' }));
+      return;
+    }
+    const filePath = path.join(dashboardDir, fileName);
+    try {
+      const content = await fs.promises.readFile(filePath);
+      res.writeHead(200, { 'Content-Type': contentType });
+      res.end(content);
+    } catch {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'File not found' }));
+    }
   });
 
   // === SSE: consciousness event stream ===

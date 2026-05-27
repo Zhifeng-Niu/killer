@@ -20,6 +20,16 @@ interface KillerTUIProps {
 
 let msgCounter = 0;
 
+const KNOWN_TUI_COMMANDS = new Set([
+  'help', 'status', 'cells', 'spawn', 'goals', 'memory',
+  'persona', 'emotions', 'narrative', 'predictions',
+  'dream', 'think', 'evolve', 'delegate', 'diagnostics',
+  'health', 'metrics', 'sessions', 'save', 'load',
+  'mission', 'key', 'approve', 'deny', 'model', 'mode',
+  'find', 'retry', 'clear', 'learn', 'unlearn', 'inspect',
+  'exit', 'quit',
+]);
+
 function createMessage(role: ChatMessage['role'], content: string, streaming = false): ChatMessage {
   return { id: `msg-${++msgCounter}`, role, content, streaming, timestamp: Date.now() };
 }
@@ -131,19 +141,22 @@ export function KillerTUI({ agent }: KillerTUIProps) {
       return;
     }
 
-    // 命令处理
+    // 命令处理 — 只匹配已知命令（文件路径如 /Users/... 不拦截）
     if (input.startsWith('/')) {
-      const output = await handleCommand(input, agent);
-      if (output) {
-        if (output.startsWith('__EXIT__')) {
-          setMessages(prev => [...prev, createMessage('agent', output.slice(8))]);
-          await agent.shutdown();
-          exit();
-          return;
+      const cmd = input.slice(1).split(/\s/)[0].toLowerCase();
+      if (KNOWN_TUI_COMMANDS.has(cmd)) {
+        const output = await handleCommand(input, agent);
+        if (output) {
+          if (output.startsWith('__EXIT__')) {
+            setMessages(prev => [...prev, createMessage('agent', output.slice(8))]);
+            await agent.shutdown();
+            exit();
+            return;
+          }
+          setMessages(prev => [...prev, createMessage('system', output)]);
         }
-        setMessages(prev => [...prev, createMessage('system', output)]);
+        return;
       }
-      return;
     }
 
     // API Key 智能检测 — 用户直接粘贴 Key
@@ -172,19 +185,31 @@ export function KillerTUI({ agent }: KillerTUIProps) {
 
     try {
       let fullResponse = '';
+      let lastFlush = 0;
+      let statusSet = false;
+      const FLUSH_MS = 60;
       await agent.processInput(input, 'cli', (token) => {
         if (ac.signal.aborted) return;
         fullResponse += token;
-        setAgentStatus('streaming');
-        setMessages(prev => prev.map(m =>
-          m.id === agentMsgId ? { ...m, content: fullResponse } : m
-        ));
+        if (!statusSet) {
+          statusSet = true;
+          setAgentStatus('streaming');
+        }
+        const now = Date.now();
+        if (now - lastFlush >= FLUSH_MS) {
+          lastFlush = now;
+          const snapshot = fullResponse;
+          setMessages(prev => prev.map(m =>
+            m.id === agentMsgId ? { ...m, content: snapshot } : m
+          ));
+        }
       });
 
       if (!ac.signal.aborted) {
         const elapsed = Date.now() - startTime;
+        const finalContent = fullResponse;
         setMessages(prev => prev.map(m =>
-          m.id === agentMsgId ? { ...m, streaming: false, duration: elapsed } : m
+          m.id === agentMsgId ? { ...m, content: finalContent, streaming: false, duration: elapsed } : m
         ));
       }
     } catch (error) {
@@ -322,6 +347,13 @@ async function handleCommand(input: string, agent: KillerAgent): Promise<string>
         '  /save        — 保存会话',
         '  /load        — 加载会话',
         '  /key <key>   — 热更新 API Key',
+        '  /approve <t> — 批准工具执行',
+        '  /deny <t>    — 禁止工具执行',
+        '  /model [n]   — 查看/切换模型',
+        '  /mode [m]    — 权限策略 auto|confirm|deny',
+        '  /learn       — 工具自创建说明',
+        '  /unlearn <t> — 移除动态工具',
+        '  /inspect     — 查看所有工具',
         '  /mission     — Cerebellum 任务管理',
         '  /exit        — 退出',
       ].join('\n');
@@ -373,6 +405,22 @@ async function handleCommand(input: string, agent: KillerAgent): Promise<string>
       const metrics = MetricsCollector.getInstance();
       const report = metrics.healthCheck();
       return `LLM: ${report.llm.calls} calls, ${report.llm.errors} errors, avg ${report.llm.avgLatency}s`;
+    }
+    case 'model': {
+      const current = agent.getModel();
+      if (!args) return `Current: ${current}\nSwitch: /model <name>`;
+      if (agent.setModel(args.trim())) {
+        return `Model switched: ${current} → ${args.trim()}`;
+      }
+      return `Cannot switch model (provider does not support hot-swap). Current: ${current}`;
+    }
+    case 'mode': {
+      const cur = agent.toolPermissions.getDefaultPolicy();
+      if (!args) return `Permission mode: ${cur}\nSwitch: /mode auto | confirm | deny`;
+      const mode = args.trim().toLowerCase();
+      if (!['auto', 'confirm', 'deny'].includes(mode)) return 'Usage: /mode auto | confirm | deny';
+      agent.toolPermissions.setDefaultPolicy(mode as 'auto' | 'confirm' | 'deny');
+      return `Permission mode: ${cur} → ${mode}`;
     }
     case 'narrative': {
       const n = agent.hippocampus.getNarrative();
@@ -465,6 +513,41 @@ async function handleCommand(input: string, agent: KillerAgent): Promise<string>
     case 'save': {
       agent.saveSession('tui-session');
       return '✓ 会话已保存';
+    }
+    case 'approve': {
+      if (!args) return '用法: /approve <tool> | /approve all';
+      if (args === 'all') {
+        const rules = agent.toolPermissions.getRules();
+        for (const r of rules) agent.toolPermissions.approve(r.tool);
+        return '✓ 所有已知工具已批准';
+      }
+      agent.toolPermissions.approve(args);
+      return `✓ ${args} 已批准（本次会话有效）`;
+    }
+    case 'deny': {
+      if (!args) return '用法: /deny <tool>';
+      agent.toolPermissions.deny(args);
+      return `✓ ${args} 已禁止`;
+    }
+    case 'inspect': {
+      const r = await agent.tools.execute('inspect_tools', {});
+      if (!r.success) return `Inspect failed: ${r.error}`;
+      const d = r.data as { total: number; builtin: number; dynamic: number; tools: Array<{ name: string; description: string; type: string }> };
+      const lines = [`Total: ${d.total} (builtin: ${d.builtin}, dynamic: ${d.dynamic})`, ''];
+      for (const t of d.tools) {
+        const tag = t.type === 'dynamic' ? ' ★' : '';
+        lines.push(`  ${t.name}${tag}: ${t.description.slice(0, 60)}`);
+      }
+      return lines.join('\n');
+    }
+    case 'learn': {
+      if (!args) return '用法: /learn <name> — Agent 通过 learn 工具自行创建新工具\n  提示: 在对话中告诉 Agent 你需要什么能力，它会自行调用 learn 工具创建';
+      return '提示: 请在对话中描述你需要的工具能力，Agent 会自行调用 learn 工具创建。\n  例如: "帮我创建一个工具来计算两个日期之间的天数"';
+    }
+    case 'unlearn': {
+      if (!args) return '用法: /unlearn <tool_name>';
+      const r = await agent.tools.execute('unlearn', { name: args.trim() });
+      return r.success ? `✓ 工具 "${args.trim()}" 已移除` : `移除失败: ${r.error}`;
     }
     case 'exit':
     case 'quit': {
