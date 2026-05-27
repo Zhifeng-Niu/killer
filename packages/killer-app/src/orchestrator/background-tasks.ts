@@ -1255,3 +1255,87 @@ export function detectMultiIntent(input: string): DetectedIntent[] {
 
   return [];
 }
+
+// ============================================================
+// Conversation Turn Importance Scoring
+// ============================================================
+
+/**
+ * 对话轮次重要性评分
+ */
+export interface TurnScore {
+  /** 0-1 重要性分数 */
+  importance: number;
+  /** 评分原因 */
+  reasons: string[];
+}
+
+/** 决策关键词 */
+const DECISION_MARKERS = /\b(decided|agreed|confirmed|approved|rejected|chosen|settled on|go with|决定|确认|选择|同意|否决|确定)\b/i;
+
+/** 行动指令 */
+const ACTION_MARKERS = /\b(implement|create|build|fix|deploy|delete|update|refactor|实现|创建|修复|部署|删除|更新|重构)\b/i;
+
+/** 事实/数字密集度 */
+const FACT_DENSITY = /\b(\d+%|\$\d+|\d+x|\d+ms|\d+s|version|v\d+|issue|bug|error|PR|commit)\b/gi;
+
+/** 情感强度标记 */
+const EMOTIONAL_MARKERS = /\b(love|hate|frustrated|excited|worried|important|critical|urgent|must|never|always|喜欢|讨厌|着急|激动|担心|重要|关键|紧急|必须|绝对)\b/i;
+
+/**
+ * 评估对话轮次的重要性
+ *
+ * 基于规则的多维度评分：信息密度、决策标记、行动指令、情感强度。
+ */
+export function scoreTurnImportance(role: string, content: string): TurnScore {
+  const reasons: string[] = [];
+  let score = 0.3; // 基线分数
+
+  if (!content || content.length < 10) {
+    return { importance: 0.1, reasons: ['too short'] };
+  }
+
+  // 1. 信息密度 — 数字、版本、指标
+  const factMatches = content.match(FACT_DENSITY);
+  if (factMatches && factMatches.length >= 3) {
+    score += 0.2;
+    reasons.push('fact-dense');
+  } else if (factMatches && factMatches.length >= 1) {
+    score += 0.1;
+    reasons.push('has-metrics');
+  }
+
+  // 2. 决策标记
+  if (DECISION_MARKERS.test(content)) {
+    score += 0.25;
+    reasons.push('decision');
+  }
+
+  // 3. 行动指令
+  if (ACTION_MARKERS.test(content)) {
+    score += 0.15;
+    reasons.push('action');
+  }
+
+  // 4. 情感强度
+  if (EMOTIONAL_MARKERS.test(content)) {
+    score += 0.15;
+    reasons.push('emotional');
+  }
+
+  // 5. 用户消息权重高于 assistant
+  if (role === 'user') {
+    score += 0.05;
+  }
+
+  // 6. 长度奖励（复杂消息可能更重要）
+  if (content.length > 500) {
+    score += 0.1;
+    reasons.push('detailed');
+  }
+
+  return {
+    importance: Math.min(1, score),
+    reasons,
+  };
+}

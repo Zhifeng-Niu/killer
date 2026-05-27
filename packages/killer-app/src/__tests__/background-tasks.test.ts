@@ -22,6 +22,7 @@ import {
   getFailurePatterns,
   clearFailureTracking,
   detectMultiIntent,
+  scoreTurnImportance,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -958,6 +959,51 @@ describe('background-tasks', () => {
     it('should include index for each intent', () => {
       const intents = detectMultiIntent('1. First task 2. Second task 3. Third task');
       expect(intents.map(i => i.index)).toEqual([1, 2, 3]);
+    });
+  });
+
+  describe('scoreTurnImportance', () => {
+    it('should give low score to short messages', () => {
+      const score = scoreTurnImportance('user', 'OK');
+      expect(score.importance).toBeLessThan(0.2);
+    });
+
+    it('should give higher score to messages with metrics', () => {
+      const score = scoreTurnImportance('user', 'The API response time is 450ms, error rate is 3%, and latency is 1200ms — we must fix this');
+      expect(score.importance).toBeGreaterThan(0.5);
+      expect(score.reasons).toContain('fact-dense');
+    });
+
+    it('should boost score for decision markers', () => {
+      const score = scoreTurnImportance('user', 'We decided to go with the PostgreSQL approach for the database');
+      expect(score.importance).toBeGreaterThan(0.5);
+      expect(score.reasons).toContain('decision');
+    });
+
+    it('should boost score for action verbs', () => {
+      const score = scoreTurnImportance('assistant', 'I will implement the caching layer to fix the timeout issues');
+      expect(score.reasons).toContain('action');
+    });
+
+    it('should boost score for emotional markers', () => {
+      const score = scoreTurnImportance('user', 'This is critical — we must fix the memory leak before the release');
+      expect(score.reasons).toContain('emotional');
+    });
+
+    it('should give slight bonus to user messages', () => {
+      const userScore = scoreTurnImportance('user', 'The deployment failed with error code 500');
+      const asstScore = scoreTurnImportance('assistant', 'The deployment failed with error code 500');
+      expect(userScore.importance).toBeGreaterThan(asstScore.importance);
+    });
+
+    it('should cap importance at 1.0', () => {
+      const score = scoreTurnImportance('user', 'We decided to implement the critical fix — 99% error rate, 5000ms latency, v2.1, issue #42, PR #108. This is urgent and important and we must deploy it now. ' + 'x'.repeat(500));
+      expect(score.importance).toBeLessThanOrEqual(1.0);
+    });
+
+    it('should return reasons for high scores', () => {
+      const score = scoreTurnImportance('user', 'We decided to implement the caching fix — error rate is 5% and latency is 2000ms. This is critical.');
+      expect(score.reasons.length).toBeGreaterThanOrEqual(2);
     });
   });
 });
