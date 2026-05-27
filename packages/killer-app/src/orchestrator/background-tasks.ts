@@ -3611,3 +3611,85 @@ export function adaptCognitiveParams(
 
   return result;
 }
+
+/**
+ * Section 去重结果
+ */
+export interface DeduplicationResult {
+  /** 去重后的 section 标签名（第一个保留的） */
+  keptSection: string;
+  /** 被合并的 section 标签名 */
+  mergedSections: string[];
+  /** 合并后的内容 */
+  mergedContent: string;
+}
+
+/**
+ * 检测并合并内容重叠的 prompt sections
+ *
+ * 使用 trigram Jaccard 相似度检测不同 section 之间的内容重叠。
+ * 阈值 0.3 以上视为重复，合并为单一 section。
+ */
+export function deduplicateSections(
+  sections: Array<{ label: string; content: string }>,
+  threshold = 0.3,
+): Array<{ label: string; content: string }> {
+  if (sections.length < 2) return sections;
+
+  const results: Array<{ label: string; content: string }> = [];
+  const merged = new Set<number>();
+
+  for (let i = 0; i < sections.length; i++) {
+    if (merged.has(i)) continue;
+
+    let combinedLabel = sections[i].label;
+    let combinedContent = sections[i].content;
+    const mergedLabels: string[] = [];
+
+    for (let j = i + 1; j < sections.length; j++) {
+      if (merged.has(j)) continue;
+
+      const similarity = trigramJaccard(combinedContent, sections[j].content);
+      if (similarity > threshold) {
+        mergedLabels.push(sections[j].label);
+        // 保留更长的内容（通常更详细）
+        if (sections[j].content.length > combinedContent.length) {
+          combinedContent = sections[j].content;
+        }
+        merged.add(j);
+      }
+    }
+
+    if (mergedLabels.length > 0) {
+      combinedLabel = `${combinedLabel} + ${mergedLabels.join(' + ')}`;
+    }
+
+    results.push({ label: combinedLabel, content: combinedContent });
+  }
+
+  return results;
+}
+
+/**
+ * Trigram Jaccard 相似度
+ */
+function trigramJaccard(a: string, b: string): number {
+  const trigramsA = buildTrigramSet(a.toLowerCase());
+  const trigramsB = buildTrigramSet(b.toLowerCase());
+  if (trigramsA.size === 0 && trigramsB.size === 0) return 0;
+  let intersection = 0;
+  for (const t of trigramsA) {
+    if (trigramsB.has(t)) intersection++;
+  }
+  const union = trigramsA.size + trigramsB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+function buildTrigramSet(text: string): Set<string> {
+  const set = new Set<string>();
+  const normalized = ` ${text} `;
+  for (let i = 0; i <= normalized.length - 3; i++) {
+    set.add(normalized.slice(i, i + 3));
+  }
+  return set;
+}

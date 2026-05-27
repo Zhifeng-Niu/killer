@@ -4,8 +4,8 @@ status: active
 started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
-best_metric: 2208
-total_waypoints: 62
+best_metric: 2214
+total_waypoints: 63
 consecutive_discards: 0
 ---
 
@@ -106,6 +106,7 @@ npm test 2>&1
 59. **Behavior-Mode-Aware Section Scoring** (waypoint 60): scoreSectionRelevance() now accepts behaviorMode from perception fusion — urgent mode boosts crisis signals (emotion/health) and penalizes distractions, focused mode boosts precision sections (tools/expertise), supportive mode boosts empathy sections, exploratory mode boosts discovery sections. Also added 5 new section prefixes (CONVERSATION RHYTHM, USER EXPERTISE, EMOTIONAL RESPONSE STRATEGY, PERCEPTION FUSION, RESTORED CONTEXT)
 60. **Strategy Coherence Verification** (waypoint 61): verifyStrategyCoherence() detects conflicts between rhythm/expertise/emotion/perception strategies (length_vs_empathy, speed_vs_precision, expertise_vs_empathy) and provides resolution guidance. Injected as STRATEGY COHERENCE section — prevents contradictory advice from multiple cognitive modules
 61. **Cognitive Parameter Self-Tuning** (waypoint 62): adaptCognitiveParams() adjusts module sensitivity thresholds based on trigger frequency and conflict rate — high conflict → raise threshold (less sensitive), low conflict → lower threshold (more sensitive). Agent now uses tunable thresholds instead of hardcoded values for emotion (0.2), rhythm (0.4), and fusion attention (0.3). Foundation for self-optimizing cognitive system
+62. **Prompt Section Deduplication** (waypoint 63): deduplicateSections() uses trigram Jaccard similarity (threshold 0.3) to detect and merge overlapping prompt sections before pruning. Integrated into prompt-builder pipeline — reduces token waste when multiple cognitive modules emit similar advice
 
 ### Dead Ends
 {Auto-updated by engine.}

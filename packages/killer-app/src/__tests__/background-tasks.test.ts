@@ -52,6 +52,7 @@ import {
   verifyStrategyCoherence,
   adaptCognitiveParams,
   DEFAULT_COGNITIVE_TUNING,
+  deduplicateSections,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -2494,6 +2495,57 @@ describe('background-tasks', () => {
         emotion: { triggers: 20, conflicts: 15, lastAdjustment: 0 },
       });
       expect(result.emotionThreshold).toBeLessThanOrEqual(0.5);
+    });
+  });
+
+  describe('deduplicateSections', () => {
+    it('should return single section unchanged', () => {
+      const result = deduplicateSections([
+        { label: 'A', content: 'unique content here' },
+      ]);
+      expect(result).toEqual([{ label: 'A', content: 'unique content here' }]);
+    });
+
+    it('should merge highly similar sections', () => {
+      const result = deduplicateSections([
+        { label: 'RHYTHM', content: 'Keep responses very concise and short and brief' },
+        { label: 'LENGTH', content: 'Keep responses very concise and short and brief' },
+      ]);
+      expect(result.length).toBe(1);
+      expect(result[0].label).toContain('+');
+    });
+
+    it('should keep dissimilar sections separate', () => {
+      const result = deduplicateSections([
+        { label: 'A', content: 'Respond concisely about React components' },
+        { label: 'B', content: 'Debug the database connection pool timeout' },
+      ]);
+      expect(result.length).toBe(2);
+    });
+
+    it('should keep longer content when merging', () => {
+      const result = deduplicateSections([
+        { label: 'A', content: 'Keep responses very concise and short and brief in all cases' },
+        { label: 'B', content: 'Keep responses very concise and short and brief and use bullet points for clarity' },
+      ]);
+      expect(result.length).toBe(1);
+      expect(result[0].content).toContain('bullet points');
+    });
+
+    it('should handle empty sections array', () => {
+      const result = deduplicateSections([]);
+      expect(result).toEqual([]);
+    });
+
+    it('should handle three-way merge', () => {
+      const result = deduplicateSections([
+        { label: 'X', content: 'Use standard technical terms and be precise' },
+        { label: 'Y', content: 'Use standard technical terms and be precise' },
+        { label: 'Z', content: 'Use standard technical terms and be precise' },
+      ]);
+      expect(result.length).toBe(1);
+      expect(result[0].label).toContain('Y');
+      expect(result[0].label).toContain('Z');
     });
   });
 });

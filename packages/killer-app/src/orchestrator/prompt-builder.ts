@@ -9,7 +9,7 @@ import type { PersonaEngine } from '../persona/engine.js';
 import type { HippocampusEngine, Episode } from '@killer/core';
 import type { ToolExecutor, EssenceForge, Plan } from '@killer/core';
 import type { ContextWindowManager, ContextMessage } from './context.js';
-import { scoreSectionRelevance } from './background-tasks.js';
+import { scoreSectionRelevance, deduplicateSections } from './background-tasks.js';
 
 /**
  * 系统提示构建所需的依赖
@@ -850,6 +850,29 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
       const turnsFromEnd = totalTurns - i;
       const maxLen = turnsFromEnd <= 6 ? 500 : turnsFromEnd <= 12 ? 300 : 150;
       parts.push(`${prefix}: ${turn.content.slice(0, maxLen)}${turn.content.length > maxLen ? '...' : ''}`);
+    }
+  }
+
+  // === Section 去重：合并内容重叠的 section ===
+  if (parts.length > 5) {
+    const sectionEntries = parts
+      .filter(p => p.startsWith('\n') && p.includes(' — '))
+      .map(p => {
+        const match = p.match(/^\n([\w\s]+) — (.+)$/s);
+        return match ? { label: match[1].trim(), content: match[2] } : null;
+      })
+      .filter((e): e is { label: string; content: string } => e !== null);
+
+    const deduped = deduplicateSections(sectionEntries);
+    if (deduped.length < sectionEntries.length) {
+      // Replace original sections with deduplicated versions
+      for (const original of sectionEntries) {
+        const idx = parts.findIndex(p => p.includes(`\n${original.label} — `));
+        if (idx >= 0) parts.splice(idx, 1);
+      }
+      for (const entry of deduped) {
+        parts.push(`\n${entry.label} — ${entry.content}`);
+      }
     }
   }
 
