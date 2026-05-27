@@ -69,6 +69,8 @@ export interface PromptBuilderDeps {
   };
   /** 目标冲突 */
   goalConflicts?: Array<{ type: string; description: string; suggestion: string }>;
+  /** 工具失败模式 */
+  toolFailurePatterns?: string[];
 }
 
 /**
@@ -429,6 +431,14 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
     parts.push('\nTOOL PERFORMANCE (learned from usage):');
     parts.push(deps.toolPerformanceSummary);
     parts.push('✓ = reliable, ~ = moderate, ✗ = unreliable. Prefer tools with high success rates. Avoid tools that consistently fail.');
+  }
+
+  // === 工具失败模式 ===
+  if (deps.toolFailurePatterns && deps.toolFailurePatterns.length > 0) {
+    parts.push('\nTOOL FAILURE PATTERNS (avoid these known issues):');
+    for (const pattern of deps.toolFailurePatterns) {
+      parts.push(`  - ${pattern}`);
+    }
   }
 
   // === 活跃计划（前额叶皮层） ===

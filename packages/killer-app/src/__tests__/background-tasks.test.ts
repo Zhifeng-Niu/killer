@@ -17,6 +17,10 @@ import {
   storeExtractedFacts,
   detectGoalConflicts,
   consolidateMemories,
+  classifyFailure,
+  recordFailure,
+  getFailurePatterns,
+  clearFailureTracking,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -820,6 +824,100 @@ describe('background-tasks', () => {
       for (const c of conflicts) {
         expect(c.suggestion.length).toBeGreaterThan(10);
       }
+    });
+  });
+
+  describe('classifyFailure', () => {
+    it('should classify timeout errors', () => {
+      const result = classifyFailure('search', 'Request timed out after 30s');
+      expect(result.type).toBe('timeout');
+      expect(result.strategy).toBe('retry_with_backoff');
+      expect(result.maxRetries).toBe(3);
+    });
+
+    it('should classify auth errors', () => {
+      const result = classifyFailure('api', '401 Unauthorized');
+      expect(result.type).toBe('auth');
+      expect(result.strategy).toBe('escalate');
+      expect(result.maxRetries).toBe(0);
+    });
+
+    it('should classify rate limit errors', () => {
+      const result = classifyFailure('llm', '429 Too many requests');
+      expect(result.type).toBe('rate_limit');
+      expect(result.strategy).toBe('retry_with_backoff');
+    });
+
+    it('should classify not found errors', () => {
+      const result = classifyFailure('read_file', 'ENOENT: file not found');
+      expect(result.type).toBe('not_found');
+      expect(result.strategy).toBe('fix_args');
+    });
+
+    it('should classify invalid args errors', () => {
+      const result = classifyFailure('calc', 'Invalid input: expected number');
+      expect(result.type).toBe('invalid_args');
+      expect(result.strategy).toBe('fix_args');
+    });
+
+    it('should classify network errors', () => {
+      const result = classifyFailure('fetch', 'ECONNREFUSED');
+      expect(result.type).toBe('network');
+      expect(result.strategy).toBe('retry');
+    });
+
+    it('should classify resource exhausted errors', () => {
+      const result = classifyFailure('heavy', 'Out of memory: heap allocation failed');
+      expect(result.type).toBe('resource_exhausted');
+      expect(result.strategy).toBe('skip');
+    });
+
+    it('should default to unknown for unrecognized errors', () => {
+      const result = classifyFailure('tool', 'Something weird happened');
+      expect(result.type).toBe('unknown');
+      expect(result.strategy).toBe('retry');
+      expect(result.maxRetries).toBe(1);
+    });
+  });
+
+  describe('failure tracking', () => {
+    beforeEach(() => {
+      clearFailureTracking();
+    });
+
+    it('should track and retrieve failure patterns', () => {
+      recordFailure('search', 'timeout', 'Request timed out');
+      recordFailure('search', 'timeout', 'Request timed out again');
+      recordFailure('search', 'timeout', 'Third timeout');
+
+      const patterns = getFailurePatterns();
+      expect(patterns.length).toBe(1);
+      expect(patterns[0]).toContain('search');
+      expect(patterns[0]).toContain('timeout');
+    });
+
+    it('should not report patterns with only 1 occurrence', () => {
+      recordFailure('tool', 'unknown', 'One-off error');
+      expect(getFailurePatterns().length).toBe(0);
+    });
+
+    it('should track recovery rate', () => {
+      recordFailure('api', 'rate_limit', 'Rate limited', true);
+      recordFailure('api', 'rate_limit', 'Rate limited', true);
+      recordFailure('api', 'rate_limit', 'Rate limited', false);
+
+      const patterns = getFailurePatterns();
+      expect(patterns.length).toBe(1);
+      expect(patterns[0]).toContain('partially recoverable');
+    });
+
+    it('should limit to 5 patterns', () => {
+      for (let i = 0; i < 8; i++) {
+        recordFailure(`tool-${i}`, 'timeout', 'Timeout', false);
+        recordFailure(`tool-${i}`, 'timeout', 'Timeout', false);
+      }
+
+      expect(getFailurePatterns().length).toBeLessThanOrEqual(5);
     });
   });
 });

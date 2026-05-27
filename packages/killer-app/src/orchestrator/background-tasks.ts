@@ -1040,3 +1040,162 @@ export function consolidateMemories(
 
   return insights;
 }
+
+// ============================================================
+// Self-Healing Tool Execution
+// ============================================================
+
+/**
+ * 工具执行失败类型
+ */
+export type FailureType =
+  | 'timeout'
+  | 'auth'
+  | 'invalid_args'
+  | 'not_found'
+  | 'rate_limit'
+  | 'network'
+  | 'resource_exhausted'
+  | 'unknown';
+
+/**
+ * 恢复策略
+ */
+export type RecoveryStrategy =
+  | 'retry'
+  | 'retry_with_backoff'
+  | 'fix_args'
+  | 'fallback_tool'
+  | 'skip'
+  | 'escalate';
+
+/**
+ * 失败分类结果
+ */
+export interface FailureClassification {
+  type: FailureType;
+  strategy: RecoveryStrategy;
+  maxRetries: number;
+  description: string;
+}
+
+/**
+ * 失败模式追踪记录
+ */
+export interface FailureRecord {
+  toolName: string;
+  failureType: FailureType;
+  errorMessage: string;
+  timestamp: number;
+  recovered: boolean;
+}
+
+/**
+ * 失败模式统计
+ */
+interface FailureStats {
+  count: number;
+  recovered: number;
+  lastSeen: number;
+}
+
+/** 失败模式追踪（进程内） */
+const failureHistory: FailureRecord[] = [];
+const MAX_FAILURE_HISTORY = 50;
+
+/** 失败模式频率统计 */
+const failureStats = new Map<string, FailureStats>();
+
+/**
+ * 根据错误信息分类失败类型
+ */
+export function classifyFailure(
+  toolName: string,
+  errorMessage: string,
+): FailureClassification {
+  const msg = errorMessage.toLowerCase();
+
+  if (msg.includes('timeout') || msg.includes('timed out') || msg.includes('etimedout')) {
+    return { type: 'timeout', strategy: 'retry_with_backoff', maxRetries: 3, description: 'Network timeout' };
+  }
+  if (msg.includes('401') || msg.includes('unauthorized') || msg.includes('forbidden') || msg.includes('403')) {
+    return { type: 'auth', strategy: 'escalate', maxRetries: 0, description: 'Authentication failure' };
+  }
+  if (msg.includes('429') || msg.includes('rate limit') || msg.includes('too many requests')) {
+    return { type: 'rate_limit', strategy: 'retry_with_backoff', maxRetries: 2, description: 'Rate limited' };
+  }
+  if (msg.includes('not found') || msg.includes('404') || msg.includes('enoent')) {
+    return { type: 'not_found', strategy: 'fix_args', maxRetries: 1, description: 'Resource not found' };
+  }
+  if (msg.includes('invalid') || msg.includes('expected') || msg.includes('must be') || msg.includes('type error')) {
+    return { type: 'invalid_args', strategy: 'fix_args', maxRetries: 1, description: 'Invalid arguments' };
+  }
+  if (msg.includes('econnrefused') || msg.includes('enotfound') || msg.includes('network') || msg.includes('fetch failed')) {
+    return { type: 'network', strategy: 'retry', maxRetries: 2, description: 'Network error' };
+  }
+  if (msg.includes('out of memory') || msg.includes('heap') || msg.includes('resource')) {
+    return { type: 'resource_exhausted', strategy: 'skip', maxRetries: 0, description: 'Resource exhausted' };
+  }
+
+  return { type: 'unknown', strategy: 'retry', maxRetries: 1, description: 'Unknown error' };
+}
+
+/**
+ * 记录失败到追踪系统
+ */
+export function recordFailure(
+  toolName: string,
+  failureType: FailureType,
+  errorMessage: string,
+  recovered: boolean = false,
+): void {
+  const record: FailureRecord = {
+    toolName,
+    failureType,
+    errorMessage: errorMessage.slice(0, 200),
+    timestamp: Date.now(),
+    recovered,
+  };
+
+  failureHistory.push(record);
+  if (failureHistory.length > MAX_FAILURE_HISTORY) {
+    failureHistory.shift();
+  }
+
+  const key = `${toolName}:${failureType}`;
+  const stats = failureStats.get(key);
+  if (stats) {
+    stats.count++;
+    stats.lastSeen = Date.now();
+    if (recovered) stats.recovered++;
+  } else {
+    failureStats.set(key, { count: 1, recovered: recovered ? 1 : 0, lastSeen: Date.now() });
+  }
+}
+
+/**
+ * 获取失败模式摘要（注入 system prompt）
+ */
+export function getFailurePatterns(): string[] {
+  const patterns: string[] = [];
+
+  for (const [key, stats] of failureStats) {
+    if (stats.count >= 2) {
+      const recoveryRate = stats.recovered / stats.count;
+      const [tool, type] = key.split(':');
+      const hint = recoveryRate < 0.3 ? 'low recovery rate — consider alternatives'
+        : recoveryRate < 0.7 ? 'partially recoverable' : 'usually recoverable';
+      patterns.push(`${tool} ${type} (${stats.count}x, ${hint})`);
+    }
+  }
+
+  return patterns.slice(0, 5);
+}
+
+/**
+ * 清除失败追踪（用于测试）
+ */
+export function clearFailureTracking(): void {
+  failureHistory.length = 0;
+  failureStats.clear();
+}
