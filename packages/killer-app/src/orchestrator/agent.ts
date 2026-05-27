@@ -173,6 +173,10 @@ export class KillerAgent {
   // 注意力优先级状态
   private lastAttentionState: import('./background-tasks.js').AttentionState | null = null;
 
+  // 实验驱动的行为洞察（成功的实验模式，注入系统 prompt）
+  private behavioralInsights: string[] = [];
+  private readonly maxBehavioralInsights = 10;
+
   constructor(config: AgentConfig) {
     this.config = config;
     this.sessionDir = config.sessionDir ?? path.join(os.homedir(), '.killer', 'sessions');
@@ -1267,6 +1271,15 @@ What alternative approach should we try? One sentence only.`;
         prompt: skillPrompt,
       },
     });
+
+    // 捕获行为洞察 — 将成功的实验模式注入系统 prompt
+    const insight = `${experiment.hypothesis} → ${lessons[0]}`;
+    if (!this.behavioralInsights.some(i => i.startsWith(experiment.hypothesis))) {
+      this.behavioralInsights.push(insight);
+      if (this.behavioralInsights.length > this.maxBehavioralInsights) {
+        this.behavioralInsights = this.behavioralInsights.slice(-this.maxBehavioralInsights);
+      }
+    }
   }
 
   /**
@@ -1918,6 +1931,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         skillsData: this.skillManager.exportSkills(),
         // Task delegation profiles (learning history)
         delegateProfiles: this.taskDelegate.exportProfiles(),
+        // Behavioral insights from experiments
+        behavioralInsights: [...this.behavioralInsights],
       };
       // 原子写入：temp + rename 防止崩溃损坏
       const tmpPath = filePath + '.tmp';
@@ -1978,6 +1993,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     if (version < 3) {
       data.skillsData ??= [];
       data.delegateProfiles ??= {};
+      data.behavioralInsights ??= [];
     }
 
     data.version = KillerAgent.SESSION_VERSION;
@@ -2056,6 +2072,12 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       if (data.delegateProfiles && typeof data.delegateProfiles === 'object') {
         this.taskDelegate.importProfiles(data.delegateProfiles);
         restored++;
+      }
+
+      // Restore behavioral insights from experiments
+      if (data.behavioralInsights && Array.isArray(data.behavioralInsights)) {
+        this.behavioralInsights = data.behavioralInsights.slice(-this.maxBehavioralInsights);
+        if (this.behavioralInsights.length > 0) restored++;
       }
 
       if (restored > 0) {
@@ -3008,6 +3030,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         repetitionDetected: this.detectResponseRepetition(),
       },
       attentionState: this.lastAttentionState ?? undefined,
+      behavioralInsights: this.behavioralInsights.length > 0 ? [...this.behavioralInsights] : undefined,
     });
   }
 

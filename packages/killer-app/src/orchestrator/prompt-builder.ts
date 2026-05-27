@@ -42,6 +42,8 @@ export interface PromptBuilderDeps {
     recentHighPriority: Array<{ type: string; priority: number; age: number }>;
     focusRecommendation: string;
   };
+  /** 实验驱动的行为洞察（成功的实验模式） */
+  behavioralInsights?: string[];
 }
 
 /**
@@ -298,6 +300,15 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
       attParts.push(att.focusRecommendation);
     }
     parts.push(`\nATTENTION STATE — ${attParts.join('. ')}`);
+  }
+
+  // === 实验驱动的行为洞察 ===
+  if (deps.behavioralInsights && deps.behavioralInsights.length > 0) {
+    parts.push('\nLEARNED BEHAVIORS — Patterns confirmed through experimentation:');
+    for (const insight of deps.behavioralInsights.slice(-5)) {
+      parts.push(`  • ${insight}`);
+    }
+    parts.push('Apply these insights when relevant. They represent what actually works, not theory.');
   }
 
   // === 活跃计划（前额叶皮层） ===
