@@ -21,6 +21,7 @@ import {
   recordFailure,
   getFailurePatterns,
   clearFailureTracking,
+  detectMultiIntent,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -918,6 +919,45 @@ describe('background-tasks', () => {
       }
 
       expect(getFailurePatterns().length).toBeLessThanOrEqual(5);
+    });
+  });
+
+  describe('detectMultiIntent', () => {
+    it('should detect numbered list intents', () => {
+      const intents = detectMultiIntent('1. Check database performance 2. Review deployment logs 3. Update README');
+      expect(intents.length).toBe(3);
+      expect(intents[0].text).toContain('Check database');
+    });
+
+    it('should detect question-based multi-intent', () => {
+      const intents = detectMultiIntent('How do I fix the timeout? What about the memory leak?');
+      expect(intents.length).toBeGreaterThanOrEqual(2);
+      expect(intents.every(i => i.isQuestion)).toBe(true);
+    });
+
+    it('should detect semicolon-separated intents', () => {
+      const intents = detectMultiIntent('Check the API logs; review the error rates; fix the timeout issue');
+      expect(intents.length).toBe(3);
+    });
+
+    it('should return empty for single intent', () => {
+      const intents = detectMultiIntent('Hello, how are you doing today?');
+      expect(intents.length).toBe(0);
+    });
+
+    it('should return empty for short input', () => {
+      expect(detectMultiIntent('OK').length).toBe(0);
+      expect(detectMultiIntent('').length).toBe(0);
+    });
+
+    it('should return empty for single sentence', () => {
+      const intents = detectMultiIntent('Please help me debug the authentication module');
+      expect(intents.length).toBe(0);
+    });
+
+    it('should include index for each intent', () => {
+      const intents = detectMultiIntent('1. First task 2. Second task 3. Third task');
+      expect(intents.map(i => i.index)).toEqual([1, 2, 3]);
     });
   });
 });

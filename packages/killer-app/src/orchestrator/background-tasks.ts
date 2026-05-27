@@ -1199,3 +1199,59 @@ export function clearFailureTracking(): void {
   failureHistory.length = 0;
   failureStats.clear();
 }
+
+// ============================================================
+// Multi-Intent Detection
+// ============================================================
+
+export interface DetectedIntent {
+  text: string;
+  confidence: number;
+  isQuestion: boolean;
+  index: number;
+}
+
+const QUESTION_MARKS = /[?？]/;
+const QUESTION_WORDS = /怎么|如何|为什么|能不能|可以|是不是|how|what|why|when|where|which|can you|could you|would you/i;
+
+export function detectMultiIntent(input: string): DetectedIntent[] {
+  if (!input || input.length < 10) return [];
+
+  // 编号列表: "1. xxx 2. xxx" — 匹配数字前有空白或行首
+  const numbered = input.split(/\s+\d+[.)]\s+/).filter(p => p.trim().length > 3);
+  if (numbered.length >= 2) {
+    return numbered.map((text, i) => ({
+      text: text.trim(),
+      confidence: 0.8,
+      isQuestion: QUESTION_MARKS.test(text) || QUESTION_WORDS.test(text),
+      index: i + 1,
+    }));
+  }
+
+  // 分号分隔
+  const semicolons = input.split(/;\s*/).filter(p => p.trim().length > 3);
+  if (semicolons.length >= 2) {
+    return semicolons.map((text, i) => ({
+      text: text.trim(),
+      confidence: 0.75,
+      isQuestion: QUESTION_MARKS.test(text) || QUESTION_WORDS.test(text),
+      index: i + 1,
+    }));
+  }
+
+  // 多个问号
+  const qCount = (input.match(/[?？]/g) ?? []).length;
+  if (qCount >= 2) {
+    const parts = input.split(/(?<=[?？])\s*/).filter(p => p.trim().length > 3);
+    if (parts.length >= 2) {
+      return parts.map((text, i) => ({
+        text: text.trim(),
+        confidence: 0.7,
+        isQuestion: true,
+        index: i + 1,
+      }));
+    }
+  }
+
+  return [];
+}
