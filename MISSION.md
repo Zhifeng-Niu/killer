@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 1969
-total_waypoints: 22
+total_waypoints: 23
 consecutive_discards: 0
 ---
 
@@ -66,6 +66,7 @@ npm test 2>&1
 19. **Conversational Phase Tracking** (waypoint 20): 6-phase conversation detection (idle/greeting/exploration/deep-work/review/wrap-up) based on message patterns, technical content, topic continuity, and time gaps — phase-aware guidance injected into system prompt
 20. **Phase-Strategy Feedback Loop** (waypoint 21): Conversational phase overrides learned strategy scores when confidence > 0.7 — deep-work biases concise/analytical, exploration biases detailed/intuitive, creating context-aware response adaptation
 21. **Semantic Memory Auto-Extraction** (waypoint 22): Rule-based extraction of preferences, skills, project names, deadlines, and user names from conversation without LLM calls — facts auto-stored in hippocampus semantic memory with deduplication
+22. **Cross-Goal Conflict Detection** (waypoint 23): Jaccard similarity + keyword contradiction patterns detect duplicate/overlapping/contradictory goals — conflicts injected into system prompt for LLM to coordinate or merge
 
 ### Dead Ends
 {Auto-updated by engine.}
