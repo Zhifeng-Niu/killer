@@ -1846,3 +1846,213 @@ function formatTimeSince(seconds: number): string {
   if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
   return `${Math.floor(seconds / 86400)} days ago`;
 }
+
+// ============================================================
+// 对话流程预测 (Conversation Flow Prediction)
+// ============================================================
+
+/** 已识别的对话流程模式 */
+export type FlowPattern =
+  | 'question-answer'
+  | 'debug-diagnose-fix'
+  | 'explore-deepen-implement'
+  | 'request-review-iterate'
+  | 'learn-practice-master'
+  | 'plan-execute-verify'
+  | 'casual-chat';
+
+/** 对话流程预测结果 */
+export interface FlowPrediction {
+  currentPattern: FlowPattern;
+  confidence: number;
+  predictedNextSteps: string[];
+  suggestedTools: string[];
+  flowDescription: string;
+}
+
+/** 消息角色分类 */
+type MessageRole = 'question' | 'statement' | 'request' | 'error-report' | 'code' | 'acknowledgment' | 'greeting';
+
+/** 流程模式定义 */
+interface PatternDef {
+  pattern: FlowPattern;
+  sequence: MessageRole[];
+  description: string;
+  nextSteps: string[];
+  tools: string[];
+}
+
+const FLOW_PATTERNS: PatternDef[] = [
+  {
+    pattern: 'question-answer',
+    sequence: ['question'],
+    description: '用户提出问题，等待回答',
+    nextSteps: ['follow-up question', 'topic change', 'implementation request'],
+    tools: ['web_search', 'memory_recall'],
+  },
+  {
+    pattern: 'debug-diagnose-fix',
+    sequence: ['error-report', 'question'],
+    description: '调试流程：报告错误 → 诊断 → 修复',
+    nextSteps: ['provide more error context', 'try proposed fix', 'verify fix works'],
+    tools: ['code_search', 'file_read', 'shell_exec'],
+  },
+  {
+    pattern: 'explore-deepen-implement',
+    sequence: ['question', 'question', 'request'],
+    description: '探索流程：提问了解 → 深入 → 实现',
+    nextSteps: ['request implementation', 'ask for more details', 'switch to planning'],
+    tools: ['web_search', 'memory_recall', 'code_search'],
+  },
+  {
+    pattern: 'request-review-iterate',
+    sequence: ['request', 'acknowledgment'],
+    description: '迭代流程：请求 → 审查 → 修改',
+    nextSteps: ['request changes', 'approve and move on', 'add more requirements'],
+    tools: ['file_read', 'code_search', 'shell_exec'],
+  },
+  {
+    pattern: 'learn-practice-master',
+    sequence: ['question', 'question', 'code'],
+    description: '学习流程：理解概念 → 练习 → 掌握',
+    nextSteps: ['try exercise', 'ask for explanation', 'request more examples'],
+    tools: ['web_search', 'memory_recall'],
+  },
+  {
+    pattern: 'plan-execute-verify',
+    sequence: ['request', 'request'],
+    description: '计划执行流程：规划 → 实施 → 验证',
+    nextSteps: ['execute next step', 'check progress', 'adjust plan'],
+    tools: ['file_read', 'file_write', 'shell_exec'],
+  },
+];
+
+const QUESTION_PATTERNS = /^(?:how|what|why|when|where|who|which|can you|could you|is it|does it|will it|是否|怎么|为什么|什么|哪|如何|能不能)/i;
+const ERROR_PATTERNS = /(?:error|exception|bug|crash|fail|broken|doesn'?t work|not working|issue|问题|报错|异常|崩溃|失败)/i;
+const CODE_PATTERNS = /(?:```|function |class |import |const |let |var |def |return |if \(|for \(|while \(|\/\/|\/\*|\{[\s\S]*\})/;
+const REQUEST_PATTERNS = /^(?:please|can you|could you|help me|i need|i want|make|create|build|add|fix|update|refactor|请|帮我|帮我|创建|添加|修复|更新|重构)/i;
+const GREETING_REGEX = /^(?:hi|hello|hey|good morning|good afternoon|你好|嗨|早上好|下午好|晚上好)/i;
+
+function classifyMessage(message: string): MessageRole {
+  const trimmed = message.trim();
+  if (!trimmed) return 'statement';
+  if (GREETING_REGEX.test(trimmed)) return 'greeting';
+  if (CODE_PATTERNS.test(trimmed) && trimmed.length > 50) return 'code';
+  if (ERROR_PATTERNS.test(trimmed)) return 'error-report';
+  if (QUESTION_PATTERNS.test(trimmed)) return 'question';
+  if (REQUEST_PATTERNS.test(trimmed)) return 'request';
+  if (/^(?:ok|thanks|got it|好的|谢谢|明白了|了解|yes|no|sure|great|cool)/i.test(trimmed)) return 'acknowledgment';
+  return 'statement';
+}
+
+/**
+ * 预测对话流程
+ * 基于最近消息序列分析当前对话模式，预测下一步行动
+ */
+export function predictConversationFlow(
+  recentMessages: Array<{ role: 'user' | 'assistant'; content: string }>,
+): FlowPrediction {
+  const userMessages = recentMessages
+    .filter(m => m.role === 'user')
+    .slice(-5);
+
+  if (userMessages.length === 0) {
+    return {
+      currentPattern: 'casual-chat',
+      confidence: 0.3,
+      predictedNextSteps: ['greeting', 'question', 'request'],
+      suggestedTools: [],
+      flowDescription: '对话尚未开始',
+    };
+  }
+
+  const roles = userMessages.map(m => classifyMessage(m.content));
+
+  // 检查问候
+  if (roles.length === 1 && roles[0] === 'greeting') {
+    return {
+      currentPattern: 'casual-chat',
+      confidence: 0.8,
+      predictedNextSteps: ['ask question', 'make request', 'share context'],
+      suggestedTools: ['memory_recall'],
+      flowDescription: '用户刚打招呼，等待展开对话',
+    };
+  }
+
+  // 匹配已知流程模式
+  let bestMatch: { pattern: PatternDef; score: number } | null = null;
+  for (const def of FLOW_PATTERNS) {
+    const seq = def.sequence;
+    let score = 0;
+    let seqIdx = 0;
+
+    for (let i = 0; i < roles.length && seqIdx < seq.length; i++) {
+      if (roles[i] === seq[seqIdx]) {
+        score++;
+        seqIdx++;
+      }
+    }
+
+    // 额外权重：完整匹配序列
+    if (seqIdx === seq.length) score += 0.5;
+
+    // 考虑模式与最近消息的相关性
+    const recentRelevance = roles.slice(-2).some(r => seq.includes(r)) ? 0.3 : 0;
+    score += recentRelevance;
+
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = { pattern: def, score };
+    }
+  }
+
+  if (bestMatch && bestMatch.score >= 1) {
+    const confidence = Math.min(0.95, 0.4 + bestMatch.score * 0.15);
+    return {
+      currentPattern: bestMatch.pattern.pattern,
+      confidence,
+      predictedNextSteps: bestMatch.pattern.nextSteps,
+      suggestedTools: bestMatch.pattern.tools,
+      flowDescription: bestMatch.pattern.description,
+    };
+  }
+
+  // 默认：基于最近消息角色推断
+  const lastRole = roles[roles.length - 1] ?? 'statement';
+  if (lastRole === 'question') {
+    return {
+      currentPattern: 'question-answer',
+      confidence: 0.5,
+      predictedNextSteps: ['follow-up question', 'implementation request'],
+      suggestedTools: ['web_search', 'memory_recall'],
+      flowDescription: '用户正在提问，可能需要更多信息',
+    };
+  }
+
+  if (lastRole === 'error-report') {
+    return {
+      currentPattern: 'debug-diagnose-fix',
+      confidence: 0.5,
+      predictedNextSteps: ['provide stack trace', 'try fix', 'verify solution'],
+      suggestedTools: ['code_search', 'file_read'],
+      flowDescription: '用户报告了问题，进入调试流程',
+    };
+  }
+
+  if (lastRole === 'request') {
+    return {
+      currentPattern: 'plan-execute-verify',
+      confidence: 0.5,
+      predictedNextSteps: ['clarify requirements', 'propose plan', 'execute'],
+      suggestedTools: ['file_read', 'file_write'],
+      flowDescription: '用户提出了请求，准备执行',
+    };
+  }
+
+  return {
+    currentPattern: 'casual-chat',
+    confidence: 0.3,
+    predictedNextSteps: ['question', 'request', 'context sharing'],
+    suggestedTools: [],
+    flowDescription: '对话模式不明确',
+  };
+}

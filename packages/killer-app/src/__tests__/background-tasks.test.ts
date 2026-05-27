@@ -30,6 +30,7 @@ import {
   buildGoalDependencyGraph,
   generateProgressReport,
   generateTemporalContext,
+  predictConversationFlow,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -1305,6 +1306,87 @@ describe('background-tasks', () => {
         { label: 'deadline', properties: { date: nextMonth, description: 'Future deadline' } },
       ]);
       expect(ctx.upcomingDeadlines).toHaveLength(0);
+    });
+  });
+
+  describe('predictConversationFlow', () => {
+    it('should return casual-chat for empty messages', () => {
+      const pred = predictConversationFlow([]);
+      expect(pred.currentPattern).toBe('casual-chat');
+      expect(pred.confidence).toBeLessThan(0.5);
+    });
+
+    it('should detect greeting pattern', () => {
+      const pred = predictConversationFlow([
+        { role: 'user', content: '你好' },
+      ]);
+      expect(pred.currentPattern).toBe('casual-chat');
+      expect(pred.confidence).toBeGreaterThan(0.7);
+      expect(pred.predictedNextSteps.length).toBeGreaterThan(0);
+    });
+
+    it('should detect question-answer pattern', () => {
+      const pred = predictConversationFlow([
+        { role: 'user', content: 'What is the capital of France?' },
+      ]);
+      expect(pred.currentPattern).toBe('question-answer');
+      expect(pred.confidence).toBeGreaterThan(0.3);
+    });
+
+    it('should detect debug-diagnose-fix pattern', () => {
+      const pred = predictConversationFlow([
+        { role: 'user', content: 'I got an error: TypeError cannot read property of undefined' },
+        { role: 'assistant', content: 'Let me help debug this.' },
+        { role: 'user', content: 'Why does this happen when I click the button?' },
+      ]);
+      expect(pred.currentPattern).toBe('debug-diagnose-fix');
+      expect(pred.suggestedTools).toContain('code_search');
+    });
+
+    it('should detect plan-execute-verify pattern', () => {
+      const pred = predictConversationFlow([
+        { role: 'user', content: 'Please add authentication to the API' },
+        { role: 'assistant', content: 'Sure, I will add JWT auth.' },
+        { role: 'user', content: 'Create the middleware first' },
+      ]);
+      expect(pred.currentPattern).toBe('plan-execute-verify');
+      expect(pred.flowDescription.length).toBeGreaterThan(0);
+    });
+
+    it('should detect explore-deepen-implement pattern', () => {
+      const pred = predictConversationFlow([
+        { role: 'user', content: 'What is Redis?' },
+        { role: 'assistant', content: 'Redis is an in-memory key-value store.' },
+        { role: 'user', content: 'How does pub/sub work in Redis?' },
+        { role: 'assistant', content: 'Pub/sub allows...' },
+        { role: 'user', content: 'Can you implement a pub/sub system?' },
+      ]);
+      expect(pred.currentPattern).toBe('explore-deepen-implement');
+    });
+
+    it('should handle mixed messages and filter to user only', () => {
+      const pred = predictConversationFlow([
+        { role: 'assistant', content: 'Hello!' },
+        { role: 'assistant', content: 'How can I help?' },
+      ]);
+      // No user messages → casual-chat
+      expect(pred.currentPattern).toBe('casual-chat');
+    });
+
+    it('should return valid structure for all patterns', () => {
+      const messages = [
+        { role: 'user' as const, content: 'Fix the bug in login' },
+        { role: 'assistant' as const, content: 'Fixed.' },
+        { role: 'user' as const, content: 'ok thanks' },
+      ];
+      const pred = predictConversationFlow(messages);
+      expect(pred).toHaveProperty('currentPattern');
+      expect(pred).toHaveProperty('confidence');
+      expect(pred).toHaveProperty('predictedNextSteps');
+      expect(pred).toHaveProperty('suggestedTools');
+      expect(pred).toHaveProperty('flowDescription');
+      expect(pred.confidence).toBeGreaterThan(0);
+      expect(pred.confidence).toBeLessThanOrEqual(1);
     });
   });
 });
