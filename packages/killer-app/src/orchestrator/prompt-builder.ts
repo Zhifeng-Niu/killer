@@ -73,6 +73,8 @@ export interface PromptBuilderDeps {
   toolFailurePatterns?: string[];
   /** 时间上下文（时段、交互间隔、截止日期） */
   temporalContext?: string;
+  /** 对话流程预测 */
+  flowPrediction?: string;
 }
 
 /**
@@ -242,6 +244,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 时间上下文 ===
   if (deps.temporalContext) {
     parts.push(`\nTEMPORAL CONTEXT — ${deps.temporalContext}`);
+  }
+
+  // === 对话流程预测 ===
+  if (deps.flowPrediction) {
+    parts.push(`\nCONVERSATION FLOW — ${deps.flowPrediction}`);
   }
 
   // === 生命叙事 ===

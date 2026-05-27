@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -3374,6 +3374,21 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         const eventNodes = this.hippocampus.getSemanticNodesByType('event');
         const ctx = generateTemporalContext(this.previousInteractionTimestamp, eventNodes);
         return ctx.formatted || undefined;
+      })(),
+      flowPrediction: (() => {
+        const pred = predictConversationFlow(this.conversationHistory);
+        if (pred.currentPattern === 'casual-chat' && pred.confidence < 0.5) return undefined;
+        const lines = [
+          `Pattern: ${pred.currentPattern} (confidence: ${(pred.confidence * 100).toFixed(0)}%)`,
+          pred.flowDescription,
+        ];
+        if (pred.predictedNextSteps.length > 0) {
+          lines.push(`Likely next: ${pred.predictedNextSteps.join(', ')}`);
+        }
+        if (pred.suggestedTools.length > 0) {
+          lines.push(`Prepare tools: ${pred.suggestedTools.join(', ')}`);
+        }
+        return lines.join('. ');
       })(),
     });
   }
