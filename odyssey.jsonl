@@ -5,3 +5,4 @@
 {"run":21,"commit":"ad755d1","metric":1969,"status":"keep","description":"Phase-strategy feedback loop — conversational phase overrides response strategy when confidence > 0.7. Context-aware response adaptation.","timestamp":"2026-05-27T17:20:50Z"}
 {"run":22,"commit":"d7546c3","metric":1969,"status":"keep","description":"Semantic memory auto-extraction — rule-based extraction of preferences/skills/projects/deadlines/names. 11 new tests. 1243 tests pass.","timestamp":"2026-05-27T17:25:03Z"}
 {"run":23,"commit":"ec84bcd","metric":1969,"status":"keep","description":"Cross-goal conflict detection — Jaccard similarity + keyword contradiction patterns. Detect duplicate/overlap/contradiction. 6 new tests.","timestamp":"2026-05-27T17:31:00Z"}
+{"run":24,"commit":"51886fa","metric":1969,"status":"keep","description":"Tool chain templates — debug/feature/refactor/research workflow sequences injected into system prompt.","timestamp":"2026-05-27T17:33:01Z"}
