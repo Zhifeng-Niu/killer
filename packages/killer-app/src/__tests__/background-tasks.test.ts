@@ -73,6 +73,11 @@ import {
   updateUtilizationStats,
   getUnderutilizedSections,
   createDefaultUtilizationStats,
+  createDefaultStyleEvolution,
+  extractResponseFeatures,
+  inferSatisfactionFromReply,
+  updateStyleEvolution,
+  generateStyleGuidance,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -2955,6 +2960,84 @@ describe('background-tasks', () => {
       }
       const under = getUnderutilizedSections(stats, 0.3);
       expect(under).toContain('CONVERSATION HEALTH');
+    });
+  });
+
+  describe('Response Style Evolution', () => {
+    it('should extract response features from code-heavy response', () => {
+      const features = extractResponseFeatures('Use `console.log("hello")` to print. The async function returns a Promise.');
+      expect(features.technical).toBe(true);
+      expect(features.length).toBeGreaterThan(0);
+    });
+
+    it('should extract features from prose response', () => {
+      const features = extractResponseFeatures('This is a simple explanation with no code.');
+      expect(features.codeBlocks).toBe(0);
+      expect(features.technical).toBe(false);
+      expect(features.explanationRatio).toBe(1);
+    });
+
+    it('should extract list items', () => {
+      const features = extractResponseFeatures('- item 1\n- item 2\n1. step one\n2. step two');
+      expect(features.listItems).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should infer positive satisfaction', () => {
+      expect(inferSatisfactionFromReply('thanks, that works perfectly!')).toBeGreaterThan(0.7);
+      expect(inferSatisfactionFromReply('完美！')).toBeGreaterThan(0.7);
+    });
+
+    it('should infer negative satisfaction', () => {
+      expect(inferSatisfactionFromReply('no that is wrong')).toBeLessThan(0.5);
+      expect(inferSatisfactionFromReply('还是不行')).toBeLessThan(0.5);
+    });
+
+    it('should infer neutral satisfaction', () => {
+      expect(inferSatisfactionFromReply('tell me more about X')).toBeLessThanOrEqual(0.5);
+    });
+
+    it('should update style evolution model', () => {
+      let model = createDefaultStyleEvolution();
+      expect(model.samples).toBe(0);
+
+      // Positive feedback on code-heavy response
+      model = updateStyleEvolution(model, {
+        features: { codeBlocks: 2, explanationRatio: 0.3, listItems: 0, length: 500, questionsAsked: 0, technical: true },
+        satisfaction: 0.9,
+      });
+      expect(model.samples).toBe(1);
+      expect(model.featureWeights.codeBlocks).toBeGreaterThan(0);
+    });
+
+    it('should generate style guidance after enough samples', () => {
+      let model = createDefaultStyleEvolution();
+      // Simulate: user loves code, hates long explanations
+      for (let i = 0; i < 5; i++) {
+        model = updateStyleEvolution(model, {
+          features: { codeBlocks: 3, explanationRatio: 0.2, listItems: 0, length: 800, questionsAsked: 0, technical: true },
+          satisfaction: 0.9,
+        });
+      }
+      const guidance = generateStyleGuidance(model);
+      expect(guidance).toBeDefined();
+      expect(guidance).toContain('code');
+    });
+
+    it('should return undefined guidance with too few samples', () => {
+      const model = createDefaultStyleEvolution();
+      expect(generateStyleGuidance(model)).toBeUndefined();
+    });
+
+    it('should learn to prefer prose over time', () => {
+      let model = createDefaultStyleEvolution();
+      // User consistently unhappy with code-heavy, happy with prose
+      for (let i = 0; i < 5; i++) {
+        model = updateStyleEvolution(model, {
+          features: { codeBlocks: 0, explanationRatio: 0.9, listItems: 2, length: 300, questionsAsked: 1, technical: false },
+          satisfaction: 0.8,
+        });
+      }
+      expect(model.featureWeights.explanationRatio).toBeGreaterThan(0);
     });
   });
 });

@@ -2869,6 +2869,7 @@ export function scoreSectionRelevance(
     'COGNITIVE STATE': 0.7,
     'COMPOSITE RESPONSE STRATEGY': 0.75,
     'INTENT EVOLUTION': 0.55,
+    'STYLE GUIDANCE': 0.6,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -4316,4 +4317,141 @@ export function getUnderutilizedSections(
   return Object.entries(stats.sectionRatios)
     .filter(([, ratio]) => ratio < threshold)
     .map(([section]) => section);
+}
+
+// ============================================================
+// Response Style Evolution — 回复风格自进化
+// ============================================================
+
+export interface ResponseStyleFeatures {
+  /** 代码块数量 */
+  codeBlocks: number;
+  /** 解释文字占比 (0-1) */
+  explanationRatio: number;
+  /** 列表/步骤数量 */
+  listItems: number;
+  /** 回复长度 (chars) */
+  length: number;
+  /** 问题数量（向用户提问） */
+  questionsAsked: number;
+  /** 使用了代码/技术术语 */
+  technical: boolean;
+}
+
+export interface StyleSatisfactionSample {
+  features: ResponseStyleFeatures;
+  /** 下一轮用户的满意度信号 (0-1) */
+  satisfaction: number;
+}
+
+export interface StyleEvolutionModel {
+  /** 特征维度 → EMA 权重 (正=用户满意此特征, 负=不满意) */
+  featureWeights: Record<keyof ResponseStyleFeatures, number>;
+  /** 样本数 */
+  samples: number;
+}
+
+const STYLE_ALPHA = 0.1;
+
+export function createDefaultStyleEvolution(): StyleEvolutionModel {
+  return {
+    featureWeights: {
+      codeBlocks: 0,
+      explanationRatio: 0,
+      listItems: 0,
+      length: 0,
+      questionsAsked: 0,
+      technical: 0,
+    },
+    samples: 0,
+  };
+}
+
+export function extractResponseFeatures(response: string): ResponseStyleFeatures {
+  const codeBlocks = (response.match(/```[\s\S]*?```/g) || []).length;
+  const codeChars = (response.match(/```[\s\S]*?```/g) || []).join('').length;
+  const explanationRatio = response.length > 0 ? 1 - codeChars / response.length : 1;
+  const listItems = (response.match(/^[\s]*[-*•]\s|^\d+[.)]\s/gm) || []).length;
+  const questionsAsked = (response.match(/[?？]/g) || []).length;
+  const technical = /function|class|import|const |let |var |return|async|await|=>|def |print|npm|pip|git |docker/i.test(response);
+  return { codeBlocks, explanationRatio, listItems, length: response.length, questionsAsked, technical };
+}
+
+/** 从用户的下一条消息推断满意度信号 */
+export function inferSatisfactionFromReply(userReply: string): number {
+  let score = 0.5; // 基线
+
+  // 正面信号
+  if (/thanks|thank you|完美|很好|正确|works|got it|明白了|谢谢|great|perfect/i.test(userReply)) {
+    score += 0.3;
+  }
+  if (/awesome|excellent|太棒|厉害|exactly|对的|没错/i.test(userReply)) {
+    score += 0.2;
+  }
+  // 简短确认 (ok, yes, 好的)
+  if (/^(ok|okay|yes|好|好的|嗯|got it|明白了?)[\s!.?]*$/i.test(userReply.trim())) {
+    score += 0.15;
+  }
+
+  // 负面信号
+  if (/no|wrong|not right|不对|不是|错误|不对/i.test(userReply)) {
+    score -= 0.3;
+  }
+  if (/still|还是|doesn't work|不行|失败|still not|不work/i.test(userReply)) {
+    score -= 0.2;
+  }
+  // 追问同一话题（说明上一个回复不够完整）
+  if (/more|detail|elaborate|详细|更多|继续|还有/i.test(userReply)) {
+    score -= 0.1;
+  }
+
+  return Math.max(0, Math.min(1, score));
+}
+
+export function updateStyleEvolution(
+  model: StyleEvolutionModel,
+  sample: StyleSatisfactionSample,
+): StyleEvolutionModel {
+  const newWeights = { ...model.featureWeights };
+  const satisfactionDelta = (sample.satisfaction - 0.5) * 2; // -1 to +1
+
+  for (const key of Object.keys(newWeights) as Array<keyof ResponseStyleFeatures>) {
+    const featureValue = normalizeFeature(key, sample.features[key]);
+    const contribution = featureValue * satisfactionDelta;
+    newWeights[key] = newWeights[key] + STYLE_ALPHA * (contribution - newWeights[key]);
+  }
+
+  return { featureWeights: newWeights, samples: model.samples + 1 };
+}
+
+function normalizeFeature(key: keyof ResponseStyleFeatures, value: number | boolean): number {
+  if (key === 'technical') return value ? 1 : 0;
+  if (key === 'length') return Math.min(1, value / 1000);
+  if (key === 'codeBlocks') return Math.min(1, value / 3);
+  if (key === 'listItems') return Math.min(1, value / 5);
+  if (key === 'explanationRatio') return value;
+  if (key === 'questionsAsked') return Math.min(1, value / 3);
+  return 0;
+}
+
+export function generateStyleGuidance(model: StyleEvolutionModel): string | undefined {
+  if (model.samples < 3) return undefined;
+
+  const w = model.featureWeights;
+  const hints: string[] = [];
+
+  if (w.codeBlocks > 0.05) hints.push('prefer code examples');
+  else if (w.codeBlocks < -0.05) hints.push('minimize code, use prose explanations');
+
+  if (w.explanationRatio > 0.05) hints.push('explain concepts thoroughly');
+  else if (w.explanationRatio < -0.05) hints.push('keep explanations concise');
+
+  if (w.listItems > 0.05) hints.push('use structured lists/steps');
+  else if (w.listItems < -0.05) hints.push('avoid over-structuring');
+
+  if (w.questionsAsked > 0.05) hints.push('ask clarifying questions');
+  else if (w.questionsAsked < -0.05) hints.push('be decisive, avoid asking back');
+
+  if (hints.length === 0) return undefined;
+  return hints.join('; ');
 }

@@ -113,6 +113,8 @@ export interface PromptBuilderDeps {
   sectionWeightOffsets?: Record<string, number>;
   /** 意图演变追踪 */
   intentEvolution?: string;
+  /** 回复风格进化指导 */
+  styleGuidance?: string;
 }
 
 /**
@@ -367,6 +369,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 意图演变追踪 ===
   if (deps.intentEvolution) {
     parts.push(`\nINTENT EVOLUTION — ${deps.intentEvolution}`);
+  }
+
+  // === 回复风格进化 ===
+  if (deps.styleGuidance) {
+    parts.push(`\nSTYLE GUIDANCE — Based on learned preferences: ${deps.styleGuidance}`);
   }
 
   // === 自主行动建议 ===

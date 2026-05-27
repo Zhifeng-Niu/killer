@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL, createDefaultSectionWeights, recordActiveSections, updateSectionWeights, getSectionWeightOffset, exportSectionWeights, importSectionWeights, type SectionWeights, classifyIntent, extractIntentSummary, trackIntentEvolution, formatIntentEvolution, type IntentNode, type IntentEvolution, evaluateSignalUtilization, updateUtilizationStats, getUnderutilizedSections, createDefaultUtilizationStats, type UtilizationStats } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL, createDefaultSectionWeights, recordActiveSections, updateSectionWeights, getSectionWeightOffset, exportSectionWeights, importSectionWeights, type SectionWeights, classifyIntent, extractIntentSummary, trackIntentEvolution, formatIntentEvolution, type IntentNode, type IntentEvolution, evaluateSignalUtilization, updateUtilizationStats, getUnderutilizedSections, createDefaultUtilizationStats, type UtilizationStats, createDefaultStyleEvolution, extractResponseFeatures, inferSatisfactionFromReply, updateStyleEvolution, generateStyleGuidance, type StyleEvolutionModel, type ResponseStyleFeatures } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -197,6 +197,10 @@ export class KillerAgent {
 
   // 认知信号利用率追踪
   private utilizationStats: UtilizationStats = createDefaultUtilizationStats();
+
+  // 回复风格自进化
+  private styleEvolution: StyleEvolutionModel = createDefaultStyleEvolution();
+  private lastResponseFeatures: ResponseStyleFeatures | undefined;
 
   // 实验驱动的行为洞察（成功的实验模式，注入系统 prompt）
   private behavioralInsights: string[] = [];
@@ -2504,6 +2508,15 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           profile.strategyScores = { ...scores, [key]: Math.max(0, Math.min(1, scores[key] + delta)) };
         }
       }
+
+      // 回复风格自进化 — 基于用户反馈更新风格偏好
+      if (this.lastResponseFeatures) {
+        const satisfaction = inferSatisfactionFromReply(content);
+        this.styleEvolution = updateStyleEvolution(this.styleEvolution, {
+          features: this.lastResponseFeatures,
+          satisfaction,
+        });
+      }
     }
 
     // 检测用户消息中的承诺/计划/待办（用于后续提醒）
@@ -2590,6 +2603,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         // 记录到对话历史（工具链循环已在 runNativeToolLoop 中完成）
         this.conversationHistory.push({ role: 'user', content: innerCtx.input, timestamp: Date.now() });
         this.conversationHistory.push({ role: 'assistant', content: response, timestamp: Date.now() });
+        this.lastResponseFeatures = extractResponseFeatures(response);
         if (this.conversationHistory.length > this.maxConversationTurns * 2) {
           this.conversationHistory = this.conversationHistory.slice(-this.maxConversationTurns * 2);
         }
@@ -3479,6 +3493,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       'CONVERSATION RHYTHM', 'USER EXPERTISE', 'EMOTIONAL RESPONSE STRATEGY',
       'PERCEPTION FUSION', 'RESTORED CONTEXT', 'STRATEGY COHERENCE',
       'COGNITIVE STATE', 'COMPOSITE RESPONSE STRATEGY', 'INTENT EVOLUTION',
+      'STYLE GUIDANCE',
     ];
 
     const memoryStats = this.hippocampus.getStats();
@@ -3553,6 +3568,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       cognitiveState: this.computeCognitiveState(perception),
       responseStrategy: this.computeResponseStrategy(perception),
       intentEvolution: this.computeIntentEvolution(),
+      styleGuidance: generateStyleGuidance(this.styleEvolution),
       sectionWeightOffsets: exportSectionWeights(this.sectionWeights),
     });
 
