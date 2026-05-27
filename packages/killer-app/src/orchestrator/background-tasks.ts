@@ -1651,3 +1651,75 @@ export function buildGoalDependencyGraph(
 
   return dependencies;
 }
+
+// ============================================================
+// Execution Progress Reporter
+// ============================================================
+
+/**
+ * 执行进度报告
+ */
+export interface ProgressReport {
+  /** 计划描述 */
+  planDescription: string;
+  /** 已完成步骤数 */
+  completedSteps: number;
+  /** 总步骤数 */
+  totalSteps: number;
+  /** 完成百分比 */
+  percentComplete: number;
+  /** 当前步骤描述 */
+  currentStep: string;
+  /** 当前步骤状态 */
+  currentStepStatus: string;
+  /** 预估剩余步骤 */
+  remainingSteps: number;
+  /** 格式化的进度文本 */
+  formatted: string;
+}
+
+/**
+ * 生成执行进度报告
+ */
+export function generateProgressReport(
+  planDescription: string,
+  steps: Array<{ description: string; status: string }>,
+): ProgressReport {
+  const totalSteps = steps.length;
+  const completedSteps = steps.filter(s => s.status === 'completed').length;
+  const percentComplete = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
+  const remainingSteps = totalSteps - completedSteps;
+
+  const currentStep = steps.find(s => s.status === 'ready' || s.status === 'in_progress');
+  const currentStepDescription = currentStep?.description ?? 'all steps done';
+
+  const progressBar = generateProgressBar(percentComplete);
+
+  const formatted = [
+    `Plan: ${planDescription}`,
+    progressBar,
+    `${completedSteps}/${totalSteps} steps (${percentComplete}%) — ${remainingSteps} remaining`,
+    currentStep ? `Current: ${currentStepDescription}` : 'All steps completed',
+  ].join('\n');
+
+  return {
+    planDescription,
+    completedSteps,
+    totalSteps,
+    percentComplete,
+    currentStep: currentStepDescription,
+    currentStepStatus: currentStep?.status ?? 'done',
+    remainingSteps,
+    formatted,
+  };
+}
+
+/**
+ * 生成 ASCII 进度条
+ */
+function generateProgressBar(percent: number): string {
+  const width = 20;
+  const filled = Math.round((percent / 100) * width);
+  const empty = width - filled;
+  return `[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${percent}%`;
+}

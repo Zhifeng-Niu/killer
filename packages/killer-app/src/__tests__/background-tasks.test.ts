@@ -28,6 +28,7 @@ import {
   detectAmbiguity,
   extractGoalResources,
   buildGoalDependencyGraph,
+  generateProgressReport,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -1188,6 +1189,57 @@ describe('background-tasks', () => {
 
     it('should return empty for no goals', () => {
       expect(buildGoalDependencyGraph([])).toHaveLength(0);
+    });
+  });
+
+  describe('generateProgressReport', () => {
+    it('should report 0% for no completed steps', () => {
+      const report = generateProgressReport('Build API', [
+        { description: 'Design schema', status: 'pending' },
+        { description: 'Implement routes', status: 'pending' },
+        { description: 'Write tests', status: 'pending' },
+      ]);
+      expect(report.percentComplete).toBe(0);
+      expect(report.completedSteps).toBe(0);
+      expect(report.remainingSteps).toBe(3);
+    });
+
+    it('should report partial progress', () => {
+      const report = generateProgressReport('Build API', [
+        { description: 'Design schema', status: 'completed' },
+        { description: 'Implement routes', status: 'in_progress' },
+        { description: 'Write tests', status: 'pending' },
+        { description: 'Deploy', status: 'pending' },
+      ]);
+      expect(report.percentComplete).toBe(25);
+      expect(report.completedSteps).toBe(1);
+      expect(report.currentStep).toBe('Implement routes');
+      expect(report.currentStepStatus).toBe('in_progress');
+    });
+
+    it('should report 100% when all steps done', () => {
+      const report = generateProgressReport('Build API', [
+        { description: 'Design schema', status: 'completed' },
+        { description: 'Implement routes', status: 'completed' },
+      ]);
+      expect(report.percentComplete).toBe(100);
+      expect(report.remainingSteps).toBe(0);
+    });
+
+    it('should include formatted output with progress bar', () => {
+      const report = generateProgressReport('Build API', [
+        { description: 'Step 1', status: 'completed' },
+        { description: 'Step 2', status: 'pending' },
+      ]);
+      expect(report.formatted).toContain('Plan: Build API');
+      expect(report.formatted).toContain('50%');
+      expect(report.formatted).toContain('1/2 steps');
+    });
+
+    it('should handle empty steps array', () => {
+      const report = generateProgressReport('Empty plan', []);
+      expect(report.percentComplete).toBe(0);
+      expect(report.totalSteps).toBe(0);
     });
   });
 });
