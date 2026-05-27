@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -3463,6 +3463,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       autonomousActions: this.computeAutonomousActions(),
       restoredTopicContext: this.computeRestoredTopicContext(),
       conversationRhythm: this.computeConversationRhythm(),
+      userExpertise: this.computeUserExpertise(),
     });
   }
 
@@ -3605,6 +3606,18 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     );
     if (rhythm.confidence < 0.4 || rhythm.rhythm === 'initial') return undefined;
     return `[${rhythm.rhythm}] ${rhythm.responseHint}`;
+  }
+
+  private computeUserExpertise(): string | undefined {
+    const userMessages = this.conversationHistory
+      .filter(m => m.role === 'user')
+      .slice(-30)
+      .map(m => m.content);
+    if (userMessages.length < 3) return undefined;
+    const profile = buildUserExpertiseProfile(userMessages);
+    if (profile.domains.length === 0) return undefined;
+    const topDomains = profile.domains.slice(0, 3);
+    return `${profile.terminologyHint} ${profile.explanationHint} (Top domains: ${topDomains.map(d => `${d.domain}(${d.depth.toFixed(1)})`).join(', ')})`;
   }
 
   /**

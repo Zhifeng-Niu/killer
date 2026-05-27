@@ -3133,3 +3133,118 @@ export function analyzeConversationRhythm(
     avgInterval,
   };
 }
+
+/**
+ * 用户知识专长领域
+ */
+export interface UserExpertiseDomain {
+  /** 领域名称 */
+  domain: string;
+  /** 0-1 知识深度估算 */
+  depth: number;
+  /** 证据条数 */
+  evidenceCount: number;
+  /** 证据样本 */
+  samples: string[];
+}
+
+/**
+ * 用户知识画像
+ */
+export interface UserExpertiseProfile {
+  /** 检测到的专长领域 */
+  domains: UserExpertiseDomain[];
+  /** 建议的术语深度 */
+  terminologyHint: string;
+  /** 建议的解释深度 */
+  explanationHint: string;
+}
+
+/** 领域关键词映射 */
+const DOMAIN_KEYWORDS: Record<string, string[]> = {
+  frontend: ['react', 'vue', 'angular', 'css', 'html', 'svelte', 'nextjs', 'tailwind', 'component', 'dom', 'browser', 'webpack', 'vite', '渲染', '组件'],
+  backend: ['api', 'server', 'database', 'sql', 'rest', 'graphql', 'microservice', 'middleware', 'endpoint', '后端', '服务端', '接口'],
+  devops: ['docker', 'kubernetes', 'ci/cd', 'deploy', 'aws', 'gcp', 'azure', 'terraform', 'nginx', '监控', '运维', '部署'],
+  systems: ['rust', 'c++', 'kernel', 'memory', 'thread', 'process', 'syscall', 'assembly', '操作系统', '内核'],
+  datascience: ['pandas', 'numpy', 'ml', 'model', 'training', 'neural', 'pytorch', 'tensorflow', 'jupyter', '机器学习', '训练'],
+  security: ['auth', 'encrypt', 'vulnerability', 'xss', 'csrf', 'penetration', 'firewall', '安全', '加密', '漏洞'],
+  mobile: ['ios', 'android', 'swift', 'kotlin', 'flutter', 'react native', 'mobile', 'app store', '移动端', '安卓'],
+  testing: ['test', 'jest', 'vitest', 'cypress', 'playwright', 'coverage', 'unit test', 'e2e', '测试', '覆盖率'],
+};
+
+/**
+ * 从对话历史中构建用户知识专长画像
+ *
+ * 分析用户消息中各领域的技术术语密度，推导出
+ * 用户在哪些领域有深度知识，用于调整 agent 的
+ * 术语选择和解释深度。
+ */
+export function buildUserExpertiseProfile(
+  userMessages: string[],
+): UserExpertiseProfile {
+  if (userMessages.length === 0) {
+    return { domains: [], terminologyHint: 'Use standard technical terms.', explanationHint: 'Provide clear explanations.' };
+  }
+
+  const domains: UserExpertiseDomain[] = [];
+  const combined = userMessages.join(' ').toLowerCase();
+
+  for (const [domain, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
+    let matchCount = 0;
+    const samples: string[] = [];
+
+    for (const keyword of keywords) {
+      const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(keyword.length > 2 ? `\\b${escaped}\\b` : escaped, 'gi');
+      const matches = combined.match(regex);
+      if (matches && matches.length > 0) {
+        matchCount += matches.length;
+        if (samples.length < 3) {
+          const contextIdx = combined.indexOf(keyword.toLowerCase());
+          if (contextIdx >= 0) {
+            const start = Math.max(0, contextIdx - 20);
+            const end = Math.min(combined.length, contextIdx + keyword.length + 20);
+            samples.push(`...${combined.slice(start, end)}...`);
+          }
+        }
+      }
+    }
+
+    if (matchCount >= 2) {
+      // 深度估算：基于匹配密度和消息数量
+      const density = matchCount / userMessages.length;
+      const depth = Math.min(1, 0.3 + density * 0.4 + Math.min(samples.length / 3, 0.3));
+
+      domains.push({
+        domain,
+        depth,
+        evidenceCount: matchCount,
+        samples: samples.slice(0, 3),
+      });
+    }
+  }
+
+  // 按证据数排序
+  domains.sort((a, b) => b.evidenceCount - a.evidenceCount);
+
+  // 根据最深的领域生成建议
+  const topDomain = domains[0];
+  const totalEvidence = domains.reduce((sum, d) => sum + d.evidenceCount, 0);
+
+  if (!topDomain || totalEvidence < 3) {
+    return { domains, terminologyHint: 'Use standard technical terms.', explanationHint: 'Provide clear explanations.' };
+  }
+
+  const highDepthDomains = domains.filter(d => d.depth >= 0.6);
+  const terminologyHint = highDepthDomains.length > 0
+    ? `User appears knowledgeable in: ${highDepthDomains.map(d => d.domain).join(', ')}. Use domain-specific terminology freely.`
+    : 'Use standard technical terms.';
+
+  const explanationHint = highDepthDomains.length >= 2
+    ? 'Deep technical explanations welcome. Skip basics for known domains.'
+    : highDepthDomains.length === 1
+      ? `Can use advanced terms in ${highDepthDomains[0].domain}. Explain other domains more.`
+      : 'Provide clear explanations with context.';
+
+  return { domains, terminologyHint, explanationHint };
+}

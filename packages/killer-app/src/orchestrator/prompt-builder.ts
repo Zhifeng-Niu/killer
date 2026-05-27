@@ -96,6 +96,8 @@ export interface PromptBuilderDeps {
   restoredTopicContext?: string;
   /** 对话节奏感知（快速/深思熟虑/混合/空闲） */
   conversationRhythm?: string;
+  /** 用户知识专长画像 */
+  userExpertise?: string;
 }
 
 /**
@@ -315,6 +317,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 对话节奏 ===
   if (deps.conversationRhythm) {
     parts.push(`\nCONVERSATION RHYTHM — ${deps.conversationRhythm}`);
+  }
+
+  // === 用户知识专长 ===
+  if (deps.userExpertise) {
+    parts.push(`\nUSER EXPERTISE — ${deps.userExpertise}`);
   }
 
   // === 自主行动建议 ===

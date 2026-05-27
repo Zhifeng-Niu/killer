@@ -46,6 +46,7 @@ import {
   formatTopicSnapshot,
   generateIntentPreloads,
   analyzeConversationRhythm,
+  buildUserExpertiseProfile,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -2194,6 +2195,69 @@ describe('background-tasks', () => {
         { length: 300, timestamp: now + 120000 },
       ]);
       expect(result.avgMessageLength).toBe(200);
+    });
+  });
+
+  describe('buildUserExpertiseProfile', () => {
+    it('should return default hints for empty messages', () => {
+      const profile = buildUserExpertiseProfile([]);
+      expect(profile.domains).toEqual([]);
+      expect(profile.terminologyHint).toContain('standard');
+    });
+
+    it('should detect frontend expertise', () => {
+      const profile = buildUserExpertiseProfile([
+        'I am using React with TypeScript for my project',
+        'The component needs to handle CSS animations',
+        'Can you help with the NextJS API routes?',
+        'My Vue component has a rendering issue',
+      ]);
+      const frontend = profile.domains.find(d => d.domain === 'frontend');
+      expect(frontend).toBeDefined();
+      expect(frontend!.evidenceCount).toBeGreaterThanOrEqual(2);
+      expect(profile.terminologyHint).toContain('frontend');
+    });
+
+    it('should detect multiple domains', () => {
+      const profile = buildUserExpertiseProfile([
+        'Deploy the Docker container to Kubernetes',
+        'The API endpoint needs authentication middleware',
+        'Write tests with vitest for coverage',
+        'Configure the CI/CD pipeline',
+      ]);
+      expect(profile.domains.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should compute depth based on evidence density', () => {
+      const profile = buildUserExpertiseProfile([
+        'React component React hooks React state React props React useEffect',
+        'React context React router React suspense React lazy',
+      ]);
+      const frontend = profile.domains.find(d => d.domain === 'frontend');
+      expect(frontend).toBeDefined();
+      expect(frontend!.depth).toBeGreaterThan(0.5);
+    });
+
+    it('should provide domain-specific explanation hint', () => {
+      const profile = buildUserExpertiseProfile([
+        'I need to fix the SQL database query performance',
+        'The REST API server is returning 500 errors',
+        'Configure the backend middleware correctly',
+        'Database migration for the new table',
+      ]);
+      expect(profile.explanationHint).toBeTruthy();
+    });
+
+    it('should sort domains by evidence count', () => {
+      const profile = buildUserExpertiseProfile([
+        'React component CSS HTML component React',
+        'SQL database SQL query SQL SQL',
+      ]);
+      if (profile.domains.length >= 2) {
+        expect(profile.domains[0].evidenceCount).toBeGreaterThanOrEqual(
+          profile.domains[1].evidenceCount,
+        );
+      }
     });
   });
 });
