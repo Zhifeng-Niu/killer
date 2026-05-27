@@ -79,6 +79,16 @@ export interface PromptBuilderDeps {
   lengthPreference?: string;
   /** 上下文感知工具优先级 */
   toolPriority?: string;
+  /** 对话健康状态 */
+  conversationHealth?: string;
+  /** 多意图检测结果 */
+  multiIntents?: string[];
+  /** 模糊输入检测 */
+  ambiguityWarnings?: string[];
+  /** 目标依赖图 */
+  goalDependencies?: string[];
+  /** 话题切换检测 */
+  topicTransition?: string;
 }
 
 /**
@@ -263,6 +273,31 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 工具优先级建议 ===
   if (deps.toolPriority) {
     parts.push(`\nTOOL PRIORITY — ${deps.toolPriority}`);
+  }
+
+  // === 对话健康 ===
+  if (deps.conversationHealth) {
+    parts.push(`\nCONVERSATION HEALTH — ${deps.conversationHealth}`);
+  }
+
+  // === 多意图检测 ===
+  if (deps.multiIntents && deps.multiIntents.length > 1) {
+    parts.push(`\nMULTI-INTENT — User message contains ${deps.multiIntents.length} intents. Address each one separately:\n${deps.multiIntents.map((t, i) => `${i + 1}. ${t}`).join('\n')}`);
+  }
+
+  // === 模糊输入澄清 ===
+  if (deps.ambiguityWarnings && deps.ambiguityWarnings.length > 0) {
+    parts.push(`\nINPUT AMBIGUITY — User input is ambiguous. Before proceeding, clarify:\n${deps.ambiguityWarnings.join('\n')}`);
+  }
+
+  // === 目标依赖 ===
+  if (deps.goalDependencies && deps.goalDependencies.length > 0) {
+    parts.push(`\nGOAL DEPENDENCIES\n${deps.goalDependencies.join('\n')}`);
+  }
+
+  // === 话题切换 ===
+  if (deps.topicTransition) {
+    parts.push(`\nTOPIC TRANSITION — ${deps.topicTransition}`);
   }
 
   // === 生命叙事 ===

@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 2125
-total_waypoints: 47
+total_waypoints: 48
 consecutive_discards: 0
 ---
 
@@ -91,6 +91,7 @@ npm test 2>&1
 44. **Length Preference in System Prompt** (waypoint 45): Wired length signal detection into processInputCore, tracks preference state across interactions, injects LENGTH PREFERENCE section into system prompt when score deviates from default by ±0.15
 45. **Context-Aware Tool Prioritization** (waypoint 46): suggestToolPriority() combines flow prediction + conversational phase + urgency level to recommend preferred tools. Injected as TOOL PRIORITY section — debug flow prefers code_search/shell_exec, question flow prefers web_search/memory_recall, high urgency bumps exec tools to front
 46. **Conversation Health Monitoring** (waypoint 47): monitorConversationHealth() detects stuck conversations (same topic 5+ turns), engagement trends (message length change), and frustration signals (keyword matching). Returns 0-1 health score with issues and recommendations, injected into system prompt when score < 0.8
+47. **Cognitive Loop Closure** (waypoint 48): Wired 4 orphaned cognitive functions into agent's buildSystemPrompt — detectMultiIntent (MULTI-INTENT section), detectAmbiguity (INPUT AMBIGUITY section), buildGoalDependencyGraph (GOAL DEPENDENCIES section), detectTopicTransition (TOPIC TRANSITION section). All gated by relevance conditions, zero overhead when inactive
 
 ### Dead Ends
 {Auto-updated by engine.}

@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -3459,6 +3459,43 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         if (health.issues.length > 0) parts.push(`Issues: ${health.issues.join('; ')}`);
         parts.push(health.recommendation);
         return parts.join('. ');
+      })(),
+      multiIntents: (() => {
+        if (!this.conversationHistory.length) return undefined;
+        const lastUser = this.conversationHistory.filter(m => m.role === 'user').slice(-1)[0];
+        if (!lastUser) return undefined;
+        const intents = detectMultiIntent(lastUser.content);
+        return intents.length > 1 ? intents.map(i => i.text) : undefined;
+      })(),
+      ambiguityWarnings: (() => {
+        if (!this.conversationHistory.length) return undefined;
+        const lastUser = this.conversationHistory.filter(m => m.role === 'user').slice(-1)[0];
+        if (!lastUser) return undefined;
+        const ambiguities = detectAmbiguity(lastUser.content);
+        return ambiguities.length > 0 ? ambiguities.map(a => a.clarification) : undefined;
+      })(),
+      goalDependencies: (() => {
+        const goals = this.listGoals();
+        if (goals.length < 2) return undefined;
+        const deps = buildGoalDependencyGraph(goals.map(g => ({
+          id: g.id, description: g.description, status: g.status,
+        })));
+        if (deps.length === 0) return undefined;
+        return deps.map(d => `${d.type}: ${d.description}`);
+      })(),
+      topicTransition: (() => {
+        if (this.recentTopics.length < 2) return undefined;
+        const lastUser = this.conversationHistory.filter(m => m.role === 'user').slice(-1)[0];
+        if (!lastUser) return undefined;
+        const prev = this.recentTopics[this.recentTopics.length - 2];
+        const topicHistory = this.recentTopics.map((t, i) => ({
+          topic: t, turnStart: i, turnEnd: i + 1,
+        }));
+        const transition = detectTopicTransition(lastUser.content, prev, this.conversationHistory.length, topicHistory);
+        if (!transition.transitioned) return undefined;
+        const parts = [`Topic shifted to "${transition.currentTopic}"`];
+        if (transition.returnedTo) parts.push(`(returned to "${transition.returnedTo}")`);
+        return parts.join(' ');
       })(),
     });
   }
