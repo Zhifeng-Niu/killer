@@ -1287,14 +1287,86 @@ What alternative approach should we try? One sentence only.`;
           error: result.error,
         };
       } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
+        // 工具不存在时，尝试自主创建
+        const errMsg = error instanceof Error ? error.message : String(error);
+        if (errMsg.includes('not found') || errMsg.includes('Unknown tool')) {
+          const forged = await this.tryForgeTool(step.action.type, step.description);
+          if (forged) {
+            // 重试执行
+            try {
+              const retry = await this.tools.execute(
+                step.action.type,
+                step.action.payload as Record<string, unknown>,
+              );
+              return {
+                success: retry.success,
+                output: typeof retry.data === 'string' ? retry.data : JSON.stringify(retry.data),
+              };
+            } catch {
+              // 创建的工具执行也失败，回退到 LLM
+            }
+          }
+        }
+        return { success: false, error: errMsg };
       }
     }
 
     // 无明确 action — 用 LLM 理解步骤描述并生成工具调用
+    const prompt = `Execute this plan step using available tools. Respond with the result.
+
+Plan step: "${step.description}"
+
+If this step requires using a tool, use it. If it's a reasoning/analysis step, provide the analysis directly.`;
+
+    try {
+      const response = await this.callLLMWithRetry(prompt, '');
+      return { success: true, output: response };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /**
+   * 尝试用 LLM 生成工具代码并通过 ToolForge 创建
+   *
+   * 自主能力扩展：当计划需要不存在的工具时，动态创造
+   */
+  private async tryForgeTool(toolName: string, taskDescription: string): Promise<boolean> {
+    if (!this.toolForge) return false;
+
+    try {
+      this.logger.info(`ToolForge: attempting to create tool "${toolName}" for: ${taskDescription.slice(0, 60)}`);
+
+      const codePrompt = `Generate a JavaScript/TypeScript tool function for this task: "${taskDescription}"
+
+The tool must export a default object with:
+- name: "${toolName}"
+- description: one-line description
+- execute: async function that takes params object and returns { success: boolean, data?: any, error?: string }
+
+Return ONLY the code, no markdown fences.`;
+
+      const codeResult = await this.callLLMWithRetry(codePrompt, '');
+      const code = codeResult.replace(/^```(?:js|ts)?\n?/, '').replace(/\n?```$/, '').trim();
+
+      const forgeResult = await this.toolForge.create(toolName, taskDescription.slice(0, 100), code);
+      if (forgeResult.success) {
+        this.logger.info(`ToolForge: created tool "${toolName}" at ${forgeResult.data?.filePath}`);
+        this.consciousness.emit({
+          type: 'tool.created',
+          source: 'brainstem',
+          data: { toolName, description: taskDescription.slice(0, 100) },
+        });
+        return true;
+      }
+      this.logger.warn(`ToolForge: failed to create "${toolName}": ${forgeResult.error}`);
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
     const prompt = `Execute this plan step using available tools. Respond with the result.
 
 Plan step: "${step.description}"
