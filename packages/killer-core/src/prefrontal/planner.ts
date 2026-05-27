@@ -1,7 +1,8 @@
 /**
  * Prefrontal Cortex - 规划器
  *
- * 将目标分解为可执行的计划步骤
+ * 将目标分解为可执行的计划步骤。
+ * 支持规则分解（零依赖回退）和 LLM 智能分解。
  */
 
 import type {
@@ -11,6 +12,13 @@ import type {
   PlanStrategy,
   StepResult,
 } from './types.js';
+
+/**
+ * LLM 接口 — 仅需要 complete()
+ */
+interface PlannerLLM {
+  complete(prompt: string): Promise<{ content: string }>;
+}
 
 /**
  * 生成唯一 ID
@@ -41,9 +49,9 @@ function inferStrategy(description: string): PlanStrategy {
 }
 
 /**
- * 将目标描述分解为步骤
+ * 将目标描述分解为步骤（规则回退）
  */
-function decomposeGoal(description: string): string[] {
+function decomposeGoalByRules(description: string): string[] {
   const steps: string[] = [];
 
   // 尝试按 "→" 分割
@@ -69,16 +77,71 @@ function decomposeGoal(description: string): string[] {
 }
 
 /**
+ * 用 LLM 分解目标为可执行步骤
+ */
+async function decomposeGoalByLLM(
+  llm: PlannerLLM,
+  goalDescription: string,
+): Promise<string[]> {
+  const prompt = `You are a task planner. Break down this goal into 2-6 concrete, executable steps.
+Each step should be a specific action that can be performed using tools (code execution, file read/write, web search, etc.).
+
+Goal: "${goalDescription}"
+
+Respond with ONLY the steps, one per line, numbered. No explanations. No markdown. No extra text.
+Example format:
+1. Search for existing implementations of X
+2. Read the current module structure
+3. Implement the core logic
+4. Write tests
+5. Run build to verify`;
+
+  try {
+    const response = await llm.complete(prompt);
+    const lines = response.content
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => /^\d+[\.\)]\s/.test(l) && l.length > 3);
+
+    if (lines.length >= 2) {
+      return lines;
+    }
+
+    // LLM 输出格式不对，尝试按行分割
+    const anyLines = response.content
+      .split('\n')
+      .map(l => l.replace(/^[\d\.\)\-\*]+\s*/, '').trim())
+      .filter(l => l.length > 5 && l.length < 200);
+
+    if (anyLines.length >= 2) {
+      return anyLines.map((s, i) => `${i + 1}. ${s}`);
+    }
+  } catch {
+    // LLM 调用失败，回退到规则分解
+  }
+
+  return decomposeGoalByRules(goalDescription);
+}
+
+/**
  * 规划器
  *
  * 负责将目标分解为可执行的步骤
  */
 export class Planner {
+  private readonly llm: PlannerLLM | null;
+
+  constructor(llm?: PlannerLLM) {
+    this.llm = llm ?? null;
+  }
+
   /**
-   * 创建计划
+   * 创建计划 — 使用 LLM 智能分解（如果可用）或规则回退
    */
-  createPlan(goal: Goal): Plan {
-    const stepDescriptions = decomposeGoal(goal.description);
+  async createPlan(goal: Goal): Promise<Plan> {
+    const stepDescriptions = this.llm
+      ? await decomposeGoalByLLM(this.llm, goal.description)
+      : decomposeGoalByRules(goal.description);
     const strategy = inferStrategy(goal.description);
 
     const steps: PlanStep[] = stepDescriptions.map((desc, index) => ({

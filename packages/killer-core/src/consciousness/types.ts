@@ -24,7 +24,8 @@ export type EventSource =
   | 'external'
   | 'persona'
   | 'agent'
-  | 'cerebellum';
+  | 'cerebellum'
+  | 'prefrontal';
 
 export type EventType =
   // Brainstem 事件
@@ -93,7 +94,10 @@ export type EventType =
   | 'experiment.completed'
   | 'mission.created'
   | 'mission.paused'
-  | 'mission.resumed';
+  | 'mission.resumed'
+  // Prefrontal 事件 (规划编排)
+  | 'goal.created'
+  | 'goal.completed';
 
 /**
  * 轨迹记录

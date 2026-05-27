@@ -41,8 +41,8 @@ describe('Prefrontal Integration', () => {
   });
 
   describe('Goal Management', () => {
-    it('should create a goal', () => {
-      const goal = agent.createGoal('Build a REST API', 0.7);
+    it('should create a goal', async () => {
+      const goal = await agent.createGoal('Build a REST API', 0.7);
       expect(goal).toBeDefined();
       expect(goal).not.toBeNull();
       expect(goal!.description).toBe('Build a REST API');
@@ -50,16 +50,16 @@ describe('Prefrontal Integration', () => {
       expect(goal!.status).toBe('pending');
     });
 
-    it('should list active goals', () => {
-      agent.createGoal('Task 1', 0.5);
-      agent.createGoal('Task 2', 0.8);
+    it('should list active goals', async () => {
+      await agent.createGoal('Task 1', 0.5);
+      await agent.createGoal('Task 2', 0.8);
 
       const goals = agent.listGoals();
       expect(goals.length).toBeGreaterThanOrEqual(2);
     });
 
-    it('should track plan stats', () => {
-      agent.createGoal('Task 1', 0.5);
+    it('should track plan stats', async () => {
+      await agent.createGoal('Task 1', 0.5);
 
       const stats = agent.getPlanStats();
       expect(stats.activePlans).toBeGreaterThanOrEqual(1);

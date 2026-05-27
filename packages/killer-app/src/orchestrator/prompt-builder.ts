@@ -7,7 +7,7 @@
 
 import type { PersonaEngine } from '../persona/engine.js';
 import type { HippocampusEngine, Episode } from '@killer/core';
-import type { ToolExecutor, EssenceForge } from '@killer/core';
+import type { ToolExecutor, EssenceForge, Plan } from '@killer/core';
 import type { ContextWindowManager, ContextMessage } from './context.js';
 
 /**
@@ -24,6 +24,8 @@ export interface PromptBuilderDeps {
   currentInput?: string;
   /** 首次启动（无记忆、无交互历史） */
   isFirstBoot?: boolean;
+  /** 活跃计划列表（前额叶皮层上下文） */
+  activePlans?: Plan[];
 }
 
 /**
@@ -204,6 +206,21 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   const predictionFragment = deps.persona.predictiveModel.getPredictionPromptFragment();
   if (predictionFragment) {
     parts.push(`\n${predictionFragment}`);
+  }
+
+  // === 活跃计划（前额叶皮层） ===
+  if (deps.activePlans && deps.activePlans.length > 0) {
+    parts.push('\nACTIVE PLANS — You have goals in progress:');
+    for (const plan of deps.activePlans) {
+      const progress = plan.steps.filter(s => s.status === 'completed').length;
+      const total = plan.steps.length;
+      const nextStep = plan.steps.find(s => s.status === 'ready');
+      parts.push(`  Plan [${progress}/${total} done]: ${plan.steps.map(s => s.status === 'completed' ? '✓' : s.status === 'ready' ? '→' : '·').join(' ')}`);
+      if (nextStep) {
+        parts.push(`    Next: ${nextStep.description}`);
+      }
+    }
+    parts.push('Work toward these goals when the user\'s request is related. If they ask about progress, report from this context.');
   }
 
   // === 关联记忆检索（基于当前输入） ===

@@ -24,7 +24,7 @@ describe('Prefrontal Cortex', () => {
       planner = new Planner();
     });
 
-    it('should create a plan from a simple goal', () => {
+    it('should create a plan from a simple goal', async () => {
       const goal: Goal = {
         id: 'goal_1',
         description: 'Write a test file',
@@ -33,7 +33,7 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      const plan = planner.createPlan(goal);
+      const plan = await planner.createPlan(goal);
 
       expect(plan).toBeDefined();
       expect(plan.goalId).toBe(goal.id);
@@ -42,7 +42,7 @@ describe('Prefrontal Cortex', () => {
       expect(plan.strategy).toBeDefined();
     });
 
-    it('should decompose goal by arrow separators', () => {
+    it('should decompose goal by arrow separators', async () => {
       const goal: Goal = {
         id: 'goal_2',
         description: 'Step 1 → Step 2 → Step 3',
@@ -51,7 +51,7 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      const plan = planner.createPlan(goal);
+      const plan = await planner.createPlan(goal);
 
       expect(plan.steps.length).toBe(3);
       expect(plan.steps[0].description).toContain('Step 1');
@@ -59,7 +59,7 @@ describe('Prefrontal Cortex', () => {
       expect(plan.steps[2].description).toContain('Step 3');
     });
 
-    it('should set correct step dependencies', () => {
+    it('should set correct step dependencies', async () => {
       const goal: Goal = {
         id: 'goal_3',
         description: 'First step → Second step → Third step',
@@ -68,7 +68,7 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      const plan = planner.createPlan(goal);
+      const plan = await planner.createPlan(goal);
 
       // First step should have no dependencies
       expect(plan.steps[0].dependencies).toHaveLength(0);
@@ -80,7 +80,7 @@ describe('Prefrontal Cortex', () => {
       expect(plan.steps[2].dependencies).toContain(plan.steps[1].id);
     });
 
-    it('should detect exploratory strategy from keywords', () => {
+    it('should detect exploratory strategy from keywords', async () => {
       const goal: Goal = {
         id: 'goal_4',
         description: 'Research the best approach for this feature',
@@ -89,12 +89,12 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      const plan = planner.createPlan(goal);
+      const plan = await planner.createPlan(goal);
 
       expect(plan.strategy).toBe('exploratory');
     });
 
-    it('should detect sequential strategy from keywords', () => {
+    it('should detect sequential strategy from keywords', async () => {
       const goal: Goal = {
         id: 'goal_5',
         description: 'Build a new component for the app',
@@ -103,12 +103,12 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      const plan = planner.createPlan(goal);
+      const plan = await planner.createPlan(goal);
 
       expect(plan.strategy).toBe('sequential');
     });
 
-    it('should get ready steps with completed dependencies', () => {
+    it('should get ready steps with completed dependencies', async () => {
       const goal: Goal = {
         id: 'goal_6',
         description: 'Step 1 → Step 2 → Step 3',
@@ -117,7 +117,7 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      const plan = planner.createPlan(goal);
+      const plan = await planner.createPlan(goal);
 
       // Initially only first step is ready
       const initialReady = planner.getReadySteps(plan);
@@ -141,7 +141,7 @@ describe('Prefrontal Cortex', () => {
       expect(newReady[0].order).toBe(1);
     });
 
-    it('should replan after step failure', () => {
+    it('should replan after step failure', async () => {
       const goal: Goal = {
         id: 'goal_7',
         description: 'Step 1 → Step 2 → Step 3',
@@ -150,7 +150,7 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      const originalPlan = planner.createPlan(goal);
+      const originalPlan = await planner.createPlan(goal);
       const failedStepId = originalPlan.steps[1].id;
 
       const replanned = planner.replan(originalPlan, failedStepId);
@@ -160,7 +160,7 @@ describe('Prefrontal Cortex', () => {
       expect(replanned.steps[1].status).toBe('ready');
     });
 
-    it('should update step status correctly', () => {
+    it('should update step status correctly', async () => {
       const goal: Goal = {
         id: 'goal_8',
         description: 'Test step update',
@@ -169,7 +169,7 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      const plan = planner.createPlan(goal);
+      const plan = await planner.createPlan(goal);
       const stepId = plan.steps[0].id;
 
       const result = {
@@ -195,7 +195,7 @@ describe('Prefrontal Cortex', () => {
       executor = new PlanExecutor(planner);
     });
 
-    it('should submit a goal and create a plan', () => {
+    it('should submit a goal and create a plan', async () => {
       const goal: Goal = {
         id: 'goal_1',
         description: 'Execute task A → Execute task B',
@@ -204,14 +204,14 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      const plan = executor.submitGoal(goal);
+      const plan = await executor.submitGoal(goal);
 
       expect(plan).toBeDefined();
       expect(plan.goalId).toBe(goal.id);
       expect(executor.getPlan(plan.id)).toEqual(plan);
     });
 
-    it('should get next action from plan', () => {
+    it('should get next action from plan', async () => {
       const goal: Goal = {
         id: 'goal_2',
         description: 'First step → Second step',
@@ -220,7 +220,7 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      const plan = executor.submitGoal(goal);
+      const plan = await executor.submitGoal(goal);
       const nextAction = executor.getNextAction(plan.id);
 
       expect(nextAction).toBeDefined();
@@ -228,7 +228,7 @@ describe('Prefrontal Cortex', () => {
       expect(nextAction?.status).toBe('ready');
     });
 
-    it('should report step results and update plan', () => {
+    it('should report step results and update plan', async () => {
       const goal: Goal = {
         id: 'goal_3',
         description: 'Step A → Step B',
@@ -237,7 +237,7 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      const plan = executor.submitGoal(goal);
+      const plan = await executor.submitGoal(goal);
       const firstStep = executor.getNextAction(plan.id);
 
       expect(firstStep).toBeDefined();
@@ -254,7 +254,7 @@ describe('Prefrontal Cortex', () => {
       expect(updatedPlan?.steps[0].status).toBe('completed');
     });
 
-    it('should trigger replan on failed step (non-exploratory)', () => {
+    it('should trigger replan on failed step (non-exploratory)', async () => {
       const goal: Goal = {
         id: 'goal_4',
         description: 'Step 1 → Step 2',
@@ -263,7 +263,7 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      const plan = executor.submitGoal(goal);
+      const plan = await executor.submitGoal(goal);
       const firstStep = executor.getNextAction(plan.id);
 
       const failResult = {
@@ -279,7 +279,7 @@ describe('Prefrontal Cortex', () => {
       expect(updatedPlan?.steps[0].description).toContain('Alternative approach');
     });
 
-    it('should return active plans', () => {
+    it('should return active plans', async () => {
       const goal1: Goal = {
         id: 'goal_5',
         description: 'Active task',
@@ -296,14 +296,14 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      executor.submitGoal(goal1);
-      executor.submitGoal(goal2);
+      await executor.submitGoal(goal1);
+      await executor.submitGoal(goal2);
 
       const activePlans = executor.getActivePlans();
       expect(activePlans.length).toBeGreaterThanOrEqual(2);
     });
 
-    it('should abandon a plan', () => {
+    it('should abandon a plan', async () => {
       const goal: Goal = {
         id: 'goal_7',
         description: 'Task to abandon',
@@ -312,7 +312,7 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      const plan = executor.submitGoal(goal);
+      const plan = await executor.submitGoal(goal);
       const abandoned = executor.abandonPlan(plan.id);
 
       expect(abandoned).toBe(true);
@@ -325,7 +325,7 @@ describe('Prefrontal Cortex', () => {
       expect(allSkipped).toBe(true);
     });
 
-    it('should get plan by goal ID', () => {
+    it('should get plan by goal ID', async () => {
       const goal: Goal = {
         id: 'goal_8',
         description: 'Test goal lookup',
@@ -334,14 +334,14 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      executor.submitGoal(goal);
+      await executor.submitGoal(goal);
 
       const plan = executor.getPlanByGoal(goal.id);
       expect(plan).toBeDefined();
       expect(plan?.goalId).toBe(goal.id);
     });
 
-    it('should provide execution stats', () => {
+    it('should provide execution stats', async () => {
       const goal: Goal = {
         id: 'goal_9',
         description: 'Step 1 → Step 2',
@@ -350,7 +350,7 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      const plan = executor.submitGoal(goal);
+      const plan = await executor.submitGoal(goal);
       const firstStep = executor.getNextAction(plan.id);
 
       executor.reportStepResult(plan.id, firstStep!.id, {
@@ -449,7 +449,7 @@ describe('Prefrontal Cortex', () => {
     let riskAssessor: RiskAssessor;
     let plan: Plan;
 
-    beforeEach(() => {
+    beforeEach(async () => {
       riskAssessor = new RiskAssessor();
       engine = new DecisionEngine(riskAssessor);
 
@@ -461,7 +461,7 @@ describe('Prefrontal Cortex', () => {
         status: 'pending',
         createdAt: Date.now(),
       };
-      plan = planner.createPlan(goal);
+      plan = await planner.createPlan(goal);
     });
 
     it('should make a decision for a plan', () => {
@@ -558,7 +558,7 @@ describe('Prefrontal Cortex', () => {
   });
 
   describe('Integration', () => {
-    it('should complete full goal-to-execution flow', () => {
+    it('should complete full goal-to-execution flow', async () => {
       // Setup
       const planner = new Planner();
       const riskAssessor = new RiskAssessor();
@@ -575,7 +575,7 @@ describe('Prefrontal Cortex', () => {
       };
 
       // Submit goal
-      const plan = executor.submitGoal(goal);
+      const plan = await executor.submitGoal(goal);
       expect(plan.strategy).toBe('exploratory'); // Contains "research"
       expect(plan.steps.length).toBe(3);
 
@@ -611,7 +611,7 @@ describe('Prefrontal Cortex', () => {
       expect(stats.completedSteps).toBe(1);
     });
 
-    it('should handle plan abandonment mid-execution', () => {
+    it('should handle plan abandonment mid-execution', async () => {
       const planner = new Planner();
       const executor = new PlanExecutor(planner);
 
@@ -623,7 +623,7 @@ describe('Prefrontal Cortex', () => {
         createdAt: Date.now(),
       };
 
-      const plan = executor.submitGoal(goal);
+      const plan = await executor.submitGoal(goal);
       const firstStep = executor.getNextAction(plan.id);
 
       executor.reportStepResult(plan.id, firstStep!.id, {

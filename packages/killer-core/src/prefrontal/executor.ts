@@ -49,7 +49,7 @@ export class PlanExecutor {
   /**
    * 提交目标并创建计划
    */
-  submitGoal(goal: Goal): Plan {
+  async submitGoal(goal: Goal): Promise<Plan> {
     // 检查并发计划限制
     if (this.plans.size >= this.config.maxConcurrentPlans) {
       throw new Error(
@@ -67,7 +67,7 @@ export class PlanExecutor {
     }
 
     // 创建新计划
-    const plan = this.planner.createPlan(goal);
+    const plan = await this.planner.createPlan(goal);
 
     // 存储计划
     this.plans.set(plan.id, plan);

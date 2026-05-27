@@ -209,7 +209,7 @@ export function registerRoutes(server: APIServer, agent: KillerAgent): void {
     body: { goals: agent.getGoals() },
   }));
 
-  server.route('POST', '/goals', (req) => {
+  server.route('POST', '/goals', async (req) => {
     const { description, priority } = req.body as { description?: string; priority?: number };
     if (!description || typeof description !== 'string') {
       return validationError('description', ERROR.DESCRIPTION_REQUIRED);
@@ -218,7 +218,7 @@ export function registerRoutes(server: APIServer, agent: KillerAgent): void {
       return validationError('priority', 'priority must be a number');
     }
     const clampedPriority = priority !== undefined ? Math.max(0, Math.min(1, priority)) : 0.5;
-    const goal = agent.createGoal(description, clampedPriority);
+    const goal = await agent.createGoal(description, clampedPriority);
     if (!goal) {
       return { status: 500, body: { error: 'Failed to create goal' } };
     }

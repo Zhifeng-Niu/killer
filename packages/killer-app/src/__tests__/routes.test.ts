@@ -33,7 +33,7 @@ function createMockAgent() {
     getCells: vi.fn(() => []),
     spawnCellWithRole: vi.fn(async () => ({ id: 'test-cell', type: 'worker', instance: 0 })),
     getGoals: vi.fn(() => []),
-    createGoal: vi.fn(() => ({ id: 'goal-1', description: 'test', priority: 0.5 })),
+    createGoal: vi.fn(async () => ({ id: 'goal-1', description: 'test', priority: 0.5 })),
     getPersona: vi.fn(() => ({ name: 'Test' })),
     getSkills: vi.fn(() => []),
     getMemoryStats: vi.fn(() => ({ total: 0 })),

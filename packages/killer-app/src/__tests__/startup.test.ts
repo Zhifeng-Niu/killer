@@ -111,7 +111,7 @@ describe('Startup Verification', () => {
   it('should track goals', async () => {
     await agent.boot();
 
-    const goal = agent.createGoal('Test goal', 0.7);
+    const goal = await agent.createGoal('Test goal', 0.7);
     expect(goal).toBeDefined();
     expect(goal!.description).toBe('Test goal');
     expect(goal!.priority).toBe(0.7);

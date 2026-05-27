@@ -553,7 +553,7 @@ export class KillerAgent {
   /**
    * 创建目标 - 用于 /plan 命令
    */
-  createGoal(description: string, priority: number): Goal | null {
+  async createGoal(description: string, priority: number): Promise<Goal | null> {
     try {
       const goal: Goal = {
         id: generateId('goal'),
@@ -563,7 +563,7 @@ export class KillerAgent {
         createdAt: Date.now(),
       };
 
-      const plan = this.planExecutor.submitGoal(goal);
+      const plan = await this.planExecutor.submitGoal(goal);
       this.updatePrefrontalStatus();
 
       this.hooks.emit('goal:created', { goalId: goal.id, description }).catch(() => {});
@@ -662,10 +662,10 @@ export class KillerAgent {
   /**
    * 处理输入中的目标
    */
-  private handleGoalInInput(input: SensoryInput): void {
+  private async handleGoalInInput(input: SensoryInput): Promise<void> {
     const goal = this.extractGoalFromInput(input);
     if (goal) {
-      this.createGoal(goal.description, goal.priority);
+      await this.createGoal(goal.description, goal.priority);
       this.outputManager.sendResult(
         `🎯 Goal detected: "${goal.description.substring(0, 50)}${goal.description.length > 50 ? '...' : ''}"\n` +
         `   Priority: ${(goal.priority * 100).toFixed(0)}%`
@@ -740,7 +740,7 @@ export class KillerAgent {
     this.synapse = new SynapseProtocol();
 
     // 前额叶皮层
-    this.planner = new Planner();
+    this.planner = new Planner(this.config.llm);
     this.riskAssessor = new RiskAssessor();
     this.decision = new DecisionEngine(this.riskAssessor, this.prefrontalConfig);
     this.planExecutor = new PlanExecutor(this.planner, this.prefrontalConfig);
@@ -821,7 +821,7 @@ export class KillerAgent {
       getCellStatus: () => this.getCellStatus(),
       triggerDreamCycle: () => this.triggerDreamCycle(),
       spawnCell: (type, task) => this.spawnCell(type, task),
-      createGoal: (desc, prio) => this.createGoal(desc, prio),
+      createGoal: (desc, prio) => this.createGoal(desc, prio), // already returns Promise
       listGoals: () => this.listGoals(),
       getPlanStats: () => this.getPlanStats(),
       getPersonaEngine: () => this.persona ?? null,
@@ -1039,54 +1039,123 @@ export class KillerAgent {
    */
   private wirePrefrontal(): void {
     // 当推理完成时，检查是否有待执行的计划步骤
-    this.brainstem.on('reasoningComplete', (state) => {
-      const nextStep = this.getNextPlanStep();
-      if (nextStep) {
-        const { planId, step } = nextStep;
+    this.brainstem.on('reasoningComplete', (_state) => {
+      this.executeNextPlanStep().catch(err => {
+        this.logger.error('Plan step execution failed', err);
+      });
+    });
+  }
 
-        // 评估风险
-        const riskAssessment = this.riskAssessor.assess({
-          type: step.action?.type ?? 'default',
-          payload: step.action?.payload,
-        });
+  /**
+   * 执行下一个计划步骤 — 真正的工具调用闭环
+   */
+  private async executeNextPlanStep(): Promise<void> {
+    const nextStep = this.getNextPlanStep();
+    if (!nextStep) return;
 
-        // 如果风险可接受，建议执行
-        if (riskAssessment.overallScore <= this.prefrontalConfig.riskTolerance) {
-          this.outputManager.sendAction(
-            `Executing plan step: "${step.description}"\n` +
-            `Risk: ${riskAssessment.level} (${(riskAssessment.overallScore * 100).toFixed(0)}%)`
-          );
+    const { planId, step } = nextStep;
 
-          // 报告步骤完成（模拟执行）
-          this.planExecutor.reportStepResult(planId, step.id, {
-            success: true,
-            completedAt: Date.now(),
+    // 评估风险
+    const riskAssessment = this.riskAssessor.assess({
+      type: step.action?.type ?? 'default',
+      payload: step.action?.payload,
+    });
+
+    if (riskAssessment.overallScore > this.prefrontalConfig.riskTolerance) {
+      this.outputManager.sendError(
+        `Plan step blocked due to high risk: "${step.description}"\n` +
+        `Risk: ${riskAssessment.level} (${(riskAssessment.overallScore * 100).toFixed(0)}%)`
+      );
+      return;
+    }
+
+    this.logger.info(`Executing plan step: "${step.description}"`);
+
+    try {
+      // 将计划步骤描述转化为实际执行
+      const result = await this.executeStepAction(step);
+
+      this.planExecutor.reportStepResult(planId, step.id, {
+        success: result.success,
+        output: result.output,
+        error: result.error,
+        completedAt: Date.now(),
+      });
+
+      this.updatePrefrontalStatus();
+
+      // 检查计划是否完成
+      const plan = this.planExecutor.getPlan(planId);
+      if (plan) {
+        const allCompleted = plan.steps.every(
+          s => s.status === 'completed' || s.status === 'skipped'
+        );
+        if (allCompleted) {
+          this.completedGoalsCount++;
+          this.consciousness.emit({
+            type: 'goal.completed',
+            source: 'prefrontal',
+            data: { planId, goalId: plan.goalId },
           });
-
-          this.updatePrefrontalStatus();
-
-          // 检查计划是否完成
-          const plan = this.planExecutor.getPlan(planId);
-          if (plan) {
-            const allCompleted = plan.steps.every(
-              s => s.status === 'completed' || s.status === 'skipped'
-            );
-            if (allCompleted) {
-              this.completedGoalsCount++;
-              this.outputManager.sendResult(
-                `✅ Goal completed: ${plan.goalId}`
-              );
-            }
-          }
-        } else {
-          this.outputManager.sendError(
-            `Plan step blocked due to high risk: "${step.description}"\n` +
-            `Risk: ${riskAssessment.level} (${(riskAssessment.overallScore * 100).toFixed(0)}%)\n` +
-            `Mitigations: ${riskAssessment.mitigations.join(', ')}`
-          );
         }
       }
-    });
+    } catch (error) {
+      this.planExecutor.reportStepResult(planId, step.id, {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        completedAt: Date.now(),
+      });
+      this.updatePrefrontalStatus();
+    }
+  }
+
+  /**
+   * 将计划步骤转化为实际工具调用
+   *
+   * 策略：将步骤描述作为 LLM prompt，让 LLM 决定用什么工具
+   */
+  private async executeStepAction(
+    step: PlanStep,
+  ): Promise<{ success: boolean; output?: string; error?: string }> {
+    // 如果步骤有明确的 action payload，直接执行工具
+    if (step.action?.type && step.action?.payload) {
+      try {
+        const result = await this.tools.execute(
+          step.action.type,
+          step.action.payload as Record<string, unknown>,
+        );
+        return {
+          success: result.success,
+          output: typeof result.data === 'string' ? result.data : JSON.stringify(result.data),
+          error: result.error,
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+
+    // 无明确 action — 用 LLM 理解步骤描述并生成工具调用
+    const prompt = `Execute this plan step using available tools. Respond with the result.
+
+Plan step: "${step.description}"
+
+If this step requires using a tool, use it. If it's a reasoning/analysis step, provide the analysis directly.`;
+
+    try {
+      const response = await this.callLLMWithRetry(prompt, '');
+      return {
+        success: true,
+        output: response,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   /**
@@ -2621,6 +2690,7 @@ export class KillerAgent {
       conversationHistory: this.conversationHistory,
       currentInput,
       isFirstBoot,
+      activePlans: this.planExecutor.getActivePlans(),
     });
   }
 

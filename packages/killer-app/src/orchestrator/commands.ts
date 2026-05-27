@@ -40,7 +40,7 @@ interface CommandHandlerDeps {
   getCellStatus: () => CellStatusReport[];
   triggerDreamCycle: () => Promise<DreamCycleResult>;
   spawnCell: (type: string, task: string) => { id: string } | null;
-  createGoal: (description: string, priority: number) => Goal | null;
+  createGoal: (description: string, priority: number) => Promise<Goal | null>;
   listGoals: () => Goal[];
   getPlanStats: () => { activePlans: number; completedGoals: number } | null;
   getPersonaEngine: () => PersonaEngine | null;
@@ -80,7 +80,7 @@ export class CommandHandler {
   private readonly getCellStatus: () => CellStatusReport[];
   private readonly triggerDreamCycle: () => Promise<DreamCycleResult>;
   private readonly spawnCell: (type: string, task: string) => { id: string } | null;
-  private readonly createGoal: (description: string, priority: number) => Goal | null;
+  private readonly createGoal: (description: string, priority: number) => Promise<Goal | null>;
   private readonly listGoals: () => Goal[];
   private readonly getPlanStats: () => { activePlans: number; completedGoals: number } | null;
   private readonly getPersonaEngine: () => PersonaEngine | null;
@@ -268,7 +268,7 @@ export class CommandHandler {
     }
   }
 
-  private handlePlanCommand(args: string[] | undefined): void {
+  private async handlePlanCommand(args: string[] | undefined): Promise<void> {
     if (!args || args.length === 0) {
       this.outputManager.sendError('Usage: /plan <description> [priority]');
       this.outputManager.sendResult('Example: /plan "Research TypeScript patterns" 0.8');
@@ -282,7 +282,7 @@ export class CommandHandler {
       return;
     }
 
-    const goal = this.createGoal(description, priority);
+    const goal = await this.createGoal(description, priority);
     if (goal) {
       const stats = this.getPlanStats();
       this.outputManager.sendResult(
@@ -915,7 +915,7 @@ type MandatoryDeps = {
   getCellStatus: () => CellStatusReport[];
   triggerDreamCycle: () => Promise<DreamCycleResult>;
   spawnCell: (type: string, task: string) => { id: string } | null;
-  createGoal: (description: string, priority: number) => Goal | null;
+  createGoal: (description: string, priority: number) => Promise<Goal | null>;
   listGoals: () => Goal[];
   getPlanStats: () => { activePlans: number; completedGoals: number } | null;
   getPersonaEngine: () => PersonaEngine | null;

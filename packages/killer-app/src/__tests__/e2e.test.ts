@@ -158,8 +158,8 @@ describe('End-to-End Integration', () => {
   });
 
   describe('Goal Management Flow', () => {
-    it('should create and list goals', () => {
-      const goal = agent.createGoal('Build REST API', 0.8);
+    it('should create and list goals', async () => {
+      const goal = await agent.createGoal('Build REST API', 0.8);
       expect(goal).not.toBeNull();
       expect(goal!.description).toBe('Build REST API');
 
@@ -167,18 +167,18 @@ describe('End-to-End Integration', () => {
       expect(goals.length).toBeGreaterThanOrEqual(1);
     });
 
-    it('should track plan stats', () => {
-      agent.createGoal('Write tests', 0.7);
+    it('should track plan stats', async () => {
+      await agent.createGoal('Write tests', 0.7);
 
       const stats = agent.getPlanStats();
       expect(stats.activePlans).toBeGreaterThanOrEqual(1);
       expect(stats.completedGoals).toBe(0);
     });
 
-    it('should create multiple goals', () => {
-      agent.createGoal('Task A', 0.5);
-      agent.createGoal('Task B', 0.7);
-      agent.createGoal('Task C', 0.9);
+    it('should create multiple goals', async () => {
+      await agent.createGoal('Task A', 0.5);
+      await agent.createGoal('Task B', 0.7);
+      await agent.createGoal('Task C', 0.9);
 
       const goals = agent.listGoals();
       expect(goals.length).toBeGreaterThanOrEqual(3);
