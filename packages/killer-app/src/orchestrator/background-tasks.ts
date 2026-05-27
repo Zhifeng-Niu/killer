@@ -1443,3 +1443,104 @@ export function detectTopicTransition(
     returnedTo,
   };
 }
+
+// ============================================================
+// Input Ambiguity Detection
+// ============================================================
+
+/**
+ * 检测到的歧义
+ */
+export interface Ambiguity {
+  /** 歧义类型 */
+  type: 'vague_verb' | 'missing_target' | 'underspecified_scope' | 'pronoun_reference';
+  /** 检测到的模糊片段 */
+  fragment: string;
+  /** 建议的澄清问题 */
+  clarification: string;
+  /** 置信度 */
+  confidence: number;
+}
+
+/** 模糊动词模式 */
+const VAGUE_VERBS: Array<{ pattern: RegExp; clarification: string }> = [
+  { pattern: /^(?:fix|修(?:复|改|一下|一下儿)?|改一下)\s*$/i, clarification: 'What specifically needs to be fixed? (error message, file, or behavior)' },
+  { pattern: /^(?:optimize|optimise|优化|性能优化)\s*(?:it|this|那个|一下)?\s*$/i, clarification: 'What should be optimized? (speed, memory, readability, bundle size?)' },
+  { pattern: /^(?:improve|改善|提升|改进)\s*(?:it|this)?\s*$/i, clarification: 'What aspect should be improved?' },
+  { pattern: /^(?:update|更新|upgrade)\s*(?:it|this)?\s*$/i, clarification: 'What should be updated and to what version?' },
+  { pattern: /^(?:clean|清理|clean up)\s*(?:it|up|this)?\s*$/i, clarification: 'What should be cleaned up? (dead code, dependencies, formatting?)' },
+  { pattern: /^(?:check|检查|看看)\s*(?:it|this|一下)?\s*$/i, clarification: 'What should I check? (tests, types, security, performance?)' },
+];
+
+/** 缺失目标模式 */
+const MISSING_TARGET: Array<{ pattern: RegExp; clarification: string }> = [
+  { pattern: /(?:the |那个 )(?:thing|part|component|module|file|part)/i, clarification: 'Which specific thing are you referring to?' },
+  { pattern: /(?:it|that|this|那个|这个)(?:\s+(?:for me|一下))?$/im, clarification: 'Could you be more specific about what you mean?' },
+];
+
+/** 未指定范围模式 */
+const UNDERSPECIFIED_SCOPE: Array<{ pattern: RegExp; clarification: string }> = [
+  { pattern: /(?:everything|all|全部|所有|整个)(?:\s+(?:in|of|的))?\s*$/i, clarification: 'Operating on everything can have unintended side effects. Can you narrow the scope?' },
+  { pattern: /(?:some|几个|一些)(?:\s+(?:files|modules|tests))?$/i, clarification: 'Which specific items should I target?' },
+];
+
+/**
+ * 检测输入中的歧义
+ */
+export function detectAmbiguity(input: string): Ambiguity[] {
+  if (!input || input.length < 3) return [];
+
+  const trimmed = input.trim();
+  const ambiguities: Ambiguity[] = [];
+
+  // 检查模糊动词
+  for (const { pattern, clarification } of VAGUE_VERBS) {
+    if (pattern.test(trimmed)) {
+      ambiguities.push({
+        type: 'vague_verb',
+        fragment: trimmed,
+        clarification,
+        confidence: 0.85,
+      });
+      break; // 一个 match 就够了
+    }
+  }
+
+  // 检查缺失目标
+  for (const { pattern, clarification } of MISSING_TARGET) {
+    if (pattern.test(trimmed)) {
+      ambiguities.push({
+        type: 'missing_target',
+        fragment: trimmed,
+        clarification,
+        confidence: 0.7,
+      });
+      break;
+    }
+  }
+
+  // 检查未指定范围
+  for (const { pattern, clarification } of UNDERSPECIFIED_SCOPE) {
+    if (pattern.test(trimmed)) {
+      ambiguities.push({
+        type: 'underspecified_scope',
+        fragment: trimmed,
+        clarification,
+        confidence: 0.75,
+      });
+      break;
+    }
+  }
+
+  // 代词引用检测 — 消息以 "it" 或 "that" 开头
+  if (/^(?:it|that|this|他|她|它|这个|那个)\s+(?:is|was|has|should|can|needs?|是|有|需要|应该)/i.test(trimmed)) {
+    ambiguities.push({
+      type: 'pronoun_reference',
+      fragment: trimmed.split(' ')[0],
+      clarification: 'What does this refer to?',
+      confidence: 0.6,
+    });
+  }
+
+  return ambiguities;
+}

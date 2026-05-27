@@ -25,6 +25,7 @@ import {
   scoreTurnImportance,
   extractTopic,
   detectTopicTransition,
+  detectAmbiguity,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -1082,6 +1083,50 @@ describe('background-tasks', () => {
         [],
       );
       expect(result.transitioned).toBe(false);
+    });
+  });
+
+  describe('detectAmbiguity', () => {
+    it('should detect vague verb "fix"', () => {
+      const result = detectAmbiguity('fix');
+      expect(result.length).toBeGreaterThan(0);
+      expect(result[0].type).toBe('vague_verb');
+      expect(result[0].clarification.length).toBeGreaterThan(10);
+    });
+
+    it('should detect vague verb "optimize"', () => {
+      const result = detectAmbiguity('optimize it');
+      expect(result.length).toBeGreaterThan(0);
+      expect(result.some(a => a.type === 'vague_verb')).toBe(true);
+    });
+
+    it('should detect Chinese vague verb', () => {
+      const result = detectAmbiguity('修一下');
+      expect(result.length).toBeGreaterThan(0);
+      expect(result[0].type).toBe('vague_verb');
+    });
+
+    it('should detect missing target', () => {
+      const result = detectAmbiguity('Fix the thing');
+      expect(result.some(a => a.type === 'missing_target')).toBe(true);
+    });
+
+    it('should detect pronoun reference', () => {
+      const result = detectAmbiguity('it needs to be updated');
+      expect(result.some(a => a.type === 'pronoun_reference')).toBe(true);
+    });
+
+    it('should return empty for clear, specific input', () => {
+      expect(detectAmbiguity('Fix the authentication bug in login.ts where users get 401 errors')).toHaveLength(0);
+    });
+
+    it('should return empty for short/empty input', () => {
+      expect(detectAmbiguity('')).toHaveLength(0);
+      expect(detectAmbiguity('OK')).toHaveLength(0);
+    });
+
+    it('should return empty for complete sentences', () => {
+      expect(detectAmbiguity('Please help me write unit tests for the database module')).toHaveLength(0);
     });
   });
 });
