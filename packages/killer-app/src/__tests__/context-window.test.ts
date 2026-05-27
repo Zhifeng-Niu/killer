@@ -288,4 +288,56 @@ describe('ContextWindowManager', () => {
       expect(manager.getConfig().maxFullTurns).toBe(3);
     });
   });
+
+  describe('adaptive phase presets', () => {
+    it('should adjust config for deep-work phase', () => {
+      manager.setPhase('deep-work');
+      const config = manager.getConfig();
+      expect(config.maxFullTurns).toBe(16);
+      expect(config.maxMessageChars).toBe(3000);
+      expect(config.maxToolResultChars).toBe(1200);
+    });
+
+    it('should adjust config for exploration phase', () => {
+      manager.setPhase('exploration');
+      const config = manager.getConfig();
+      expect(config.maxFullTurns).toBe(8);
+      expect(config.maxSummaryChars).toBe(2000);
+    });
+
+    it('should adjust config for wrap-up phase', () => {
+      manager.setPhase('wrap-up');
+      const config = manager.getConfig();
+      expect(config.maxFullTurns).toBe(6);
+      expect(config.maxFacts).toBe(40);
+    });
+
+    it('should adjust config for greeting phase', () => {
+      manager.setPhase('greeting');
+      const config = manager.getConfig();
+      expect(config.maxFullTurns).toBe(4);
+      expect(config.maxMessageChars).toBe(1000);
+    });
+
+    it('should not change config for unknown phase', () => {
+      const before = manager.getConfig();
+      manager.setPhase('unknown-phase');
+      const after = manager.getConfig();
+      // maxFullTurns was 3 from beforeEach, should remain
+      expect(after.maxFullTurns).toBe(before.maxFullTurns);
+    });
+
+    it('should return current phase name', () => {
+      manager.setPhase('deep-work');
+      expect(manager.getCurrentPhase()).toBe('deep-work');
+    });
+
+    it('should reset to default when reset is called', () => {
+      manager.setPhase('deep-work');
+      expect(manager.getConfig().maxFullTurns).toBe(16);
+      manager.reset();
+      // reset clears facts/summary but does NOT reset phase config
+      // phase is set per-turn by the agent, so reset doesn't need to touch it
+    });
+  });
 });

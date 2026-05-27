@@ -8,6 +8,7 @@
  * 2. 超出部分提取摘要（LLM 驱动）
  * 3. 持久事实存储到 facts 列表
  * 4. 工具调用结果截断
+ * 5. 根据对话阶段动态调整预算分配
  */
 
 import type { LLMProvider } from '@killer/core';
@@ -37,6 +38,49 @@ export interface ContextWindowConfig {
   maxToolResultChars: number;
 }
 
+/**
+ * 对话阶段预设 — 不同阶段的最优上下文分配策略
+ */
+const PHASE_PRESETS: Record<string, Partial<ContextWindowConfig>> = {
+  'deep-work': {
+    maxFullTurns: 16,
+    maxMessageChars: 3000,
+    maxSummaryChars: 1000,
+    maxToolResultChars: 1200,
+  },
+  'exploration': {
+    maxFullTurns: 8,
+    maxMessageChars: 2000,
+    maxSummaryChars: 2000,
+    maxToolResultChars: 600,
+  },
+  'review': {
+    maxFullTurns: 12,
+    maxMessageChars: 2000,
+    maxSummaryChars: 1500,
+    maxToolResultChars: 1000,
+  },
+  'wrap-up': {
+    maxFullTurns: 6,
+    maxMessageChars: 1500,
+    maxSummaryChars: 800,
+    maxFacts: 40,
+    maxToolResultChars: 500,
+  },
+  'greeting': {
+    maxFullTurns: 4,
+    maxMessageChars: 1000,
+    maxSummaryChars: 500,
+    maxToolResultChars: 400,
+  },
+  'idle': {
+    maxFullTurns: 10,
+    maxMessageChars: 2000,
+    maxSummaryChars: 1500,
+    maxToolResultChars: 800,
+  },
+};
+
 const DEFAULT_CONTEXT_CONFIG: ContextWindowConfig = {
   maxFullTurns: 10,
   maxMessageChars: 2000,
@@ -49,7 +93,7 @@ const DEFAULT_CONTEXT_CONFIG: ContextWindowConfig = {
  * 上下文窗口管理器
  */
 export class ContextWindowManager {
-  private readonly config: ContextWindowConfig;
+  private config: ContextWindowConfig;
   private facts: string[] = [];
   private summary: string = '';
   private llm: LLMProvider | null = null;
@@ -71,6 +115,29 @@ export class ContextWindowManager {
    */
   bindLLM(llm: LLMProvider): void {
     this.llm = llm;
+  }
+
+  /**
+   * 根据对话阶段调整上下文预算
+   */
+  setPhase(phase: string): void {
+    const preset = PHASE_PRESETS[phase];
+    if (preset) {
+      this.config = { ...DEFAULT_CONTEXT_CONFIG, ...preset };
+    }
+  }
+
+  /**
+   * 获取当前生效的阶段名称
+   */
+  getCurrentPhase(): string {
+    for (const [phase, preset] of Object.entries(PHASE_PRESETS)) {
+      if (preset.maxFullTurns === this.config.maxFullTurns
+        && preset.maxMessageChars === this.config.maxMessageChars) {
+        return phase;
+      }
+    }
+    return 'default';
   }
 
   /**

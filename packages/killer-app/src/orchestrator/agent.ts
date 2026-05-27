@@ -3355,7 +3355,13 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
             status: 'pending',
           }))
         : undefined,
-      conversationalPhase: this.computeConversationalPhase(),
+      conversationalPhase: (() => {
+        const phase = this.computeConversationalPhase();
+        if (phase.confidence > 0.6) {
+          this.contextWindow.setPhase(phase.phase);
+        }
+        return phase;
+      })(),
       goalConflicts: this.goalConflicts.length > 0 ? [...this.goalConflicts] : undefined,
     });
   }
