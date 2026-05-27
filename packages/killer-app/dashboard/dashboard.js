@@ -420,20 +420,32 @@
     fetch(REST_BASE + '/status')
       .then(function (r) { return r.json(); })
       .then(function (data) {
-        if (data.model) agentState.model = data.model;
-        if (data.cells) agentState.cells = Array.isArray(data.cells) ? data.cells.length : data.cells;
-        if (data.episodes) agentState.episodes = data.episodes;
-        if (data.goals) agentState.goals = Array.isArray(data.goals) ? data.goals.length : data.goals;
+        // /status returns { modules: { brainstem, hippocampus, synapse, ... } }
+        var m = data.modules || {};
+        if (m.brainstem) {
+          agentState.phase = m.brainstem.phase || agentState.phase;
+          agentState.loops = m.brainstem.loopCount || agentState.loops;
+        }
+        if (m.synapse) {
+          agentState.cells = m.synapse.cells || agentState.cells;
+        }
+        if (m.hippocampus) {
+          agentState.episodes = m.hippocampus.episodes || agentState.episodes;
+        }
+        if (m.prefrontal) {
+          agentState.goals = (m.prefrontal.activePlans || 0) + (m.prefrontal.completedGoals || 0);
+        }
         updateStateUI();
       })
       .catch(function () { /* ignore fetch failures */ });
 
-    fetch(REST_BASE + '/memory')
+    fetch(REST_BASE + '/health')
       .then(function (r) { return r.json(); })
       .then(function (data) {
-        if (data.episodes) agentState.episodes = data.episodes;
-        if (data.semanticNodes) agentState.semanticNodes = data.semanticNodes;
-        updateStateUI();
+        if (data.llmResilience && data.llmResilience.model) {
+          agentState.model = data.llmResilience.model;
+          updateStateUI();
+        }
       })
       .catch(function () { /* ignore */ });
   }
