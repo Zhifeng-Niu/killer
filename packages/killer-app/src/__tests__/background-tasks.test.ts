@@ -26,6 +26,8 @@ import {
   extractTopic,
   detectTopicTransition,
   detectAmbiguity,
+  extractGoalResources,
+  buildGoalDependencyGraph,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -1127,6 +1129,65 @@ describe('background-tasks', () => {
 
     it('should return empty for complete sentences', () => {
       expect(detectAmbiguity('Please help me write unit tests for the database module')).toHaveLength(0);
+    });
+  });
+
+  describe('extractGoalResources', () => {
+    it('should extract database resource', () => {
+      expect(extractGoalResources('Refactor the database schema')).toContain('database');
+    });
+
+    it('should extract API resource', () => {
+      expect(extractGoalResources('Update API endpoints for v2')).toContain('api');
+    });
+
+    it('should extract multiple resources', () => {
+      const resources = extractGoalResources('Add authentication to API endpoints');
+      expect(resources).toContain('auth');
+      expect(resources).toContain('api');
+    });
+
+    it('should return empty for non-technical goals', () => {
+      expect(extractGoalResources('Write documentation')).toHaveLength(0);
+    });
+  });
+
+  describe('buildGoalDependencyGraph', () => {
+    it('should detect resource conflict between goals', () => {
+      const deps = buildGoalDependencyGraph([
+        { id: 'g1', description: 'Optimize database queries', status: 'pending' },
+        { id: 'g2', description: 'Add database migration for users table', status: 'pending' },
+      ]);
+      expect(deps.length).toBeGreaterThan(0);
+      expect(deps[0].type).toBe('resource_conflict');
+    });
+
+    it('should detect prerequisite when one goal is a refactor', () => {
+      const deps = buildGoalDependencyGraph([
+        { id: 'g1', description: 'Refactor the database layer', status: 'pending' },
+        { id: 'g2', description: 'Optimize database query performance', status: 'pending' },
+      ]);
+      expect(deps.length).toBeGreaterThan(0);
+      expect(deps.some(d => d.type === 'prerequisite')).toBe(true);
+    });
+
+    it('should return empty for unrelated goals', () => {
+      const deps = buildGoalDependencyGraph([
+        { id: 'g1', description: 'Design new landing page', status: 'pending' },
+        { id: 'g2', description: 'Set up CI pipeline', status: 'pending' },
+      ]);
+      expect(deps).toHaveLength(0);
+    });
+
+    it('should return empty for single goal', () => {
+      const deps = buildGoalDependencyGraph([
+        { id: 'g1', description: 'Fix the database bug', status: 'pending' },
+      ]);
+      expect(deps).toHaveLength(0);
+    });
+
+    it('should return empty for no goals', () => {
+      expect(buildGoalDependencyGraph([])).toHaveLength(0);
     });
   });
 });

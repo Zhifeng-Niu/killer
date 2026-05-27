@@ -1544,3 +1544,110 @@ export function detectAmbiguity(input: string): Ambiguity[] {
 
   return ambiguities;
 }
+
+// ============================================================
+// Cross-Goal Dependency Graph
+// ============================================================
+
+/**
+ * 目标间依赖关系
+ */
+export interface GoalDependency {
+  /** 依赖目标 ID */
+  dependsOnGoalId: string;
+  /** 被依赖目标 ID */
+  blocksGoalId: string;
+  /** 依赖类型 */
+  type: 'resource_conflict' | 'prerequisite' | 'shared_component';
+  /** 描述 */
+  description: string;
+}
+
+/** 资源关键词映射 */
+const RESOURCE_KEYWORDS: Array<{ pattern: RegExp; resource: string }> = [
+  { pattern: /(?:database|schema|migration|SQL|query)/i, resource: 'database' },
+  { pattern: /(?:API|endpoint|route|REST)/i, resource: 'api' },
+  { pattern: /(?:auth|authentication|token|session)/i, resource: 'auth' },
+  { pattern: /(?:test|testing|coverage|vitest)/i, resource: 'tests' },
+  { pattern: /(?:deploy|deployment|CI|CD|pipeline)/i, resource: 'deployment' },
+  { pattern: /(?:config|configuration|env|settings)/i, resource: 'config' },
+  { pattern: /(?:UI|frontend|component|page)/i, resource: 'frontend' },
+  { pattern: /(?:refactor|restructure|rewrite)/i, resource: 'architecture' },
+];
+
+/**
+ * 从目标描述中提取涉及的资源
+ */
+export function extractGoalResources(description: string): string[] {
+  const resources: string[] = [];
+  for (const { pattern, resource } of RESOURCE_KEYWORDS) {
+    if (pattern.test(description)) {
+      resources.push(resource);
+    }
+  }
+  return resources;
+}
+
+/**
+ * 构建跨目标依赖图
+ *
+ * 分析多个目标之间的隐含依赖关系：
+ * - 资源冲突：两个目标修改同一资源
+ * - 前置条件：一个目标需要另一个目标先完成
+ * - 共享组件：两个目标依赖同一组件
+ */
+export function buildGoalDependencyGraph(
+  goals: Array<{ id: string; description: string; status: string }>,
+): GoalDependency[] {
+  const dependencies: GoalDependency[] = [];
+  if (goals.length < 2) return dependencies;
+
+  // 提取每个目标的资源
+  const goalResources = new Map<string, string[]>();
+  for (const goal of goals) {
+    goalResources.set(goal.id, extractGoalResources(goal.description));
+  }
+
+  // 检查目标对之间的资源重叠
+  for (let i = 0; i < goals.length; i++) {
+    for (let j = i + 1; j < goals.length; j++) {
+      const a = goals[i]!;
+      const b = goals[j]!;
+      const resourcesA = goalResources.get(a.id) ?? [];
+      const resourcesB = goalResources.get(b.id) ?? [];
+
+      const shared = resourcesA.filter(r => resourcesB.includes(r));
+      if (shared.length === 0) continue;
+
+      // 检测类型
+      const aIsRefactor = /(?:refactor|restructure|rewrite|重写|重构)/i.test(a.description);
+      const bIsRefactor = /(?:refactor|restructure|rewrite|重写|重构)/i.test(b.description);
+
+      if (aIsRefactor && !bIsRefactor) {
+        dependencies.push({
+          dependsOnGoalId: b.id,
+          blocksGoalId: a.id,
+          type: 'prerequisite',
+          description: `${a.description.slice(0, 40)} should complete before ${b.description.slice(0, 40)} (shared: ${shared.join(', ')})`,
+        });
+      } else if (bIsRefactor && !aIsRefactor) {
+        dependencies.push({
+          dependsOnGoalId: a.id,
+          blocksGoalId: b.id,
+          type: 'prerequisite',
+          description: `${b.description.slice(0, 40)} should complete before ${a.description.slice(0, 40)} (shared: ${shared.join(', ')})`,
+        });
+      } else {
+        // 双向资源冲突
+        dependencies.push({
+          dependsOnGoalId: a.id,
+          blocksGoalId: b.id,
+          type: 'resource_conflict',
+          description: `Both modify ${shared.join(', ')} — coordinate ${a.description.slice(0, 30)} and ${b.description.slice(0, 30)}`,
+        });
+      }
+    }
+  }
+
+  return dependencies;
+}
