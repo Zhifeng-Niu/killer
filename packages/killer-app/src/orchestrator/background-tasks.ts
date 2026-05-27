@@ -3859,6 +3859,7 @@ export function generateResponseStrategyGuidance(context: {
   lastQualityOverall?: number;
   lastQualityTags?: string[];
   healthScore?: number;
+  interactionGapSeconds?: number;
 }): ResponseStrategyGuidance | null {
   const signals: string[] = [];
 
@@ -3943,8 +3944,22 @@ export function generateResponseStrategyGuidance(context: {
     signals.push('low-health');
   }
 
+  // 基于交互间隔
+  if (context.interactionGapSeconds !== undefined) {
+    if (context.interactionGapSeconds < 30) {
+      detailLevel = 'minimal, just the answer';
+      structure = 'single-line or bullet points';
+      signals.push('rapid-fire');
+    } else if (context.interactionGapSeconds > 300) {
+      priorityAction = 'briefly recap context, then address the new input';
+      structure = 'recap → new response';
+      signals.push('return-after-gap');
+    }
+  }
+
   if (signals.length === 0) return null;
 
-  const formatted = `Tone: ${tone} | Structure: ${structure} | Detail: ${detailLevel} | Priority: ${priorityAction}`;
+  const tag = signals.length > 0 ? ` [${signals.join(', ')}]` : '';
+  const formatted = `Tone: ${tone} | Structure: ${structure} | Detail: ${detailLevel} | Priority: ${priorityAction}${tag}`;
   return { tone, structure, detailLevel, priorityAction, formatted };
 }

@@ -3817,6 +3817,9 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       lastQualityOverall: this.lastQualityOverall,
       lastQualityTags: this.lastQualityTags.length > 0 ? this.lastQualityTags : undefined,
       healthScore: p?.health?.score,
+      interactionGapSeconds: this.previousInteractionTimestamp
+        ? (Date.now() - this.previousInteractionTimestamp) / 1000
+        : undefined,
     });
     return guidance?.formatted;
   }

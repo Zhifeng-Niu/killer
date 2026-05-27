@@ -2685,5 +2685,24 @@ describe('background-tasks', () => {
       expect(guidance).not.toBeNull();
       expect(guidance!.detailLevel).toContain('technical');
     });
+
+    it('should switch to minimal mode for rapid-fire interaction', () => {
+      const guidance = generateResponseStrategyGuidance({
+        behaviorMode: 'focused',
+        interactionGapSeconds: 15,
+      });
+      expect(guidance).not.toBeNull();
+      expect(guidance!.detailLevel).toContain('minimal');
+      expect(guidance!.formatted).toContain('rapid-fire');
+    });
+
+    it('should suggest context recap after long gap', () => {
+      const guidance = generateResponseStrategyGuidance({
+        behaviorMode: 'balanced',
+        interactionGapSeconds: 600,
+      });
+      expect(guidance).not.toBeNull();
+      expect(guidance!.priorityAction).toContain('recap');
+    });
   });
 });
