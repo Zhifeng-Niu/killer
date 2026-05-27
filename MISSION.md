@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 1222
-total_waypoints: 1
+total_waypoints: 4
 consecutive_discards: 0
 ---
 
@@ -45,7 +45,10 @@ npm test 2>&1
 ## What's Been Tried
 
 ### Wins
-{Auto-updated by engine.}
+1. **Plan-Action Bridge** (waypoint 1): Connected Prefrontal planning to Brainstem execution — plans now decompose into real tool calls
+2. **LLM-Powered Planner** (waypoint 2): Intelligent goal decomposition via LLM with rule-based fallback, async propagation
+3. **Autonomous Goal + Experiment Loop** (waypoint 3): LLM-powered input analysis for goal extraction, Cerebellum mission auto-trigger on plan failure
+4. **Learning Task Delegation** (waypoint 4): Cell profiling with success rate tracking, LLM prompt injection of historical performance data
 
 ### Dead Ends
 {Auto-updated by engine.}
