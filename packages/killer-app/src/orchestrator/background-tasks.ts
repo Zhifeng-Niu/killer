@@ -1723,3 +1723,126 @@ function generateProgressBar(percent: number): string {
   const empty = width - filled;
   return `[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${percent}%`;
 }
+
+// ============================================================
+// Temporal Context Injection
+// ============================================================
+
+/**
+ * 时间上下文
+ */
+export interface TemporalContext {
+  /** 当前时间（ISO 格式） */
+  currentTime: string;
+  /** 时间段描述 */
+  timeOfDay: string;
+  /** 距上次交互的秒数 */
+  secondsSinceLastInteraction: number;
+  /** 距上次交互的友好描述 */
+  timeSinceLastInteraction: string;
+  /** 临近的 deadline（从语义记忆提取） */
+  upcomingDeadlines: string[];
+  /** 紧急度评估 */
+  urgencyLevel: 'low' | 'normal' | 'high';
+  /** 格式化的时间上下文 */
+  formatted: string;
+}
+
+/**
+ * 生成时间上下文
+ */
+export function generateTemporalContext(
+  lastInteractionTime: number | null,
+  semanticNodes: Array<{ label: string; properties: Record<string, unknown> }> = [],
+): TemporalContext {
+  const now = Date.now();
+  const date = new Date(now);
+  const currentTime = date.toISOString();
+
+  // 时间段
+  const hour = date.getHours();
+  const timeOfDay = hour < 6 ? 'late night'
+    : hour < 12 ? 'morning'
+    : hour < 14 ? 'midday'
+    : hour < 18 ? 'afternoon'
+    : hour < 22 ? 'evening'
+    : 'night';
+
+  // 距上次交互
+  const secondsSinceLast = lastInteractionTime
+    ? Math.floor((now - lastInteractionTime) / 1000)
+    : 0;
+  const timeSinceLast = lastInteractionTime
+    ? formatTimeSince(secondsSinceLast)
+    : 'first interaction';
+
+  // 从语义记忆中提取 deadline
+  const upcomingDeadlines: string[] = [];
+  for (const node of semanticNodes) {
+    if (node.label === 'deadline' || node.label === 'date') {
+      const dateStr = node.properties.date ?? node.properties.value ?? '';
+      const desc = node.properties.description ?? node.properties.summary ?? '';
+      if (typeof dateStr === 'string' && dateStr.length > 0) {
+        // 检查是否在未来 7 天内
+        try {
+          const deadlineDate = new Date(dateStr);
+          if (!isNaN(deadlineDate.getTime())) {
+            // Compare dates only (ignore time-of-day) using local date components
+            const todayLocal = new Date();
+            const todayStart = new Date(todayLocal.getFullYear(), todayLocal.getMonth(), todayLocal.getDate());
+            const deadlineStart = new Date(deadlineDate.getFullYear(), deadlineDate.getMonth(), deadlineDate.getDate());
+            const daysUntil = Math.round((deadlineStart.getTime() - todayStart.getTime()) / 86400000);
+            if (daysUntil >= 0 && daysUntil <= 7) {
+              const urgency = daysUntil <= 1 ? 'URGENT' : daysUntil <= 3 ? 'soon' : 'upcoming';
+              upcomingDeadlines.push(`[${urgency}] ${desc || dateStr} (${daysUntil === 0 ? 'today' : daysUntil === 1 ? 'tomorrow' : `${daysUntil} days away`})`);
+            }
+          }
+        } catch {
+          // Skip invalid dates
+        }
+      }
+    }
+  }
+
+  // 紧急度评估
+  const urgencyLevel: 'low' | 'normal' | 'high' = upcomingDeadlines.some(d => d.includes('URGENT'))
+    ? 'high'
+    : upcomingDeadlines.length > 0
+      ? 'normal'
+      : 'low';
+
+  // 格式化
+  const lines = [
+    `Time: ${currentTime} (${timeOfDay})`,
+    `Since last interaction: ${timeSinceLast}`,
+  ];
+  if (upcomingDeadlines.length > 0) {
+    lines.push(`Upcoming deadlines:`);
+    for (const d of upcomingDeadlines) {
+      lines.push(`  - ${d}`);
+    }
+  }
+  if (urgencyLevel === 'high') {
+    lines.push('⚡ Approaching deadline — prioritize urgent tasks.');
+  }
+
+  return {
+    currentTime,
+    timeOfDay,
+    secondsSinceLastInteraction: secondsSinceLast,
+    timeSinceLastInteraction: timeSinceLast,
+    upcomingDeadlines,
+    urgencyLevel,
+    formatted: lines.join('\n'),
+  };
+}
+
+/**
+ * 格式化时间间隔
+ */
+function formatTimeSince(seconds: number): string {
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} minutes ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
+  return `${Math.floor(seconds / 86400)} days ago`;
+}

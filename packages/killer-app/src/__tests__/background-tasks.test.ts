@@ -29,6 +29,7 @@ import {
   extractGoalResources,
   buildGoalDependencyGraph,
   generateProgressReport,
+  generateTemporalContext,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -1240,6 +1241,70 @@ describe('background-tasks', () => {
       const report = generateProgressReport('Empty plan', []);
       expect(report.percentComplete).toBe(0);
       expect(report.totalSteps).toBe(0);
+    });
+  });
+
+  describe('generateTemporalContext', () => {
+    it('should generate context with current time', () => {
+      const ctx = generateTemporalContext(null);
+      expect(ctx.currentTime.length).toBeGreaterThan(0);
+      expect(ctx.timeOfDay).toBeTruthy();
+      expect(ctx.timeSinceLastInteraction).toBe('first interaction');
+    });
+
+    it('should compute time since last interaction', () => {
+      const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+      const ctx = generateTemporalContext(fiveMinAgo);
+      expect(ctx.secondsSinceLastInteraction).toBeGreaterThanOrEqual(290);
+      expect(ctx.timeSinceLastInteraction).toContain('minutes ago');
+    });
+
+    it('should detect upcoming deadlines from semantic nodes', () => {
+      const d = new Date();
+      d.setDate(d.getDate() + 3);
+      const in3Days = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const ctx = generateTemporalContext(null, [
+        { label: 'deadline', properties: { date: in3Days, description: 'Release v2.0' } },
+      ]);
+      expect(ctx.upcomingDeadlines.length).toBeGreaterThan(0);
+      expect(ctx.upcomingDeadlines[0]).toContain('Release v2.0');
+      expect(ctx.urgencyLevel).toBe('normal');
+    });
+
+    it('should set high urgency for deadlines today', () => {
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const ctx = generateTemporalContext(null, [
+        { label: 'deadline', properties: { date: today, description: 'Critical fix' } },
+      ]);
+      expect(ctx.urgencyLevel).toBe('high');
+      expect(ctx.formatted).toContain('Approaching deadline');
+    });
+
+    it('should return low urgency when no deadlines', () => {
+      const ctx = generateTemporalContext(null, []);
+      expect(ctx.urgencyLevel).toBe('low');
+      expect(ctx.upcomingDeadlines).toHaveLength(0);
+    });
+
+    it('should ignore past deadlines', () => {
+      const d = new Date();
+      d.setDate(d.getDate() - 1);
+      const yesterday = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const ctx = generateTemporalContext(null, [
+        { label: 'deadline', properties: { date: yesterday, description: 'Old deadline' } },
+      ]);
+      expect(ctx.upcomingDeadlines).toHaveLength(0);
+    });
+
+    it('should ignore deadlines more than 7 days away', () => {
+      const d = new Date();
+      d.setDate(d.getDate() + 30);
+      const nextMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const ctx = generateTemporalContext(null, [
+        { label: 'deadline', properties: { date: nextMonth, description: 'Future deadline' } },
+      ]);
+      expect(ctx.upcomingDeadlines).toHaveLength(0);
     });
   });
 });
