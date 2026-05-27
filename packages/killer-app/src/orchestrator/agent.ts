@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL, createDefaultSectionWeights, recordActiveSections, updateSectionWeights, getSectionWeightOffset, exportSectionWeights, importSectionWeights, type SectionWeights, classifyIntent, extractIntentSummary, trackIntentEvolution, formatIntentEvolution, type IntentNode, type IntentEvolution, evaluateSignalUtilization, updateUtilizationStats, getUnderutilizedSections, createDefaultUtilizationStats, type UtilizationStats, createDefaultStyleEvolution, extractResponseFeatures, inferSatisfactionFromReply, updateStyleEvolution, generateStyleGuidance, type StyleEvolutionModel, type ResponseStyleFeatures, createEmptyKnowledgeGraph, extractEntitiesFromMessage, extractRelationsFromMessage, getTopEntities, formatKnowledgeSummary, type ConversationKnowledgeGraph } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL, createDefaultSectionWeights, recordActiveSections, updateSectionWeights, getSectionWeightOffset, exportSectionWeights, importSectionWeights, type SectionWeights, classifyIntent, extractIntentSummary, trackIntentEvolution, formatIntentEvolution, type IntentNode, type IntentEvolution, evaluateSignalUtilization, updateUtilizationStats, getUnderutilizedSections, createDefaultUtilizationStats, type UtilizationStats, createDefaultStyleEvolution, extractResponseFeatures, inferSatisfactionFromReply, updateStyleEvolution, generateStyleGuidance, type StyleEvolutionModel, type ResponseStyleFeatures, createEmptyKnowledgeGraph, extractEntitiesFromMessage, extractRelationsFromMessage, getTopEntities, formatKnowledgeSummary, type ConversationKnowledgeGraph, computeRepetitionScore, computeToolEfficiency, assessCognitiveFatigue, formatFatigueGuidance, type FatigueIndicators, type CognitiveFatigueState } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -204,6 +204,12 @@ export class KillerAgent {
 
   // 对话知识图谱
   private knowledgeGraph: ConversationKnowledgeGraph = createEmptyKnowledgeGraph();
+
+  // 认知疲劳检测
+  private recentResponses: string[] = [];
+  private recentToolResults: Array<{ success: boolean; timestamp: number }> = [];
+  private lastFatigueState: CognitiveFatigueState | undefined;
+  private readonly sessionStartTime = Date.now();
 
   // 实验驱动的行为洞察（成功的实验模式，注入系统 prompt）
   private behavioralInsights: string[] = [];
@@ -2616,6 +2622,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         this.conversationHistory.push({ role: 'user', content: innerCtx.input, timestamp: Date.now() });
         this.conversationHistory.push({ role: 'assistant', content: response, timestamp: Date.now() });
         this.lastResponseFeatures = extractResponseFeatures(response);
+        this.recentResponses.push(response);
+        if (this.recentResponses.length > 20) this.recentResponses = this.recentResponses.slice(-20);
         if (this.conversationHistory.length > this.maxConversationTurns * 2) {
           this.conversationHistory = this.conversationHistory.slice(-this.maxConversationTurns * 2);
         }
@@ -3014,6 +3022,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
           // 追踪工具使用效果
           this.recordToolPerformance(toolName, toolExecResult.success, toolDuration);
+          this.recentToolResults.push({ success: toolExecResult.success, timestamp: Date.now() });
+          if (this.recentToolResults.length > 30) this.recentToolResults = this.recentToolResults.slice(-30);
 
           const resultStr = toolExecResult.success
             ? (typeof toolExecResult.data === 'string' ? toolExecResult.data : JSON.stringify(toolExecResult.data))
@@ -3505,7 +3515,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       'CONVERSATION RHYTHM', 'USER EXPERTISE', 'EMOTIONAL RESPONSE STRATEGY',
       'PERCEPTION FUSION', 'RESTORED CONTEXT', 'STRATEGY COHERENCE',
       'COGNITIVE STATE', 'COMPOSITE RESPONSE STRATEGY', 'INTENT EVOLUTION',
-      'STYLE GUIDANCE', 'KNOWLEDGE GRAPH',
+      'STYLE GUIDANCE', 'KNOWLEDGE GRAPH', 'COGNITIVE FATIGUE',
     ];
 
     const memoryStats = this.hippocampus.getStats();
@@ -3582,6 +3592,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       intentEvolution: this.computeIntentEvolution(),
       styleGuidance: generateStyleGuidance(this.styleEvolution),
       knowledgeGraphSummary: formatKnowledgeSummary(this.knowledgeGraph.entities, this.knowledgeGraph.relations),
+      fatigueGuidance: this.computeFatigueAssessment(),
       sectionWeightOffsets: exportSectionWeights(this.sectionWeights),
     });
 
@@ -3924,6 +3935,19 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     const evolution = trackIntentEvolution(this.intentHistory);
     if (evolution.transitions.length === 0 && evolution.activeChains.length === 0) return undefined;
     return formatIntentEvolution(evolution);
+  }
+
+  private computeFatigueAssessment(): string | undefined {
+    if (this.recentResponses.length < 3) return undefined;
+    const indicators: FatigueIndicators = {
+      repetitionScore: computeRepetitionScore(this.recentResponses),
+      toolEfficiency: computeToolEfficiency(this.recentToolResults),
+      emotionalResponsiveness: this.lastFatigueState?.fatigueLevel ?? 0.5,
+      strategyConsistency: 1 - (this.lastFatigueState?.fatigueLevel ?? 0),
+    };
+    const fatigue = assessCognitiveFatigue(indicators, this.sessionStartTime, this.turnCounter);
+    this.lastFatigueState = fatigue;
+    return formatFatigueGuidance(fatigue);
   }
 
   /**

@@ -117,6 +117,8 @@ export interface PromptBuilderDeps {
   styleGuidance?: string;
   /** 对话知识图谱摘要 */
   knowledgeGraphSummary?: string;
+  /** 认知疲劳指导 */
+  fatigueGuidance?: string;
 }
 
 /**
@@ -381,6 +383,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 对话知识图谱 ===
   if (deps.knowledgeGraphSummary) {
     parts.push(`\nKNOWLEDGE GRAPH — ${deps.knowledgeGraphSummary}`);
+  }
+
+  // === 认知疲劳 ===
+  if (deps.fatigueGuidance) {
+    parts.push(`\nCOGNITIVE FATIGUE — ${deps.fatigueGuidance}`);
   }
 
   // === 自主行动建议 ===

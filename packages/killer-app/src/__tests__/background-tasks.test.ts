@@ -88,6 +88,10 @@ import {
   extractRelationsFromMessage,
   getTopEntities,
   formatKnowledgeSummary,
+  computeRepetitionScore,
+  computeToolEfficiency,
+  assessCognitiveFatigue,
+  formatFatigueGuidance,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -3285,6 +3289,127 @@ describe('background-tasks', () => {
       expect(kg.relations.length).toBeGreaterThan(0);
       const summary = formatKnowledgeSummary(kg.entities, kg.relations);
       expect(summary).toContain('app.tsx');
+    });
+  });
+
+  describe('Cognitive Fatigue Detection', () => {
+    it('should return 0 repetition for empty/short history', () => {
+      expect(computeRepetitionScore([])).toBe(0);
+      expect(computeRepetitionScore(['hello'])).toBe(0);
+    });
+
+    it('should detect identical responses as high repetition', () => {
+      const responses = ['the quick brown fox', 'the quick brown fox', 'the quick brown fox'];
+      const score = computeRepetitionScore(responses);
+      expect(score).toBeGreaterThan(0.9);
+    });
+
+    it('should detect varied responses as low repetition', () => {
+      const responses = [
+        'the quick brown fox jumps',
+        'a completely different sentence here',
+        'something else entirely new words',
+      ];
+      const score = computeRepetitionScore(responses);
+      expect(score).toBeLessThan(0.5);
+    });
+
+    it('should respect window size', () => {
+      const responses = [
+        'alpha beta', 'alpha beta', 'alpha beta', 'alpha beta',
+        'completely unique text here now', 'another distinct phrase ok',
+      ];
+      const score = computeRepetitionScore(responses, 2);
+      expect(score).toBeLessThan(0.5);
+    });
+
+    it('should return 1 efficiency for empty tool results', () => {
+      expect(computeToolEfficiency([])).toBe(1);
+    });
+
+    it('should compute tool efficiency from success rate', () => {
+      const results = [
+        { success: true, timestamp: 1000 },
+        { success: true, timestamp: 2000 },
+        { success: false, timestamp: 3000 },
+        { success: false, timestamp: 4000 },
+      ];
+      const efficiency = computeToolEfficiency(results);
+      expect(efficiency).toBeLessThan(0.6);
+    });
+
+    it('should detect speed decay in tool usage', () => {
+      const now = Date.now();
+      const results = [
+        { success: true, timestamp: now - 10000 },
+        { success: true, timestamp: now - 9000 },
+        { success: true, timestamp: now - 8000 },
+        { success: true, timestamp: now - 7000 },
+        // Second half much slower
+        { success: true, timestamp: now - 3000 },
+        { success: true, timestamp: now - 1000 },
+        { success: true, timestamp: now - 500 },
+        { success: true, timestamp: now },
+      ];
+      const efficiency = computeToolEfficiency(results);
+      // Success rate is 1.0 but speed decay should reduce it
+      expect(efficiency).toBeLessThan(1);
+    });
+
+    it('should assess low fatigue for healthy indicators', () => {
+      const sessionStart = Date.now() - 60000; // 1 min ago
+      const fatigue = assessCognitiveFatigue(
+        { repetitionScore: 0.1, toolEfficiency: 0.9, emotionalResponsiveness: 0.8, strategyConsistency: 0.9 },
+        sessionStart,
+        5,
+      );
+      expect(fatigue.fatigueLevel).toBeLessThan(0.3);
+      expect(fatigue.recommendation).toBe('none');
+    });
+
+    it('should assess high fatigue for degraded indicators', () => {
+      const sessionStart = Date.now() - 120 * 60000; // 2 hours ago
+      const fatigue = assessCognitiveFatigue(
+        { repetitionScore: 0.7, toolEfficiency: 0.3, emotionalResponsiveness: 0.2, strategyConsistency: 0.3 },
+        sessionStart,
+        60,
+      );
+      expect(fatigue.fatigueLevel).toBeGreaterThan(0.6);
+      expect(fatigue.signals.length).toBeGreaterThan(0);
+      expect(fatigue.recommendation).not.toBe('none');
+    });
+
+    it('should recommend break for long session with fatigue', () => {
+      const sessionStart = Date.now() - 100 * 60000; // 100 min
+      const fatigue = assessCognitiveFatigue(
+        { repetitionScore: 0.6, toolEfficiency: 0.4, emotionalResponsiveness: 0.3, strategyConsistency: 0.5 },
+        sessionStart,
+        40,
+      );
+      expect(fatigue.recommendation).toBe('suggest-break');
+    });
+
+    it('should format fatigue guidance for non-none recommendations', () => {
+      const sessionStart = Date.now() - 3600000;
+      const fatigue = assessCognitiveFatigue(
+        { repetitionScore: 0.6, toolEfficiency: 0.5, emotionalResponsiveness: 0.4, strategyConsistency: 0.5 },
+        sessionStart,
+        20,
+      );
+      const guidance = formatFatigueGuidance(fatigue);
+      if (fatigue.recommendation !== 'none') {
+        expect(guidance).toBeDefined();
+        expect(guidance).toContain('fatigue');
+      }
+    });
+
+    it('should return undefined guidance for no fatigue', () => {
+      const fatigue = assessCognitiveFatigue(
+        { repetitionScore: 0.1, toolEfficiency: 0.9, emotionalResponsiveness: 0.9, strategyConsistency: 0.9 },
+        Date.now() - 30000,
+        2,
+      );
+      expect(formatFatigueGuidance(fatigue)).toBeUndefined();
     });
   });
 });

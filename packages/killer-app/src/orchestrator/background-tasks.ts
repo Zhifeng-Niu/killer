@@ -2871,6 +2871,7 @@ export function scoreSectionRelevance(
     'INTENT EVOLUTION': 0.55,
     'STYLE GUIDANCE': 0.6,
     'KNOWLEDGE GRAPH': 0.5,
+    'COGNITIVE FATIGUE': 0.65,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -4834,6 +4835,168 @@ export function formatKnowledgeSummary(
   const uniqueRelations = relations.slice(-5);
   if (uniqueRelations.length > 0) {
     parts.push(`relations: ${uniqueRelations.map(r => `${r.from}→${r.relation}→${r.to}`).join(', ')}`);
+  }
+
+  return parts.join(' | ');
+}
+
+// ==================== 认知疲劳检测 ====================
+
+export interface FatigueIndicators {
+  /** 回复重复度 (0-1, 越高越重复) */
+  repetitionScore: number;
+  /** 工具使用效率 (0-1, 越低效率越差) */
+  toolEfficiency: number;
+  /** 情感响应强度 (0-1, 越低越淡) */
+  emotionalResponsiveness: number;
+  /** 策略一致性 (0-1, 越低越不一致) */
+  strategyConsistency: number;
+}
+
+export interface CognitiveFatigueState {
+  /** 综合疲劳等级 0-1 */
+  fatigueLevel: number;
+  /** 疲劳信号标签 */
+  signals: string[];
+  /** 建议动作 */
+  recommendation: 'none' | 'lighten' | 'refocus' | 'suggest-break';
+  /** 对话时长（分钟） */
+  sessionDurationMinutes: number;
+}
+
+const FATIGUE_INDICATOR_WEIGHTS = {
+  repetitionScore: 0.3,
+  toolEfficiency: 0.25,
+  emotionalResponsiveness: 0.2,
+  strategyConsistency: 0.25,
+} as const;
+
+const FATIGUE_THRESHOLDS = {
+  none: 0.3,
+  lighten: 0.5,
+  refocus: 0.7,
+} as const;
+
+/**
+ * 从滑动窗口计算回复重复度
+ */
+export function computeRepetitionScore(
+  recentResponses: string[],
+  windowSize: number = 5,
+): number {
+  if (recentResponses.length < 2) return 0;
+  const window = recentResponses.slice(-windowSize);
+  let overlapSum = 0;
+  let comparisons = 0;
+
+  for (let i = 1; i < window.length; i++) {
+    const prev = new Set(window[i - 1].toLowerCase().split(/\s+/));
+    const curr = new Set(window[i].toLowerCase().split(/\s+/));
+    const intersection = [...prev].filter(w => curr.has(w)).length;
+    const union = new Set([...prev, ...curr]).size;
+    overlapSum += union > 0 ? intersection / union : 0;
+    comparisons++;
+  }
+
+  return comparisons > 0 ? overlapSum / comparisons : 0;
+}
+
+/**
+ * 计算工具使用效率（成功率 × 速度衰减）
+ */
+export function computeToolEfficiency(
+  recentToolResults: Array<{ success: boolean; timestamp: number }>,
+  windowSize: number = 10,
+): number {
+  if (recentToolResults.length === 0) return 1;
+  const window = recentToolResults.slice(-windowSize);
+  const successRate = window.filter(r => r.success).length / window.length;
+
+  // 检测速度衰减（后半段是否比前半段慢）
+  if (window.length >= 4) {
+    const mid = Math.floor(window.length / 2);
+    const firstHalf = window.slice(0, mid);
+    const secondHalf = window.slice(mid);
+    const avgGapFirst = firstHalf.length > 1
+      ? (firstHalf[firstHalf.length - 1].timestamp - firstHalf[0].timestamp) / (firstHalf.length - 1)
+      : 1000;
+    const avgGapSecond = secondHalf.length > 1
+      ? (secondHalf[secondHalf.length - 1].timestamp - secondHalf[0].timestamp) / (secondHalf.length - 1)
+      : 1000;
+    const speedDecay = avgGapFirst > 0 ? Math.min(avgGapSecond / avgGapFirst, 2) / 2 : 0.5;
+    return successRate * (1 - speedDecay * 0.3);
+  }
+
+  return successRate;
+}
+
+/**
+ * 综合评估认知疲劳状态
+ */
+export function assessCognitiveFatigue(
+  indicators: FatigueIndicators,
+  sessionStartTimestamp: number,
+  turnCount: number,
+): CognitiveFatigueState {
+  const fatigueLevel =
+    indicators.repetitionScore * FATIGUE_INDICATOR_WEIGHTS.repetitionScore +
+    (1 - indicators.toolEfficiency) * FATIGUE_INDICATOR_WEIGHTS.toolEfficiency +
+    (1 - indicators.emotionalResponsiveness) * FATIGUE_INDICATOR_WEIGHTS.emotionalResponsiveness +
+    (1 - indicators.strategyConsistency) * FATIGUE_INDICATOR_WEIGHTS.strategyConsistency;
+
+  const sessionDurationMinutes = (Date.now() - sessionStartTimestamp) / 60000;
+  const signals: string[] = [];
+
+  if (indicators.repetitionScore > 0.5) signals.push('repetitive-responses');
+  if (indicators.toolEfficiency < 0.4) signals.push('declining-tool-success');
+  if (indicators.emotionalResponsiveness < 0.3) signals.push('flat-emotion');
+  if (indicators.strategyConsistency < 0.4) signals.push('strategy-drift');
+  if (sessionDurationMinutes > 60 && turnCount > 30) signals.push('long-session');
+  if (turnCount > 50) signals.push('high-turn-count');
+
+  let recommendation: CognitiveFatigueState['recommendation'] = 'none';
+  if (fatigueLevel >= FATIGUE_THRESHOLDS.refocus) {
+    recommendation = 'refocus';
+  } else if (fatigueLevel >= FATIGUE_THRESHOLDS.lighten) {
+    recommendation = 'lighten';
+  }
+
+  // 长会话 + 高轮次 → 建议休息
+  if (sessionDurationMinutes > 90 && fatigueLevel > 0.5) {
+    recommendation = 'suggest-break';
+  }
+
+  return {
+    fatigueLevel: Math.min(1, Math.max(0, fatigueLevel)),
+    signals,
+    recommendation,
+    sessionDurationMinutes,
+  };
+}
+
+/**
+ * 生成疲劳状态摘要（注入 prompt）
+ */
+export function formatFatigueGuidance(fatigue: CognitiveFatigueState): string | undefined {
+  if (fatigue.recommendation === 'none') return undefined;
+
+  const parts: string[] = [];
+  parts.push(`fatigue: ${(fatigue.fatigueLevel * 100).toFixed(0)}%`);
+
+  if (fatigue.signals.length > 0) {
+    parts.push(`signals: ${fatigue.signals.join(', ')}`);
+  }
+
+  switch (fatigue.recommendation) {
+    case 'lighten':
+      parts.push('prefer concise, direct responses; avoid deep analysis unless explicitly requested');
+      break;
+    case 'refocus':
+      parts.push('refocus on core topic; reduce tangential exploration; use simpler tool strategies');
+      break;
+    case 'suggest-break':
+      parts.push('consider suggesting a brief pause or context summary; user may benefit from a mental reset');
+      break;
   }
 
   return parts.join(' | ');
