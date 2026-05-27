@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -175,6 +175,7 @@ export class KillerAgent {
   private lastInteractionTimestamp: number | null = null;
   private previousInteractionTimestamp: number | null = null;
   private lengthPreference = createDefaultLengthPreference();
+  private topicSnapshots: Map<string, TopicContextSnapshot> = new Map();
 
   // 注意力优先级状态
   private lastAttentionState: import('./background-tasks.js').AttentionState | null = null;
@@ -2583,8 +2584,27 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           // 元认知追踪
           this.responseTimes.push(responseTimeMs);
           if (this.responseTimes.length > 20) this.responseTimes.shift();
+
+          // 话题切换检测 + 快照保存
+          const prevTopic = this.recentTopics.length > 0 ? this.recentTopics[this.recentTopics.length - 1] : undefined;
           this.recentTopics.push(...detectedTopics);
           if (this.recentTopics.length > 30) this.recentTopics = this.recentTopics.slice(-30);
+
+          if (prevTopic && detectedTopics.length > 0 && detectedTopics[0] !== prevTopic) {
+            const topicTurnStart = Math.max(0, this.conversationHistory.length - 10);
+            const snapshot = extractTopicSnapshot(
+              this.conversationHistory,
+              prevTopic,
+              { start: topicTurnStart, end: this.conversationHistory.length },
+            );
+            if (snapshot.keyPoints.length > 0 || snapshot.unsolvedQuestions.length > 0) {
+              this.topicSnapshots.set(prevTopic, snapshot);
+              if (this.topicSnapshots.size > 10) {
+                const oldest = this.topicSnapshots.keys().next().value;
+                if (oldest) this.topicSnapshots.delete(oldest);
+              }
+            }
+          }
 
           // 自适应策略追踪 — 评估上一轮策略效果
           this.updateStrategyEffectiveness(innerCtx.input, estimatedSatisfaction);
@@ -3441,6 +3461,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       goalDependencies: this.computeGoalDependencies(),
       topicTransition: this.computeTopicTransition(),
       autonomousActions: this.computeAutonomousActions(),
+      restoredTopicContext: this.computeRestoredTopicContext(),
     });
   }
 
@@ -3561,6 +3582,16 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       ...preloads.map(p => `- [low] preload_${p.preloadType}: ${p.reason} (query: "${p.query}")`),
     ];
     return result.length > 0 ? result.slice(0, 5) : undefined;
+  }
+
+  private computeRestoredTopicContext(): string | undefined {
+    if (this.recentTopics.length < 2) return undefined;
+    const currentTopic = this.recentTopics[this.recentTopics.length - 1];
+    const prevTopic = this.recentTopics[this.recentTopics.length - 2];
+    if (currentTopic === prevTopic) return undefined;
+    const snapshot = this.topicSnapshots.get(prevTopic);
+    if (!snapshot) return undefined;
+    return formatTopicSnapshot(snapshot);
   }
 
   /**
