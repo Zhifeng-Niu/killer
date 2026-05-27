@@ -219,6 +219,54 @@
     return 'other';
   }
 
+  function summarizeEvent(type, data) {
+    // Phase change
+    if (type === 'phase_change' && data.phase) {
+      return 'Phase → ' + data.phase;
+    }
+    // Perception
+    if (type === 'perception') {
+      var src = data.source || data.data || {};
+      return 'Perceived: ' + (src.type || src.message || 'stimulus');
+    }
+    // Reasoning
+    if (type === 'reasoning') {
+      var conclusion = data.conclusion || '';
+      if (conclusion.length > 120) conclusion = conclusion.slice(0, 117) + '...';
+      return conclusion || 'Reasoning cycle';
+    }
+    // Tool events
+    if (type.startsWith('tool')) {
+      var toolName = data.tool || data.name || 'unknown';
+      var success = data.success !== false && data.error == null;
+      return (success ? '✓' : '✗') + ' ' + toolName;
+    }
+    // Memory
+    if (type.startsWith('memory')) {
+      var key = data.key || data.id || '';
+      return 'Memory: ' + (key || 'store/recall');
+    }
+    // Cycle
+    if (type.startsWith('cycle')) {
+      var phase = data.phase || '';
+      var loop = data.loopCount || '';
+      return 'Cycle #' + loop + (phase ? ' [' + phase + ']' : '');
+    }
+    // LLM
+    if (type.startsWith('llm')) {
+      var tokens = data.tokens || data.usage || '';
+      return 'LLM call' + (tokens ? ' (' + tokens + ' tokens)' : '');
+    }
+    // Emotion
+    if (type.startsWith('emotion')) {
+      return 'Emotion: ' + (data.label || 'update');
+    }
+    // Generic fallback
+    var fallback = '';
+    try { fallback = JSON.stringify(data); } catch { fallback = String(data); }
+    return fallback.slice(0, 150);
+  }
+
   function renderEvent(event) {
     const type = event.type || 'unknown';
     const data = event.data || {};
@@ -244,17 +292,11 @@
     header.appendChild(timeEl);
     item.appendChild(header);
 
-    // Data preview
-    const dataEl = document.createElement('div');
-    dataEl.className = 'event-data';
-    let preview = '';
-    try {
-      preview = JSON.stringify(data, null, 2);
-    } catch {
-      preview = String(data);
-    }
-    dataEl.textContent = preview.slice(0, 300);
-    item.appendChild(dataEl);
+    // Summary line
+    const summaryEl = document.createElement('div');
+    summaryEl.className = 'event-data';
+    summaryEl.textContent = summarizeEvent(type, data);
+    item.appendChild(summaryEl);
 
     // Insert at top
     const panelTitle = eventStreamEl.querySelector('.panel-title');
