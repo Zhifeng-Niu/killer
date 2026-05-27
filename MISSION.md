@@ -1,18 +1,18 @@
 ---
 orientation: [creative]
 status: active
-started_at: 2026-05-27T02:40:30Z
-expedition_branch: odyssey/20260527-104030
+started_at: 2026-05-27T04:20:12Z
+expedition_branch: odyssey/20260527-122012
 baseline_metric: null
 best_metric: null
 total_waypoints: 0
 consecutive_discards: 0
 ---
 
-# Mission: Break the Self-Evolution Ceiling: Give Killer agent runtime capability extension
+# Mission: Visualize agent behavior as living vitality — add frontend UI alongside CLI sh
 
 ## Goal
-Break the Self-Evolution Ceiling: Give Killer agent runtime capability extension — write new tools, load them dynamically, use them immediately. The agent should be able to identify capability gaps and create new tools to fill them.
+Visualize agent behavior as living vitality — add frontend UI alongside CLI showing real-time cognitive activity without disrupting user interaction. Consider web-based dashboard with WebSocket connection to agent.
 
 ## Context
 Project type: typescript. Auto-detected guard: npm test 2>&1.
