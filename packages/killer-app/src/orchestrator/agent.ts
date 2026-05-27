@@ -3428,6 +3428,17 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     const userModel = this.persona.getUserModel();
     const isFirstBoot = memoryStats.episodes === 0 && userModel.interactionSummary.totalInteractions === 0;
 
+    // 预计算感知数据，避免各 compute 方法重复计算
+    const userMsgs = this.conversationHistory.filter(m => m.role === 'user').slice(-10);
+    const userMsgContents = userMsgs.map(m => m.content);
+    const perception = {
+      flow: userMsgs.length >= 3 ? predictConversationFlow(this.conversationHistory) : undefined,
+      phase: userMsgs.length >= 3 ? this.computeConversationalPhase() : undefined,
+      health: userMsgs.length >= 3 ? monitorConversationHealth(this.conversationHistory, this.recentTopics) : undefined,
+      rhythm: userMsgs.length >= 3 ? analyzeConversationRhythm(userMsgs.map(m => ({ length: m.content.length, timestamp: m.timestamp }))) : undefined,
+      expertise: userMsgs.length >= 3 ? buildUserExpertiseProfile(userMsgContents) : undefined,
+    };
+
     return buildSystemPrompt({
       persona: this.persona,
       hippocampus: this.hippocampus,
@@ -3464,25 +3475,25 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       goalConflicts: this.goalConflicts.length > 0 ? [...this.goalConflicts] : undefined,
       toolFailurePatterns: getFailurePatterns().length > 0 ? getFailurePatterns() : undefined,
       temporalContext: this.computeTemporalContext(),
-      flowPrediction: this.computeFlowPrediction(),
+      flowPrediction: this.computeFlowPrediction(perception.flow),
       lengthPreference: Math.abs(this.lengthPreference.score - 0.5) > 0.15
         ? `${this.lengthPreference.recommendation} (target ~${this.lengthPreference.suggestedMaxLength} chars)`
         : undefined,
-      toolPriority: this.computeToolPriority(),
-      conversationHealth: this.computeConversationHealth(),
+      toolPriority: this.computeToolPriority(perception),
+      conversationHealth: this.computeConversationHealth(perception.health),
       multiIntents: this.computeMultiIntents(),
       ambiguityWarnings: this.computeAmbiguityWarnings(),
       goalDependencies: this.computeGoalDependencies(),
       topicTransition: this.computeTopicTransition(),
-      autonomousActions: this.computeAutonomousActions(),
+      autonomousActions: this.computeAutonomousActions(perception),
       restoredTopicContext: this.computeRestoredTopicContext(),
-      conversationRhythm: this.computeConversationRhythm(),
-      userExpertise: this.computeUserExpertise(),
+      conversationRhythm: this.computeConversationRhythm(perception.rhythm),
+      userExpertise: this.computeUserExpertise(perception.expertise),
       emotionalStrategy: this.computeEmotionalStrategy(),
-      perceptionFusion: this.computePerceptionFusion(),
+      perceptionFusion: this.computePerceptionFusion(perception),
       behaviorMode: this.lastBehaviorMode ?? undefined,
-      strategyCoherence: this.computeStrategyCoherence(),
-      cognitiveState: this.computeCognitiveState(),
+      strategyCoherence: this.computeStrategyCoherence(perception),
+      cognitiveState: this.computeCognitiveState(perception),
     });
   }
 
@@ -3500,8 +3511,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     return ctx.formatted || undefined;
   }
 
-  private computeFlowPrediction(): string | undefined {
-    const pred = predictConversationFlow(this.conversationHistory);
+  private computeFlowPrediction(flow?: ReturnType<typeof predictConversationFlow>): string | undefined {
+    const pred = flow ?? predictConversationFlow(this.conversationHistory);
     if (pred.currentPattern === 'casual-chat' && pred.confidence < 0.5) return undefined;
     const lines = [
       `Pattern: ${pred.currentPattern} (confidence: ${(pred.confidence * 100).toFixed(0)}%)`,
@@ -3516,14 +3527,13 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     return lines.join('. ');
   }
 
-  private computeToolPriority(): string | undefined {
-    const flow = predictConversationFlow(this.conversationHistory);
+  private computeToolPriority(p?: { flow?: ReturnType<typeof predictConversationFlow>; expertise?: ReturnType<typeof buildUserExpertiseProfile> }): string | undefined {
+    const flow = p?.flow ?? predictConversationFlow(this.conversationHistory);
     const phase = this.contextWindow.getCurrentPhase();
     const eventNodes = this.hippocampus.getSemanticNodesByType('event');
     const temporal = generateTemporalContext(this.previousInteractionTimestamp, eventNodes);
     if (flow.currentPattern === 'casual-chat' && phase === 'idle') return undefined;
-    const userMsgs = this.conversationHistory.filter(m => m.role === 'user').slice(-10).map(m => m.content);
-    const expertise = userMsgs.length >= 3 ? buildUserExpertiseProfile(userMsgs) : undefined;
+    const expertise = p?.expertise ?? (this.conversationHistory.filter(m => m.role === 'user').slice(-10).map(m => m.content).length >= 3 ? buildUserExpertiseProfile(this.conversationHistory.filter(m => m.role === 'user').slice(-10).map(m => m.content)) : undefined);
     const suggestion = suggestToolPriority(
       flow.currentPattern, phase, temporal.urgencyLevel,
       expertise?.domains.map(d => d.domain),
@@ -3533,12 +3543,12 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     return `Prefer: ${suggestion.preferredTools.join(', ')}. ${suggestion.reason}`;
   }
 
-  private computeConversationHealth(): string | undefined {
-    const health = monitorConversationHealth(this.conversationHistory, this.recentTopics);
-    if (health.score >= 0.8) return undefined;
-    const parts = [`Health: ${(health.score * 100).toFixed(0)}%`];
-    if (health.issues.length > 0) parts.push(`Issues: ${health.issues.join('; ')}`);
-    parts.push(health.recommendation);
+  private computeConversationHealth(health?: ReturnType<typeof monitorConversationHealth>): string | undefined {
+    const h = health ?? monitorConversationHealth(this.conversationHistory, this.recentTopics);
+    if (h.score >= 0.8) return undefined;
+    const parts = [`Health: ${(h.score * 100).toFixed(0)}%`];
+    if (h.issues.length > 0) parts.push(`Issues: ${h.issues.join('; ')}`);
+    parts.push(h.recommendation);
     return parts.join('. ');
   }
 
@@ -3583,10 +3593,10 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     return parts.join(' ');
   }
 
-  private computeAutonomousActions(): string[] | undefined {
-    const flow = predictConversationFlow(this.conversationHistory);
-    const phase = this.computeConversationalPhase();
-    const health = monitorConversationHealth(this.conversationHistory, this.recentTopics);
+  private computeAutonomousActions(p?: { flow?: ReturnType<typeof predictConversationFlow>; phase?: { phase: string; confidence: number }; health?: ReturnType<typeof monitorConversationHealth> }): string[] | undefined {
+    const flow = p?.flow ?? predictConversationFlow(this.conversationHistory);
+    const phase = p?.phase ?? this.computeConversationalPhase();
+    const health = p?.health ?? monitorConversationHealth(this.conversationHistory, this.recentTopics);
     const lastUser = this.conversationHistory.filter(m => m.role === 'user').slice(-1)[0];
     const intents = lastUser ? detectMultiIntent(lastUser.content) : [];
     const ambiguities = lastUser ? detectAmbiguity(lastUser.content) : [];
@@ -3621,28 +3631,32 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     return formatTopicSnapshot(snapshot);
   }
 
-  private computeConversationRhythm(): string | undefined {
-    const userMessages = this.conversationHistory
-      .filter(m => m.role === 'user')
-      .slice(-10);
-    if (userMessages.length < 3) return undefined;
-    const rhythm = analyzeConversationRhythm(
-      userMessages.map(m => ({ length: m.content.length, timestamp: m.timestamp })),
-    );
+  private computeConversationRhythm(rhythm?: ReturnType<typeof analyzeConversationRhythm>): string | undefined {
+    if (!rhythm) {
+      const userMessages = this.conversationHistory
+        .filter(m => m.role === 'user')
+        .slice(-10);
+      if (userMessages.length < 3) return undefined;
+      rhythm = analyzeConversationRhythm(
+        userMessages.map(m => ({ length: m.content.length, timestamp: m.timestamp })),
+      );
+    }
     if (rhythm.confidence < this.cognitiveTuning.rhythmThreshold || rhythm.rhythm === 'initial') return undefined;
     return `[${rhythm.rhythm}] ${rhythm.responseHint}`;
   }
 
-  private computeUserExpertise(): string | undefined {
-    const userMessages = this.conversationHistory
-      .filter(m => m.role === 'user')
-      .slice(-30)
-      .map(m => m.content);
-    if (userMessages.length < 3) return undefined;
-    const profile = buildUserExpertiseProfile(userMessages);
-    if (profile.domains.length === 0) return undefined;
-    const topDomains = profile.domains.slice(0, 3);
-    return `${profile.terminologyHint} ${profile.explanationHint} (Top domains: ${topDomains.map(d => `${d.domain}(${d.depth.toFixed(1)})`).join(', ')})`;
+  private computeUserExpertise(expertise?: ReturnType<typeof buildUserExpertiseProfile>): string | undefined {
+    if (!expertise) {
+      const userMessages = this.conversationHistory
+        .filter(m => m.role === 'user')
+        .slice(-30)
+        .map(m => m.content);
+      if (userMessages.length < 3) return undefined;
+      expertise = buildUserExpertiseProfile(userMessages);
+    }
+    if (expertise.domains.length === 0) return undefined;
+    const topDomains = expertise.domains.slice(0, 3);
+    return `${expertise.terminologyHint} ${expertise.explanationHint} (Top domains: ${topDomains.map(d => `${d.domain}(${d.depth.toFixed(1)})`).join(', ')})`;
   }
 
   private computeEmotionalStrategy(): string | undefined {
@@ -3657,18 +3671,20 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     return `Tone: ${strategy.toneHint} Length: ${strategy.lengthHint} Empathy: ${strategy.empathyAction}`;
   }
 
-  private computePerceptionFusion(): string | undefined {
-    const userMessages = this.conversationHistory.filter(m => m.role === 'user').slice(-10);
-    if (userMessages.length < 3) return undefined;
-
-    const flow = predictConversationFlow(this.conversationHistory);
-    const phase = this.computeConversationalPhase();
-    const health = monitorConversationHealth(this.conversationHistory, this.recentTopics);
+  private computePerceptionFusion(p?: { flow?: ReturnType<typeof predictConversationFlow>; phase?: { phase: string; confidence: number }; health?: ReturnType<typeof monitorConversationHealth>; rhythm?: ReturnType<typeof analyzeConversationRhythm>; expertise?: ReturnType<typeof buildUserExpertiseProfile> }): string | undefined {
+    if (!p?.flow || !p?.phase || !p?.health || !p?.rhythm || !p?.expertise) {
+      const userMessages = this.conversationHistory.filter(m => m.role === 'user').slice(-10);
+      if (userMessages.length < 3) return undefined;
+    }
+    const flow = p?.flow ?? predictConversationFlow(this.conversationHistory);
+    const phase = p?.phase ?? this.computeConversationalPhase();
+    const health = p?.health ?? monitorConversationHealth(this.conversationHistory, this.recentTopics);
+    const rhythm = p?.rhythm ?? (() => {
+      const msgs = this.conversationHistory.filter(m => m.role === 'user').slice(-10);
+      return analyzeConversationRhythm(msgs.map(m => ({ length: m.content.length, timestamp: m.timestamp })));
+    })();
+    const expertise = p?.expertise ?? buildUserExpertiseProfile(this.conversationHistory.filter(m => m.role === 'user').slice(-10).map(m => m.content));
     const es = this.persona.emotionalState.getState();
-    const rhythm = analyzeConversationRhythm(
-      userMessages.map(m => ({ length: m.content.length, timestamp: m.timestamp })),
-    );
-    const expertise = buildUserExpertiseProfile(userMessages.map(m => m.content));
 
     const pv = fusePerceptionSignals({
       flowConfidence: flow.confidence,
@@ -3686,14 +3702,14 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     return `[${pv.behaviorMode}] attention=${(pv.overallAttention * 100).toFixed(0)}% — ${pv.fusedHint}`;
   }
 
-  private computeStrategyCoherence(): string | undefined {
+  private computeStrategyCoherence(p?: { rhythm?: ReturnType<typeof analyzeConversationRhythm>; expertise?: ReturnType<typeof buildUserExpertiseProfile> }): string | undefined {
     const userMessages = this.conversationHistory.filter(m => m.role === 'user').slice(-10);
     if (userMessages.length < 3) return undefined;
 
-    const rhythm = analyzeConversationRhythm(
+    const rhythm = p?.rhythm ?? analyzeConversationRhythm(
       userMessages.map(m => ({ length: m.content.length, timestamp: m.timestamp })),
     );
-    const expertise = buildUserExpertiseProfile(userMessages.map(m => m.content));
+    const expertise = p?.expertise ?? buildUserExpertiseProfile(userMessages.map(m => m.content));
     const es = this.persona.emotionalState.getState();
     const strategy = mapEmotionToResponseStrategy({
       valence: es.current.valence,
@@ -3743,18 +3759,18 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     return `Conflicts: ${coherence.conflicts.join(', ')} → ${coherence.resolution}`;
   }
 
-  private computeCognitiveState(): string | undefined {
+  private computeCognitiveState(p?: { flow?: ReturnType<typeof predictConversationFlow>; phase?: { phase: string; confidence: number }; health?: ReturnType<typeof monitorConversationHealth>; rhythm?: ReturnType<typeof analyzeConversationRhythm>; expertise?: ReturnType<typeof buildUserExpertiseProfile> }): string | undefined {
     const userMsgs = this.conversationHistory.filter(m => m.role === 'user').slice(-10);
     if (userMsgs.length < 3) return undefined;
 
-    const flow = predictConversationFlow(this.conversationHistory);
-    const phase = this.computeConversationalPhase();
-    const health = monitorConversationHealth(this.conversationHistory, this.recentTopics);
+    const flow = p?.flow ?? predictConversationFlow(this.conversationHistory);
+    const phase = p?.phase ?? this.computeConversationalPhase();
+    const health = p?.health ?? monitorConversationHealth(this.conversationHistory, this.recentTopics);
     const es = this.persona.emotionalState.getState();
-    const rhythm = analyzeConversationRhythm(
+    const rhythm = p?.rhythm ?? analyzeConversationRhythm(
       userMsgs.map(m => ({ length: m.content.length, timestamp: m.timestamp })),
     );
-    const expertise = buildUserExpertiseProfile(userMsgs.map(m => m.content));
+    const expertise = p?.expertise ?? buildUserExpertiseProfile(userMsgs.map(m => m.content));
 
     const summary = generateCognitiveStateSummary({
       phase: phase.phase,
