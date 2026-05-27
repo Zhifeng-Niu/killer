@@ -102,6 +102,8 @@ export interface PromptBuilderDeps {
   emotionalStrategy?: string;
   /** 综合感知融合 */
   perceptionFusion?: string;
+  /** 行为模式（来自感知融合） */
+  behaviorMode?: 'focused' | 'exploratory' | 'supportive' | 'urgent' | 'balanced';
 }
 
 /**
@@ -867,6 +869,7 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
         recentTopics: deps.conversationMeta?.recentTopics ?? [],
         hasActiveGoals: (deps.goalDependencyTree?.length ?? 0) > 0,
         turnCount: deps.conversationMeta?.turnCount ?? 0,
+        behaviorMode: deps.behaviorMode,
       }))
       .sort((a, b) => a.score - b.score); // lowest relevance first
 

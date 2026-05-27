@@ -2799,6 +2799,7 @@ export function scoreSectionRelevance(
     recentTopics: string[];
     hasActiveGoals: boolean;
     turnCount: number;
+    behaviorMode?: 'focused' | 'exploratory' | 'supportive' | 'urgent' | 'balanced';
   },
 ): SectionScore {
   const baseScores: Record<string, number> = {
@@ -2821,6 +2822,11 @@ export function scoreSectionRelevance(
     'GOAL DEPENDENCIES': 0.6,
     'TOPIC TRANSITION': 0.55,
     'SUGGESTED ACTIONS': 0.6,
+    'CONVERSATION RHYTHM': 0.5,
+    'USER EXPERTISE': 0.55,
+    'EMOTIONAL RESPONSE STRATEGY': 0.6,
+    'PERCEPTION FUSION': 0.65,
+    'RESTORED CONTEXT': 0.6,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -2873,6 +2879,43 @@ export function scoreSectionRelevance(
     if (['GOAL DEPENDENCIES', 'SUGGESTED ACTIONS'].includes(sectionPrefix)) {
       score += 0.1;
       reason.push('active-goals boost');
+    }
+  }
+
+  // Behavior mode adjustments from perception fusion
+  if (context.behaviorMode === 'urgent') {
+    if (['EMOTIONAL RESPONSE STRATEGY', 'CONVERSATION HEALTH', 'PERCEPTION FUSION', 'INPUT AMBIGUITY'].includes(sectionPrefix)) {
+      score += 0.2;
+      reason.push('urgent mode boost (crisis signals)');
+    }
+    if (['DREAM INSIGHTS', 'LEARNED BEHAVIORS', 'TEMPORAL CONTEXT', 'CONVERSATION RHYTHM'].includes(sectionPrefix)) {
+      score -= 0.15;
+      reason.push('urgent mode penalty (distraction)');
+    }
+  }
+
+  if (context.behaviorMode === 'supportive') {
+    if (['EMOTIONAL RESPONSE STRATEGY', 'USER EXPERTISE', 'LENGTH PREFERENCE', 'CONVERSATION RHYTHM'].includes(sectionPrefix)) {
+      score += 0.15;
+      reason.push('supportive mode boost (empathy)');
+    }
+  }
+
+  if (context.behaviorMode === 'focused') {
+    if (['TOOL PERFORMANCE', 'TOOL PRIORITY', 'USER EXPERTISE', 'GOAL DEPENDENCIES'].includes(sectionPrefix)) {
+      score += 0.15;
+      reason.push('focused mode boost (precision)');
+    }
+    if (['DREAM INSIGHTS', 'META-COGNITION', 'ATTENTION STATE', 'CONVERSATION HEALTH'].includes(sectionPrefix)) {
+      score -= 0.1;
+      reason.push('focused mode penalty (meta)');
+    }
+  }
+
+  if (context.behaviorMode === 'exploratory') {
+    if (['CONVERSATION FLOW', 'TEMPORAL CONTEXT', 'LEARNED BEHAVIORS', 'INPUT AMBIGUITY', 'MULTI-INTENT'].includes(sectionPrefix)) {
+      score += 0.1;
+      reason.push('exploratory mode boost (discovery)');
     }
   }
 

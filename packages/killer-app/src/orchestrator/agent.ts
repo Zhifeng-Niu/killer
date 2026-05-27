@@ -179,6 +179,7 @@ export class KillerAgent {
 
   // 注意力优先级状态
   private lastAttentionState: import('./background-tasks.js').AttentionState | null = null;
+  private lastBehaviorMode: import('./background-tasks.js').PerceptionVector['behaviorMode'] | null = null;
 
   // 实验驱动的行为洞察（成功的实验模式，注入系统 prompt）
   private behavioralInsights: string[] = [];
@@ -3466,6 +3467,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       userExpertise: this.computeUserExpertise(),
       emotionalStrategy: this.computeEmotionalStrategy(),
       perceptionFusion: this.computePerceptionFusion(),
+      behaviorMode: this.lastBehaviorMode ?? undefined,
     });
   }
 
@@ -3656,6 +3658,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       conversationHealth: health.score,
       expertiseDomainCount: expertise.domains.length,
     });
+
+    this.lastBehaviorMode = pv.behaviorMode;
 
     if (pv.overallAttention < 0.3 && pv.behaviorMode === 'balanced') return undefined;
     return `[${pv.behaviorMode}] attention=${(pv.overallAttention * 100).toFixed(0)}% — ${pv.fusedHint}`;

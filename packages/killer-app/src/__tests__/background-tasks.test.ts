@@ -2007,6 +2007,36 @@ describe('background-tasks', () => {
       expect(result.score).toBeGreaterThanOrEqual(0);
       expect(result.score).toBeLessThanOrEqual(1);
     });
+
+    it('should boost crisis sections in urgent mode', () => {
+      const result = scoreSectionRelevance('EMOTIONAL RESPONSE STRATEGY', { ...baseCtx, behaviorMode: 'urgent' });
+      const base = scoreSectionRelevance('EMOTIONAL RESPONSE STRATEGY', baseCtx);
+      expect(result.score).toBeGreaterThan(base.score);
+    });
+
+    it('should penalize distraction sections in urgent mode', () => {
+      const result = scoreSectionRelevance('DREAM INSIGHTS', { ...baseCtx, behaviorMode: 'urgent' });
+      const base = scoreSectionRelevance('DREAM INSIGHTS', baseCtx);
+      expect(result.score).toBeLessThan(base.score);
+    });
+
+    it('should boost empathy sections in supportive mode', () => {
+      const result = scoreSectionRelevance('USER EXPERTISE', { ...baseCtx, behaviorMode: 'supportive' });
+      const base = scoreSectionRelevance('USER EXPERTISE', baseCtx);
+      expect(result.score).toBeGreaterThan(base.score);
+    });
+
+    it('should boost precision sections in focused mode', () => {
+      const result = scoreSectionRelevance('TOOL PERFORMANCE', { ...baseCtx, behaviorMode: 'focused' });
+      const base = scoreSectionRelevance('TOOL PERFORMANCE', baseCtx);
+      expect(result.score).toBeGreaterThan(base.score);
+    });
+
+    it('should boost discovery sections in exploratory mode', () => {
+      const result = scoreSectionRelevance('CONVERSATION FLOW', { ...baseCtx, behaviorMode: 'exploratory' });
+      const base = scoreSectionRelevance('CONVERSATION FLOW', baseCtx);
+      expect(result.score).toBeGreaterThan(base.score);
+    });
   });
 
   describe('extractTopicSnapshot', () => {
