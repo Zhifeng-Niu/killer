@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 1222
-total_waypoints: 4
+total_waypoints: 5
 consecutive_discards: 0
 ---
 
@@ -49,6 +49,7 @@ npm test 2>&1
 2. **LLM-Powered Planner** (waypoint 2): Intelligent goal decomposition via LLM with rule-based fallback, async propagation
 3. **Autonomous Goal + Experiment Loop** (waypoint 3): LLM-powered input analysis for goal extraction, Cerebellum mission auto-trigger on plan failure
 4. **Learning Task Delegation** (waypoint 4): Cell profiling with success rate tracking, LLM prompt injection of historical performance data
+5. **Cortex-Cerebellum Feedback Loop** (waypoint 5): Experiment results auto-feed Cortex skills, emotional arousal modulates risk tolerance, skill.learned consciousness event
 
 ### Dead Ends
 {Auto-updated by engine.}
