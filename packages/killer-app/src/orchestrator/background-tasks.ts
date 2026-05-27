@@ -676,3 +676,168 @@ export function detectConversationalPhase(ctx: ConversationPhaseContext): Conver
   // === 探索性对话（默认） ===
   return { phase: 'exploration', confidence: 0.6, turnsInPhase: Math.min(ctx.turnCount, 10), guidance: 'General conversation flow. Be curious, helpful, and adaptive. Notice what interests the user and lean into it.' };
 }
+
+// ============================================================
+// Semantic Memory Auto-Extraction
+// ============================================================
+
+/**
+ * 从用户消息中提取的语义事实
+ */
+export interface ExtractedFact {
+  /** 事实类型 */
+  type: 'preference' | 'skill' | 'project' | 'date' | 'relationship' | 'fact';
+  /** 简短标签 */
+  label: string;
+  /** 详细值 */
+  value: string;
+  /** 置信度 */
+  confidence: number;
+}
+
+/**
+ * 无需 LLM 的规则式语义事实提取
+ *
+ * 从用户消息中识别偏好、技能、项目名、重要日期等，
+ * 直接存入 hippocampus 语义记忆。避免每次都调 LLM 提取。
+ */
+export function extractFactsFromMessage(message: string): ExtractedFact[] {
+  const facts: ExtractedFact[] = [];
+  const lower = message.toLowerCase();
+
+  // === 偏好提取 ===
+  const preferencePatterns: Array<[RegExp, string, string]> = [
+    [/\b(i (?:prefer|like|love|enjoy|favor)\s+(.+?))(?:\.|!|$)/i, 'preference', 'user preference'],
+    [/\b(i (?:don'?t like|dislike|hate|avoid)\s+(.+?))(?:\.|!|$)/i, 'preference', 'user aversion'],
+    [/\b(my favorite\s+(.+?)\s+is\s+(.+?))(?:\.|!|$)/i, 'preference', 'favorite'],
+    [/我喜欢(.+?)(?:，|。|！|$)/, 'preference', 'user preference'],
+    [/我不喜欢(.+?)(?:，|。|！|$)/, 'preference', 'user aversion'],
+    [/\b(i always|usually|typically)\s+(.+?)(?:\.|!|$)/i, 'preference', 'habit'],
+  ];
+
+  for (const [pattern, type, label] of preferencePatterns) {
+    const match = message.match(pattern);
+    if (match) {
+      facts.push({
+        type: type as ExtractedFact['type'],
+        label,
+        value: match[1].trim().slice(0, 200),
+        confidence: 0.85,
+      });
+    }
+  }
+
+  // === 技能/工具提取 ===
+  const skillPatterns: Array<[RegExp, string]> = [
+    [/\b(i (?:am|work as|'m)\s+a\s+([\w\s]+?))(?:\.|,|!|$)/i, 'profession'],
+    [/\b(i use|using|working with)\s+([\w\s.+#]+?)(?:\s+(?:for|to|on|at|in|and|but|\.)|$)/i, 'tool'],
+    [/(?:expert|proficient|experienced)\s+(?:in|with)\s+([\w\s.+#]+)/i, 'expertise'],
+    [/我是(.+?)(?:工程师|开发者|设计师|架构师|经理)/, 'profession'],
+  ];
+
+  for (const [pattern, label] of skillPatterns) {
+    const match = message.match(pattern);
+    if (match) {
+      facts.push({
+        type: 'skill',
+        label,
+        value: match[1]?.trim().slice(0, 100) ?? match[0].trim().slice(0, 200),
+        confidence: 0.8,
+      });
+    }
+  }
+
+  // === 项目名提取 ===
+  const projectPatterns: Array<[RegExp, string]> = [
+    [/\b(?:my|our)\s+(?:project|app|product|repo|codebase)\s+(?:is\s+)?(?:called\s+)?["']?([\w.-]+)["']?/i, 'project name'],
+    [/\b(?:building|working on|developing)\s+(?:a\s+)?["']?([\w.-]+?)["']?(?:\s|,|\.)/i, 'current project'],
+  ];
+
+  for (const [pattern, label] of projectPatterns) {
+    const match = message.match(pattern);
+    if (match) {
+      facts.push({
+        type: 'project',
+        label,
+        value: match[1].trim(),
+        confidence: 0.75,
+      });
+    }
+  }
+
+  // === 日期/时间提取 ===
+  const datePatterns: Array<[RegExp, string]> = [
+    [/\b(deadline|due date|due by|by)\s+(?:is\s+)?(\w+\s+\d{1,2}(?:,\s*\d{4})?)/i, 'deadline'],
+    [/\b(meeting|call|review)\s+(?:on|at|scheduled\s+for)\s+(\w+\s+\d{1,2}(?:,\s*\d{4})?)/i, 'event date'],
+    [/截止日期.*?(\d{1,2}月\d{1,2}日|\d{4}-\d{2}-\d{2})/, 'deadline'],
+  ];
+
+  for (const [pattern, label] of datePatterns) {
+    const match = message.match(pattern);
+    if (match) {
+      facts.push({
+        type: 'date',
+        label,
+        value: match[1]?.trim() ?? match[0].trim(),
+        confidence: 0.9,
+      });
+    }
+  }
+
+  // === 姓名提取 ===
+  const namePatterns: Array<[RegExp, string]> = [
+    [/\b(?:my name is|i'm called|call me)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)(?:\s+(?:and|but|\.|!|$))/i, 'user name'],
+    [/我叫(.+?)(?:，|。|！|$)/, 'user name'],
+  ];
+
+  for (const [pattern, label] of namePatterns) {
+    const match = message.match(pattern);
+    if (match) {
+      facts.push({
+        type: 'relationship',
+        label,
+        value: match[1].trim(),
+        confidence: 0.95,
+      });
+    }
+  }
+
+  return facts;
+}
+
+/**
+ * 将提取的事实存入 hippocampus 语义记忆
+ *
+ * @returns 新增的语义节点数量
+ */
+export function storeExtractedFacts(
+  facts: ExtractedFact[],
+  hippocampus: HippocampusEngine,
+): number {
+  let stored = 0;
+
+  for (const fact of facts.slice(0, 5)) {
+    // Check for duplicates — same label+value shouldn't be stored twice
+    const existing = hippocampus.getSemanticNodesByType('entity');
+    const isDuplicate = existing.some(
+      n => n.label === fact.label && n.properties.value === fact.value,
+    );
+    if (isDuplicate) continue;
+
+    hippocampus.addSemanticNode({
+      type: 'entity',
+      label: fact.label,
+      properties: {
+        source: 'auto-extracted',
+        value: fact.value,
+        factType: fact.type,
+        confidence: fact.confidence,
+        extractedAt: Date.now(),
+      },
+      strength: fact.confidence,
+    });
+    stored++;
+  }
+
+  return stored;
+}

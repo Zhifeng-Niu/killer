@@ -13,6 +13,8 @@ import {
   checkPendingReminders,
   clearPendingItems,
   detectConversationalPhase,
+  extractFactsFromMessage,
+  storeExtractedFacts,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -560,6 +562,102 @@ describe('background-tasks', () => {
         });
         expect(result.guidance.length).toBeGreaterThan(10);
       }
+    });
+  });
+
+  describe('extractFactsFromMessage', () => {
+    it('should extract English preferences', () => {
+      const facts = extractFactsFromMessage('I prefer dark mode for my editor');
+      expect(facts.length).toBeGreaterThan(0);
+      expect(facts[0].type).toBe('preference');
+      expect(facts[0].value).toContain('prefer');
+    });
+
+    it('should extract Chinese preferences', () => {
+      const facts = extractFactsFromMessage('我喜欢用 TypeScript 写代码');
+      expect(facts.length).toBeGreaterThan(0);
+      expect(facts[0].type).toBe('preference');
+    });
+
+    it('should extract skills and tools', () => {
+      const facts = extractFactsFromMessage('I use React and Next.js for my projects');
+      expect(facts.some(f => f.type === 'skill')).toBe(true);
+    });
+
+    it('should extract project names', () => {
+      const facts = extractFactsFromMessage('My project is called Odysseus');
+      expect(facts.some(f => f.type === 'project')).toBe(true);
+    });
+
+    it('should extract names', () => {
+      const facts = extractFactsFromMessage('My name is Alice and I work as a developer');
+      expect(facts.some(f => f.type === 'relationship' && f.label === 'user name')).toBe(true);
+    });
+
+    it('should extract deadlines', () => {
+      const facts = extractFactsFromMessage('The deadline is January 15');
+      expect(facts.some(f => f.type === 'date')).toBe(true);
+    });
+
+    it('should return empty for generic messages', () => {
+      const facts = extractFactsFromMessage('Hello, how are you doing today?');
+      expect(facts.length).toBe(0);
+    });
+
+    it('should return empty for short messages', () => {
+      const facts = extractFactsFromMessage('OK');
+      expect(facts.length).toBe(0);
+    });
+  });
+
+  describe('storeExtractedFacts', () => {
+    it('should store facts into hippocampus', () => {
+      const mockHippocampus = {
+        getSemanticNodesByType: vi.fn().mockReturnValue([]),
+        addSemanticNode: vi.fn().mockReturnValue({ id: 'test' }),
+      };
+
+      const facts = [
+        { type: 'preference' as const, label: 'test', value: 'test value', confidence: 0.8 },
+      ];
+
+      const stored = storeExtractedFacts(facts, mockHippocampus as never);
+      expect(stored).toBe(1);
+      expect(mockHippocampus.addSemanticNode).toHaveBeenCalledOnce();
+    });
+
+    it('should skip duplicate facts', () => {
+      const mockHippocampus = {
+        getSemanticNodesByType: vi.fn().mockReturnValue([
+          { label: 'test', properties: { value: 'existing value' } },
+        ]),
+        addSemanticNode: vi.fn(),
+      };
+
+      const facts = [
+        { type: 'preference' as const, label: 'test', value: 'existing value', confidence: 0.8 },
+      ];
+
+      const stored = storeExtractedFacts(facts, mockHippocampus as never);
+      expect(stored).toBe(0);
+      expect(mockHippocampus.addSemanticNode).not.toHaveBeenCalled();
+    });
+
+    it('should limit to 5 facts per call', () => {
+      const mockHippocampus = {
+        getSemanticNodesByType: vi.fn().mockReturnValue([]),
+        addSemanticNode: vi.fn().mockReturnValue({ id: 'test' }),
+      };
+
+      const facts = Array.from({ length: 10 }, (_, i) => ({
+        type: 'fact' as const,
+        label: `fact-${i}`,
+        value: `value-${i}`,
+        confidence: 0.8,
+      }));
+
+      const stored = storeExtractedFacts(facts, mockHippocampus as never);
+      expect(stored).toBe(5);
     });
   });
 });
