@@ -29,11 +29,12 @@ Project type: typescript. Auto-detected guard: npm test 2>&1.
 
 | Name | Unit | Measure Command | Direction |
 |------|------|----------------|-----------|
-| type_error_count | - | (auto-detected) | lower |
+| build_status | pass/fail | `pnpm build 2>&1 \| tail -1` | pass |
+| autonomous_capabilities | count | self-modification tools wired up | higher |
 
 ## Guard
 ```bash
-npm test 2>&1
+pnpm build 2>&1
 ```
 
 ## Termination

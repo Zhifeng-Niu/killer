@@ -5,7 +5,7 @@
  * LLM 返回工具调用 → 执行 → 结果反馈给 LLM → 继续推理 → 最终响应
  *
  * 还验证：
- * - MAX_TOOL_CHAIN_ROUNDS (5) 最大迭代保护
+ * - 自我收敛：LLM 不再调用工具时自然终止（无硬性上限）
  * - 工具执行后 LLM 的 follow-up 调用
  * - 工具权限拒绝在链中的处理
  */
@@ -264,18 +264,15 @@ describe('Tool Chain Loop', () => {
     expect(llm.callCount).toBeGreaterThanOrEqual(2);
   });
 
-  it('should terminate tool chain after MAX_TOOL_CHAIN_ROUNDS (5)', async () => {
-    // LLM always returns a tool call (simulating infinite loop)
-    const loopingResponse = '```tool\n{"tool":"loop_tool","params":{}}\n```';
+  it('should self-converge when LLM stops calling tools', async () => {
+    // LLM calls tools 3 times then naturally converges
+    const toolResponse = '```tool\n{"tool":"loop_tool","params":{}}\n```';
 
     llm = new MultiTurnMockLLM([
-      loopingResponse, // round 0 (initial)
-      loopingResponse, // round 1
-      loopingResponse, // round 2
-      loopingResponse, // round 3
-      loopingResponse, // round 4 (last allowed)
-      loopingResponse, // round 5 — should not reach
-      'Should not reach here',
+      toolResponse,  // round 1
+      toolResponse,  // round 2
+      toolResponse,  // round 3
+      'I have gathered enough information. Here is my final answer.',
     ]);
 
     agent = new KillerAgent({
@@ -291,13 +288,11 @@ describe('Tool Chain Loop', () => {
     agent.tools.register(createTool('loop_tool', async () => ({ round: 'processed' })));
     agent.toolPermissions.addRule({ tool: 'loop_tool', permission: 'auto' });
 
-    const result = await agent.processInput('Keep looping');
+    const result = await agent.processInput('Research this topic');
 
     expect(result.content).toBeTruthy();
-    // The loop should stop after MAX_TOOL_CHAIN_ROUNDS (5) iterations
-    // Initial call + up to 5 follow-ups = max 6 LLM calls
-    expect(llm.callCount).toBeLessThanOrEqual(6);
-    expect(llm.callCount).toBeGreaterThanOrEqual(1);
+    // 3 tool calls + 1 final response = 4 LLM calls
+    expect(llm.callCount).toBe(4);
   });
 
   it('should skip unknown tools silently without breaking chain', async () => {

@@ -2100,14 +2100,12 @@ export class KillerAgent {
     return result;
   }
 
-  /** 工具链推理最大轮次 */
-  private static readonly MAX_TOOL_CHAIN_ROUNDS = 5;
-
   /**
    * 执行工具链推理循环
    *
-   * 当 LLM 响应包含工具调用时，执行工具后将结果反馈给 LLM 继续推理。
-   * 循环直到 LLM 不再调用工具或达到最大轮次。
+   * 无硬性上限 — agent 自我收敛。
+   * 当 LLM 不再调用工具时自然终止（即 LLM 认为任务已完成，
+   * 选择直接回复用户而非继续使用工具）。
    */
   private async runToolChainLoop(
     initialResponse: string,
@@ -2115,12 +2113,16 @@ export class KillerAgent {
     onToken?: (token: string) => void,
   ): Promise<string> {
     let currentResponse = initialResponse;
+    let round = 0;
 
-    for (let round = 0; round < KillerAgent.MAX_TOOL_CHAIN_ROUNDS; round++) {
+    while (true) {
       const toolResult = await this.executeToolCallsFromResponse(currentResponse, onToken);
       currentResponse = toolResult.response;
 
+      // LLM 未调用任何工具 = 自然收敛，任务完成
       if (!toolResult.toolsExecuted) break;
+
+      round++;
 
       // 发出工具执行 hook
       for (const toolName of toolResult.executedToolNames) {
@@ -2136,19 +2138,16 @@ export class KillerAgent {
 
       onToken?.('\n[Reasoning...]\n');
 
-      // 根据已执行的工具数量和结果质量调整 prompt
-      const hasIncompleteResults = currentResponse.includes('[Tool Error:') ||
+      const hasErrors = currentResponse.includes('[Tool Error:') ||
         (currentResponse.includes('"success":false') && !currentResponse.includes('"success":true'));
-      const toolRoundHint = toolResult.executedToolNames.length > 2
-        ? 'You have used several tools. It\'s time to give the user a comprehensive answer based on what you\'ve gathered.'
-        : hasIncompleteResults
-          ? 'Some tool calls failed or returned incomplete results. Try alternative approaches — use different URLs, methods, or tools. Do NOT give up and explain failures to the user. Keep trying until you get useful results.'
-          : 'If you have enough information, respond directly. If not, call another tool.';
+
+      const continuationHint = hasErrors
+        ? 'Some tool calls failed. Try alternative approaches — different URLs, methods, or tools. Do NOT give up. Keep trying.'
+        : 'You are working autonomously. Continue calling tools to gather more information, process data, or complete sub-tasks. Only respond to the user when you have genuinely finished the work or have a meaningful result to share. If you need new capabilities, use the learn or evolve_essence tools to build them on the fly.';
 
       try {
-        const followUpInstruction = hasIncompleteResults
-          ? `You used these tools: ${toolResult.executedToolNames.join(', ')}. ${toolRoundHint} Call more tools to get the information you need.`
-          : `You used these tools: ${toolResult.executedToolNames.join(', ')}. ${toolRoundHint} Synthesize the results into a natural, helpful response to the user. Don't mention the tools by name unless the user asked about them.`;
+        const followUpInstruction = `Tools executed: ${toolResult.executedToolNames.join(', ')}. ${continuationHint}
+Tool results are above. NOW: call the next tool to continue working autonomously. Do NOT write a conversational response unless you are truly done with the task.`;
         const followUp = await this.callLLMWithRetry(
           followUpInstruction,
           systemContext,
