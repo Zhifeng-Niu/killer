@@ -2174,10 +2174,20 @@ export class KillerAgent {
 
       const hasErrors = currentResponse.includes('[Tool Error:') ||
         (currentResponse.includes('"success":false') && !currentResponse.includes('"success":true'));
+      const hitLimitation = currentResponse.includes('cannot') ||
+        currentResponse.includes('not available') ||
+        currentResponse.includes('not possible') ||
+        currentResponse.includes("don't have") ||
+        currentResponse.includes('unable to');
 
-      const continuationHint = hasErrors
-        ? 'Some tool calls failed. Try alternative approaches — different URLs, methods, or tools. Do NOT give up. Keep trying.'
-        : 'You are working autonomously. Continue calling tools to gather more information, process data, or complete sub-tasks. Only respond to the user when you have genuinely finished the work or have a meaningful result to share. If you need new capabilities, use the learn or evolve_essence tools to build them on the fly.';
+      let continuationHint: string;
+      if (hasErrors) {
+        continuationHint = 'Some tool calls failed. Try alternative approaches — different URLs, methods, or tools. Do NOT give up. Keep trying.';
+      } else if (hitLimitation) {
+        continuationHint = 'You seem to have hit a capability limitation. You can overcome this: use self_read to understand the relevant code, self_modify to add or change capabilities, learn to create new tools, or auto_mission to start a structured self-improvement experiment. Then continue your task with the new capability.';
+      } else {
+        continuationHint = 'You are working autonomously. Continue calling tools to complete the task. If you need new capabilities, use learn/evolve_essence to build them on the fly. If you spot a fundamental limitation in your own design, use self_read/self_modify to fix it.';
+      }
 
       try {
         const followUpInstruction = `Tools executed: ${toolResult.executedToolNames.join(', ')}. ${continuationHint}
