@@ -743,17 +743,54 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   const totalChars = parts.reduce((sum, p) => sum + p.length, 0);
 
   if (totalChars > MAX_PROMPT_CHARS) {
-    // 低优先级关键词 — 匹配到这些开头的 part 会被裁剪
-    const lowPriorityPrefixes = [
-      'You have ',           // memory stats
-      'META-COGNITION',      // self-awareness
-      'ATTENTION STATE',     // priority tracking
-      'LEARNED BEHAVIORS',   // experiment insights
-      'PRELOADED CONTEXT',   // predictive preloading
-      'DREAM INSIGHTS',      // dream learning
-      'TOOL PERFORMANCE',    // tool tracking
-      'RESPONSE STRATEGY',   // adaptive strategy
-    ];
+    // 根据对话阶段动态排序优先级（先裁剪的 = 低优先级）
+    const phase = deps.conversationalPhase?.phase ?? 'exploration';
+    const phasePriorityOrder: Record<string, string[]> = {
+      'deep-work': [
+        'You have ',           // memory stats — least useful in focused work
+        'DREAM INSIGHTS',      // dream learning
+        'META-COGNITION',      // self-awareness
+        'RESPONSE STRATEGY',   // adaptive strategy
+        'ATTENTION STATE',     // priority tracking
+        'PRELOADED CONTEXT',   // predictive preloading
+        'TOOL PERFORMANCE',    // tool tracking
+        'LEARNED BEHAVIORS',   // experiment insights
+      ],
+      'exploration': [
+        'You have ',
+        'TOOL PERFORMANCE',
+        'TOOL FAILURE PATTERNS',
+        'DREAM INSIGHTS',
+        'META-COGNITION',
+        'ATTENTION STATE',
+        'RESPONSE STRATEGY',
+        'PRELOADED CONTEXT',
+        'LEARNED BEHAVIORS',   // keep behaviors in exploration
+      ],
+      'wrap-up': [
+        'You have ',
+        'DREAM INSIGHTS',
+        'META-COGNITION',
+        'ATTENTION STATE',
+        'RESPONSE STRATEGY',
+        'PRELOADED CONTEXT',
+        'TOOL FAILURE PATTERNS',
+        'TOOL PERFORMANCE',
+        'LEARNED BEHAVIORS',
+      ],
+      'review': [
+        'You have ',
+        'DREAM INSIGHTS',
+        'ATTENTION STATE',
+        'RESPONSE STRATEGY',
+        'PRELOADED CONTEXT',
+        'META-COGNITION',
+        'TOOL FAILURE PATTERNS',
+        'LEARNED BEHAVIORS',
+        'TOOL PERFORMANCE',
+      ],
+    };
+    const lowPriorityPrefixes = phasePriorityOrder[phase] ?? phasePriorityOrder['exploration']!;
 
     // 从低优先级 section 开始裁剪，直到满足预算
     for (const prefix of lowPriorityPrefixes) {
