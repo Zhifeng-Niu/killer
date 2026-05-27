@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -2572,6 +2572,9 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           // 自适应策略追踪 — 评估上一轮策略效果
           this.updateStrategyEffectiveness(innerCtx.input, estimatedSatisfaction);
 
+          // 回复质量自评 — 基于多维评分修正策略
+          this.evaluateAndAdjustQuality(innerCtx.input, response);
+
           // 4. 存储 episodic memory
           this.hippocampus.storeEpisode({
             title: innerCtx.input.slice(0, 50),
@@ -3184,6 +3187,43 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       profile.strategyScores = scores;
     } catch {
       // 策略追踪失败不影响主循环
+    }
+  }
+
+  /**
+   * 回复质量自评 — 基于多维评分修正策略
+   * 高质量回复强化当前策略，低质量回复微调方向
+   */
+  private evaluateAndAdjustQuality(userInput: string, agentResponse: string): void {
+    try {
+      const score = evaluateResponseQuality(userInput, agentResponse);
+
+      // 只在有明显信号时调整（overall 偏离 0.5 超过 0.15）
+      if (Math.abs(score.overall - 0.5) < 0.15) return;
+
+      const profile = this.persona.getUserModel().preferenceProfile;
+      const scores = profile.strategyScores;
+      if (!scores || scores.sampleCount < 3) return;
+
+      const alpha = 0.1; // 质量信号权重较低，缓慢调整
+      const qualitySignal = score.overall > 0.6 ? 0.05 : -0.05;
+
+      // 冗长但低质量 → 偏向简洁
+      if (score.tags.includes('verbose') || score.tags.includes('over-explained')) {
+        scores.detailVsConcise = Math.max(0, scores.detailVsConcise - 0.05);
+      }
+      // 高可操作性 → 保持当前策略
+      if (score.actionability > 0.7) {
+        scores.detailVsConcise = Math.min(1, scores.detailVsConcise + qualitySignal);
+      }
+      // 低相关性 → 偏向直觉式（可能过度分析导致跑题）
+      if (score.relevance < 0.3) {
+        scores.analyticalVsIntuitive = Math.max(0, scores.analyticalVsIntuitive - 0.05);
+      }
+
+      profile.strategyScores = scores;
+    } catch {
+      // 质量评估失败不影响主循环
     }
   }
 
