@@ -39,6 +39,8 @@ import {
   suggestToolPriority,
   monitorConversationHealth,
   decideAutonomousActions,
+  classifyInteractionOutcome,
+  suggestStrategyAdjustment,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -1823,6 +1825,122 @@ describe('background-tasks', () => {
         const urgencyOrder = { high: 0, medium: 1, low: 2 };
         expect(urgencyOrder[actions[0].urgency]).toBeLessThanOrEqual(urgencyOrder[actions[1].urgency]);
       }
+    });
+  });
+
+  describe('classifyInteractionOutcome', () => {
+    it('should detect frustration', () => {
+      const result = classifyInteractionOutcome(
+        'You can fix this by running npm install',
+        '不对，还是不行，你说的方法没有用',
+        ['npm', 'install'],
+      );
+      expect(result.outcome).toBe('frustration');
+      expect(result.confidence).toBeGreaterThan(0.7);
+    });
+
+    it('should detect repeated question via similarity', () => {
+      const result = classifyInteractionOutcome(
+        'The React useEffect hook runs after render to handle side effects',
+        'useEffect hook in React runs after render for side effects?',
+        ['react', 'hooks'],
+      );
+      expect(result.outcome).toBe('repeated_question');
+    });
+
+    it('should detect clarification request', () => {
+      const result = classifyInteractionOutcome(
+        'Set the cache TTL to 3600 seconds',
+        '什么意思？能详细解释一下吗？',
+        ['cache'],
+      );
+      expect(result.outcome).toBe('clarification_needed');
+    });
+
+    it('should detect topic abandonment', () => {
+      const result = classifyInteractionOutcome(
+        'The database migration script has completed successfully',
+        'Let\'s talk about something completely different — vacation plans',
+        ['database migration', 'vacation plans'],
+      );
+      expect(result.outcome).toBe('topic_abandoned');
+    });
+
+    it('should detect success via satisfaction', () => {
+      const result = classifyInteractionOutcome(
+        'I\'ve fixed the bug by updating the config',
+        '完美，解决了！谢谢',
+        ['bugs', 'config'],
+      );
+      expect(result.outcome).toBe('success');
+    });
+
+    it('should detect success via follow-up', () => {
+      const result = classifyInteractionOutcome(
+        'The API returns a JSON response with status code 200',
+        'And what about error responses? How does it handle 404?',
+        ['api'],
+      );
+      expect(result.outcome).toBe('success');
+    });
+
+    it('should return unknown for ambiguous input', () => {
+      const result = classifyInteractionOutcome(
+        'Here is some information about the topic',
+        'so the next thing I wanted to mention',
+        ['topic'],
+      );
+      expect(result.outcome).toBe('unknown');
+    });
+
+    it('should handle empty messages', () => {
+      const result = classifyInteractionOutcome('', '', []);
+      expect(result.outcome).toBe('unknown');
+    });
+  });
+
+  describe('suggestStrategyAdjustment', () => {
+    it('should suggest more detail on frustration', () => {
+      const adjustment = suggestStrategyAdjustment({
+        outcome: 'frustration',
+        confidence: 0.8,
+        reason: 'test',
+        context: { flowPattern: '', phase: '', strategyUsed: '' },
+      });
+      expect(adjustment).not.toBeNull();
+      expect(adjustment!.dimension).toBe('detailVsConcise');
+      expect(adjustment!.direction).toBe('increase');
+    });
+
+    it('should suggest more analytical on repeated question', () => {
+      const adjustment = suggestStrategyAdjustment({
+        outcome: 'repeated_question',
+        confidence: 0.7,
+        reason: 'test',
+        context: { flowPattern: '', phase: '', strategyUsed: '' },
+      });
+      expect(adjustment).not.toBeNull();
+      expect(adjustment!.dimension).toBe('analyticalVsIntuitive');
+    });
+
+    it('should return null on success', () => {
+      const adjustment = suggestStrategyAdjustment({
+        outcome: 'success',
+        confidence: 0.8,
+        reason: 'test',
+        context: { flowPattern: '', phase: '', strategyUsed: '' },
+      });
+      expect(adjustment).toBeNull();
+    });
+
+    it('should return null on unknown', () => {
+      const adjustment = suggestStrategyAdjustment({
+        outcome: 'unknown',
+        confidence: 0.3,
+        reason: 'test',
+        context: { flowPattern: '', phase: '', strategyUsed: '' },
+      });
+      expect(adjustment).toBeNull();
     });
   });
 });

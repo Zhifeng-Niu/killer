@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -2466,6 +2466,22 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     this.previousInteractionTimestamp = this.lastInteractionTimestamp;
     this.lastActivityAt = Date.now();
     this.lastInteractionTimestamp = Date.now();
+
+    // 交互结果跟踪 — 分析上一轮回复的实际效果
+    const lastAssistant = this.conversationHistory.filter(m => m.role === 'assistant').slice(-1)[0];
+    if (lastAssistant) {
+      const outcome = classifyInteractionOutcome(lastAssistant.content, content, this.recentTopics);
+      if (outcome.outcome !== 'unknown') {
+        const adjustment = suggestStrategyAdjustment(outcome);
+        if (adjustment) {
+          const profile = this.persona.getUserModel().preferenceProfile;
+          const scores = profile.strategyScores ?? { detailVsConcise: 0.5, analyticalVsIntuitive: 0.5, proactiveVsReactive: 0.5, sampleCount: 0 };
+          const key = adjustment.dimension;
+          const delta = adjustment.direction === 'increase' ? adjustment.magnitude : -adjustment.magnitude;
+          profile.strategyScores = { ...scores, [key]: Math.max(0, Math.min(1, scores[key] + delta)) };
+        }
+      }
+    }
 
     // 检测用户消息中的承诺/计划/待办（用于后续提醒）
     detectCommitments(content);

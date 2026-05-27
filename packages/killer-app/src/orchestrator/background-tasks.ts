@@ -2661,3 +2661,122 @@ export function decideAutonomousActions(context: {
   // 最多返回 3 个行动
   return actions.slice(0, 3);
 }
+
+/**
+ * 交互结果类型
+ */
+export type InteractionOutcome = 'success' | 'clarification_needed' | 'repeated_question' | 'topic_abandoned' | 'frustration' | 'unknown';
+
+export interface OutcomeRecord {
+  outcome: InteractionOutcome;
+  confidence: number;
+  reason: string;
+  context: {
+    flowPattern: string;
+    phase: string;
+    strategyUsed: string;
+  };
+}
+
+/**
+ * 基于用户对上一条回复的反应判断交互结果
+ *
+ * 通过分析用户下一条消息与上一条的关系来判断：
+ * - success: 用户继续深入、表达满意、切换到新话题（说明问题已解决）
+ * - clarification_needed: 用户追问细节、要求解释更多
+ * - repeated_question: 用户换种方式问同样的问题（说明回复没解决）
+ * - topic_abandoned: 用户完全切换话题（可能是对回复不满意）
+ * - frustration: 用户表达不满
+ */
+export function classifyInteractionOutcome(
+  assistantMessage: string,
+  nextUserMessage: string,
+  recentTopics: string[],
+): OutcomeRecord {
+  if (!assistantMessage || !nextUserMessage) {
+    return { outcome: 'unknown', confidence: 0, reason: 'Missing messages', context: { flowPattern: '', phase: '', strategyUsed: '' } };
+  }
+
+  const userLower = nextUserMessage.toLowerCase();
+  const assistantLower = assistantMessage.toLowerCase();
+
+  // 1. Frustration detection
+  const frustrationPatterns = /不对|错了|不是这样|doesn't work|that's wrong|no that's not|still broken|还是不行|没解决|废话|unhelpful|useless/i;
+  if (frustrationPatterns.test(userLower)) {
+    return { outcome: 'frustration', confidence: 0.85, reason: 'User expressed frustration with previous response', context: { flowPattern: '', phase: '', strategyUsed: '' } };
+  }
+
+  // 2. Repeated question — trigram Jaccard similarity
+  const assistantTrigrams = extractTrigrams(assistantMessage);
+  const userTrigrams = extractTrigrams(nextUserMessage);
+  const overlap = setJaccard(assistantTrigrams, userTrigrams);
+
+  // If user message is very similar to previous assistant, they might be repeating
+  // But if user asks "what about X" that's follow-up, not repeat
+  const isFollowUp = /what about|how about|还有|另外|also|and then|what if|能不能|还可以|继续/i.test(userLower);
+  const isQuestion = /\?|？|怎么|如何|why|how|what|where|when/i.test(userLower);
+
+  if (overlap > 0.4 && !isFollowUp && isQuestion) {
+    return { outcome: 'repeated_question', confidence: Math.min(0.9, overlap), reason: `User repeated similar question (similarity: ${overlap.toFixed(2)})`, context: { flowPattern: '', phase: '', strategyUsed: '' } };
+  }
+
+  // 3. Clarification needed — user asks about something mentioned in assistant's reply
+  const clarificationPatterns = /什么意思|explain|详细|more detail|详细说说|能不能解释|what do you mean|clarify|expand|展开/i;
+  if (clarificationPatterns.test(userLower)) {
+    return { outcome: 'clarification_needed', confidence: 0.8, reason: 'User asked for clarification on previous response', context: { flowPattern: '', phase: '', strategyUsed: '' } };
+  }
+
+  // 4. Success — user continues naturally (follow-up, new sub-question, satisfaction)
+  const successPatterns = /thanks|谢谢|got it|明白了|perfect|好的|ok|great|nice|exactly|对|没错|correct|works|搞定|解决了|done|完美/i;
+  if (successPatterns.test(userLower)) {
+    return { outcome: 'success', confidence: 0.85, reason: 'User expressed satisfaction or acknowledgment', context: { flowPattern: '', phase: '', strategyUsed: '' } };
+  }
+
+  // 5. Topic abandoned — user switches to completely unrelated topic (after success check)
+  if (recentTopics.length >= 2) {
+    const currentTopic = recentTopics[recentTopics.length - 1];
+    const prevTopic = recentTopics[recentTopics.length - 2];
+    const topicPatterns = extractTrigrams(currentTopic);
+    const prevPatterns = extractTrigrams(prevTopic);
+    const topicSimilarity = setJaccard(topicPatterns, prevPatterns);
+
+    if (topicSimilarity < 0.15 && !isFollowUp) {
+      return { outcome: 'topic_abandoned', confidence: 0.7, reason: `User switched topic (similarity: ${topicSimilarity.toFixed(2)})`, context: { flowPattern: '', phase: '', strategyUsed: '' } };
+    }
+  }
+
+  // Default: if user continues with a question on same topic, it's success (continuing the conversation)
+  if (isQuestion && isFollowUp) {
+    return { outcome: 'success', confidence: 0.6, reason: 'User continued with follow-up question', context: { flowPattern: '', phase: '', strategyUsed: '' } };
+  }
+
+  // Default: unknown
+  return { outcome: 'unknown', confidence: 0.3, reason: 'Unable to classify interaction outcome', context: { flowPattern: '', phase: '', strategyUsed: '' } };
+}
+
+/**
+ * 基于交互结果历史调整策略建议
+ */
+export interface StrategyAdjustment {
+  dimension: 'detailVsConcise' | 'analyticalVsIntuitive' | 'proactiveVsReactive';
+  direction: 'increase' | 'decrease';
+  magnitude: number;
+  reason: string;
+}
+
+export function suggestStrategyAdjustment(outcome: OutcomeRecord): StrategyAdjustment | null {
+  switch (outcome.outcome) {
+    case 'frustration':
+      return { dimension: 'detailVsConcise', direction: 'increase', magnitude: 0.15, reason: 'User frustrated — provide more detailed, clearer responses' };
+    case 'repeated_question':
+      return { dimension: 'analyticalVsIntuitive', direction: 'increase', magnitude: 0.1, reason: 'Question repeated — try more analytical approach' };
+    case 'clarification_needed':
+      return { dimension: 'detailVsConcise', direction: 'increase', magnitude: 0.1, reason: 'User needed clarification — increase detail level' };
+    case 'topic_abandoned':
+      return { dimension: 'proactiveVsReactive', direction: 'increase', magnitude: 0.1, reason: 'Topic abandoned — be more proactive in engagement' };
+    case 'success':
+      return null; // No adjustment needed for success
+    default:
+      return null;
+  }
+}
