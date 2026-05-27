@@ -268,6 +268,33 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   }
   } // end if (userProfile)
 
+  // === 预测性记忆预加载 ===
+  // 高置信度预测需求 → 主动检索相关记忆（不需要当前输入提及）
+  if (userProfile) {
+    const veryHighConfNeeds = userProfile.predictedNeeds.filter(n => n.confidence > 0.7);
+    if (veryHighConfNeeds.length > 0) {
+      const preloadedMemories: string[] = [];
+      for (const need of veryHighConfNeeds.slice(0, 2)) {
+        const keywords = need.description.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+        if (keywords.length > 0) {
+          const recentEpisodes = deps.hippocampus.getRecentEpisodes(10);
+          const relevant = recentEpisodes.find(ep =>
+            keywords.some(kw => ep.title.toLowerCase().includes(kw) || ep.narrative.toLowerCase().includes(kw))
+          );
+          if (relevant) {
+            preloadedMemories.push(`Related to "${need.description}": ${relevant.title} — ${relevant.narrative.slice(0, 100)}`);
+          }
+        }
+      }
+      if (preloadedMemories.length > 0) {
+        parts.push('\nPRELOADED CONTEXT — Memories relevant to anticipated user needs:');
+        for (const mem of preloadedMemories) {
+          parts.push(`  • ${mem}`);
+        }
+      }
+    }
+  }
+
   // === 梦境学习成果 ===
   if (deps.lastDreamInsights && deps.lastDreamInsights.length > 0) {
     parts.push('\nDREAM INSIGHTS — While you were resting, your subconscious noticed:');
