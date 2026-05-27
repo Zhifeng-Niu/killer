@@ -105,3 +105,11 @@ export {
 export type {
   SelfModifyDeps,
 } from './self-modify-tools.js';
+
+// Auto-mission — agent creates autonomous self-improvement missions
+export {
+  AutoMissionTool,
+} from './auto-mission-tool.js';
+export type {
+  AutoMissionDeps,
+} from './auto-mission-tool.js';

@@ -50,6 +50,7 @@ import {
   SelfModifyTool,
   SelfListTool,
   Cerebellum,
+  AutoMissionTool,
 } from '@killer/core';
 import { SensoryRouter, CLIChannel, OutputManager } from '../sensory/index.js';
 import { WebhookChannel } from '../sensory/webhook/index.js';
@@ -963,6 +964,13 @@ export class KillerAgent {
 
     // Cerebellum — 实验编排器（自主迭代引擎）
     this.cerebellum = new Cerebellum();
+    this.tools.register(new AutoMissionTool({
+      cerebellum: this.cerebellum,
+      onMissionCreated: (goal: string, missionId: string) => {
+        this.logger.info(`AutoMission: created mission "${goal.slice(0, 60)}" (${missionId})`);
+        this.hooks.emit('goal:created', { goal, missionId });
+      },
+    }));
   }
 
   /**
