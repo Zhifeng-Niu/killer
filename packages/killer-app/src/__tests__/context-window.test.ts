@@ -340,4 +340,46 @@ describe('ContextWindowManager', () => {
       // phase is set per-turn by the agent, so reset doesn't need to touch it
     });
   });
+
+  describe('importance-weighted retention', () => {
+    it('should preserve important older messages during overflow', () => {
+      // maxFullTurns=3 means 6 messages kept as recent
+      const messages: ContextMessage[] = [
+        msg('system', 'You are helpful'),
+        msg('user', 'We decided to implement caching with error rate 5%, latency 2000ms, v2.1 — this is critical'),
+        msg('assistant', 'Understood, implementing the cache'),
+        msg('user', 'Message 2'),
+        msg('assistant', 'Response 2'),
+        msg('user', 'Message 3'),
+        msg('assistant', 'Response 3'),
+        msg('user', 'Message 4'),
+        msg('assistant', 'Response 4'),
+        msg('user', 'Message 5'),
+        msg('assistant', 'Response 5'),
+      ];
+
+      const result = manager.manage(messages);
+      expect(result.some(m => m.content.includes('Important earlier context'))).toBe(true);
+      expect(result.some(m => m.content.includes('caching'))).toBe(true);
+    });
+
+    it('should not include important context section when all old messages are low importance', () => {
+      const messages: ContextMessage[] = [
+        msg('system', 'You are helpful'),
+        msg('user', 'Hello there'),
+        msg('assistant', 'Hi'),
+        msg('user', 'Message 2'),
+        msg('assistant', 'Response 2'),
+        msg('user', 'Message 3'),
+        msg('assistant', 'Response 3'),
+        msg('user', 'Message 4'),
+        msg('assistant', 'Response 4'),
+        msg('user', 'Message 5'),
+        msg('assistant', 'Response 5'),
+      ];
+
+      const result = manager.manage(messages);
+      expect(result.some(m => m.content.includes('Important earlier context'))).toBe(false);
+    });
+  });
 });

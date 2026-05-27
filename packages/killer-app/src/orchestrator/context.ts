@@ -12,6 +12,7 @@
  */
 
 import type { LLMProvider } from '@killer/core';
+import { scoreTurnImportance } from './background-tasks.js';
 
 /**
  * 对话消息
@@ -160,16 +161,28 @@ export class ContextWindowManager {
       // 未超出限制 — 保留全部（截断单条）
       result.push(...conversationMessages.map(m => this.truncateMessage(m)));
     } else {
-      // 超出限制 — 保留最近 N 轮完整 + 摘要前半部分
+      // 超出限制 — 保留最近 N 轮 + 高重要性旧轮次 + 摘要其余
       const splitPoint = conversationMessages.length - this.config.maxFullTurns * 2;
       const older = conversationMessages.slice(0, splitPoint);
       const recent = conversationMessages.slice(splitPoint);
 
-      // 摘要旧消息（同步：使用已有的摘要，或简单回退）
-      this.updateSummaryFallback(older);
+      // 从旧消息中提取高重要性轮次 (importance > 0.6)
+      const importantOlder: ContextMessage[] = [];
+      const lowImportanceOlder: ContextMessage[] = [];
+      for (const msg of older) {
+        const score = scoreTurnImportance(msg.role, msg.content);
+        if (score.importance > 0.6) {
+          importantOlder.push(msg);
+        } else {
+          lowImportanceOlder.push(msg);
+        }
+      }
+
+      // 摘要低重要性旧消息
+      this.updateSummaryFallback(lowImportanceOlder);
 
       // 触发异步 LLM 摘要（下次 manage 调用时使用）
-      this.backgroundSummarize(older).catch(() => {});
+      this.backgroundSummarize(lowImportanceOlder).catch(() => {});
 
       // 插入摘要作为 system 消息
       if (this.summary) {
@@ -184,6 +197,14 @@ export class ContextWindowManager {
         result.push({
           role: 'system',
           content: `[Key facts]\n${this.facts.map((f, i) => `${i + 1}. ${f}`).join('\n')}`,
+        });
+      }
+
+      // 插入高重要性旧消息（保留关键决策和事实）
+      if (importantOlder.length > 0) {
+        result.push({
+          role: 'system',
+          content: `[Important earlier context]\n${importantOlder.slice(0, 4).map(m => `${m.role}: ${m.content.slice(0, 300)}`).join('\n')}`,
         });
       }
 
