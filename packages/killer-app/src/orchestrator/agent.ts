@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -174,6 +174,7 @@ export class KillerAgent {
   private recentTopics: string[] = [];
   private lastInteractionTimestamp: number | null = null;
   private previousInteractionTimestamp: number | null = null;
+  private lengthPreference = createDefaultLengthPreference();
 
   // 注意力优先级状态
   private lastAttentionState: import('./background-tasks.js').AttentionState | null = null;
@@ -2575,6 +2576,13 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           // 回复质量自评 — 基于多维评分修正策略
           this.evaluateAndAdjustQuality(innerCtx.input, response);
 
+          // 自适应长度偏好追踪
+          const lastResponseLen = response.length;
+          const lengthSignal = detectLengthSignal(innerCtx.input, lastResponseLen);
+          if (lengthSignal !== 'neutral') {
+            this.lengthPreference = updateLengthPreference(this.lengthPreference, lengthSignal);
+          }
+
           // 4. 存储 episodic memory
           this.hippocampus.storeEpisode({
             title: innerCtx.input.slice(0, 50),
@@ -3431,6 +3439,9 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         }
         return lines.join('. ');
       })(),
+      lengthPreference: Math.abs(this.lengthPreference.score - 0.5) > 0.15
+        ? `${this.lengthPreference.recommendation} (target ~${this.lengthPreference.suggestedMaxLength} chars)`
+        : undefined,
     });
   }
 

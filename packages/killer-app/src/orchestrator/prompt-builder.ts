@@ -75,6 +75,8 @@ export interface PromptBuilderDeps {
   temporalContext?: string;
   /** 对话流程预测 */
   flowPrediction?: string;
+  /** 自适应长度偏好 */
+  lengthPreference?: string;
 }
 
 /**
@@ -249,6 +251,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 对话流程预测 ===
   if (deps.flowPrediction) {
     parts.push(`\nCONVERSATION FLOW — ${deps.flowPrediction}`);
+  }
+
+  // === 自适应长度偏好 ===
+  if (deps.lengthPreference) {
+    parts.push(`\nLENGTH PREFERENCE — ${deps.lengthPreference}`);
   }
 
   // === 生命叙事 ===
