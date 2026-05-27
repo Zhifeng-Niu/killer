@@ -12,7 +12,7 @@
 
 export * from './types.js';
 export type { CommandExecutor, CommandResult } from './command-executor.js';
-export { Cerebellum } from './cerebellum.js';
+export { Cerebellum, type ExperimentFeedbackCallback } from './cerebellum.js';
 export { Compass } from './compass.js';
 export { Evaluator } from './evaluator.js';
 export { ExperimentTracker } from './experiment-tracker.js';

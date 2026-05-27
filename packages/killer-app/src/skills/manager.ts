@@ -64,6 +64,11 @@ export class SkillManager {
 
     const skill = this.ecosystem.generate(coreConfig);
 
+    // 如果提供了自定义提示词，覆盖生成的 prompt
+    if (config.customPrompt) {
+      return { ...skill, prompt: config.customPrompt };
+    }
+
     const meta: SkillEcosystemMetadata = {
       coreSkill: {
         id: skill.id,

@@ -91,6 +91,11 @@ export interface SkillGenerationConfig {
    * 父 Skill IDs（用于进化/融合）
    */
   parentIds?: string[];
+
+  /**
+   * 自定义提示词（用于从外部反馈生成技能）
+   */
+  customPrompt?: string;
 }
 
 /**

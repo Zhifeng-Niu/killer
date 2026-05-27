@@ -35,20 +35,31 @@ import { ExperimentTracker } from './experiment-tracker.js';
  * // Cerebellum 自动接管循环
  * ```
  */
+/**
+ * 实验结果反馈回调 — 用于将成功的实验发现反馈到进化系统
+ */
+export type ExperimentFeedbackCallback = (
+  experiment: Experiment,
+  decision: ExperimentDecision,
+  lessons: string[],
+) => void;
+
 export class Cerebellum {
   private readonly compass: Compass;
   private readonly tracker: ExperimentTracker;
   private readonly evaluators: Map<string, Evaluator> = new Map();
   private readonly executor: CommandExecutor | null;
+  private readonly onExperimentComplete?: ExperimentFeedbackCallback;
 
   private activeMission: Mission | null = null;
   private activeExperiment: Experiment | null = null;
   private waypointCounter: number = 0;
 
-  constructor(executor?: CommandExecutor) {
+  constructor(executor?: CommandExecutor, onExperimentComplete?: ExperimentFeedbackCallback) {
     this.compass = new Compass();
     this.tracker = new ExperimentTracker();
     this.executor = executor ?? null;
+    this.onExperimentComplete = onExperimentComplete;
   }
 
   // ── Mission Management ──
@@ -264,6 +275,12 @@ export class Cerebellum {
     const surprise = this.detectSurprise(experiment, verification);
     if (surprise) {
       this.tracker.recordSurprise(surprise);
+    }
+
+    // 反馈成功的实验结果（kept 或 surprise）
+    if (decision !== 'discard' && this.onExperimentComplete) {
+      const lessons = experiment.result?.lessonsLearned ?? [];
+      this.onExperimentComplete(experiment, decision, lessons);
     }
   }
 

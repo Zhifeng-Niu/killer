@@ -55,6 +55,7 @@ export type EventType =
   | 'evolution.fusion'
   | 'evolution.fitness_recorded'
   | 'evolution.auto'
+  | 'skill.learned'
   // Synapse 事件
   | 'synapse.message_sent'
   | 'synapse.message_received'

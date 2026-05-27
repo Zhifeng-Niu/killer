@@ -51,6 +51,8 @@ import {
   SelfListTool,
   Cerebellum,
   AutoMissionTool,
+  type Experiment,
+  type ExperimentDecision,
   type ToolDefinition,
   type ChatMessage,
   type ToolCall,
@@ -994,7 +996,9 @@ Examples:
 
     // Cerebellum — 实验编排器（自主迭代引擎）+ ShellExecutor 使验证管线能真正执行命令
     const shellExecutor = new ShellExecutor(projectRoot);
-    this.cerebellum = new Cerebellum(shellExecutor);
+    this.cerebellum = new Cerebellum(shellExecutor, (experiment, decision, lessons) => {
+      this.onExperimentComplete(experiment, decision, lessons);
+    });
     this.tools.register(new AutoMissionTool({
       cerebellum: this.cerebellum,
       onMissionCreated: (goal: string, missionId: string) => {
@@ -1081,13 +1085,24 @@ Examples:
 
     const { planId, step } = nextStep;
 
-    // 评估风险
+    // 评估风险（情绪状态调制风险承受度）
     const riskAssessment = this.riskAssessor.assess({
       type: step.action?.type ?? 'default',
       payload: step.action?.payload,
     });
 
-    if (riskAssessment.overallScore > this.prefrontalConfig.riskTolerance) {
+    // 高唤醒度（紧张/焦虑）降低风险承受度
+    let effectiveTolerance = this.prefrontalConfig.riskTolerance;
+    if (this.persona) {
+      const emotionalState = this.persona.emotionalState.exportState();
+      const arousal = emotionalState.current?.arousal ?? 0;
+      if (arousal > 0.7) {
+        effectiveTolerance *= 0.6;
+        this.logger.info(`Risk tolerance reduced due to high arousal (${arousal.toFixed(2)})`);
+      }
+    }
+
+    if (riskAssessment.overallScore > effectiveTolerance) {
       this.outputManager.sendError(
         `Plan step blocked due to high risk: "${step.description}"\n` +
         `Risk: ${riskAssessment.level} (${(riskAssessment.overallScore * 100).toFixed(0)}%)`
@@ -1180,6 +1195,57 @@ What alternative approach should we try? One sentence only.`;
     } catch {
       // Experiment trigger should never disrupt main flow
     }
+  }
+
+  /**
+   * 实验完成回调 — 将成功实验提炼为 Cortex 技能
+   *
+   * 闭环：Cerebellum 实验 → Cortex 技能进化
+   * 只有 kept/surprise 的实验才值得学习
+   */
+  private onExperimentComplete(
+    experiment: Experiment,
+    decision: ExperimentDecision,
+    lessons: string[],
+  ): void {
+    if (lessons.length === 0) return;
+
+    const label = decision === 'surprise' ? 'surprise' : 'kept';
+    this.logger.info(`Cerebellum ${label}: ${experiment.hypothesis.slice(0, 60)} — ${lessons.length} lessons`);
+
+    // 将实验发现转化为 Cortex 技能提示
+    const skillPrompt = [
+      `Experiment: ${experiment.hypothesis}`,
+      `Approach that worked (${decision}):`,
+      ...lessons.map(l => `- ${l}`),
+    ].join('\n');
+
+    // 通过 SkillManager 将实验发现提炼为新技能或改进现有技能
+    if (this.skillManager) {
+      try {
+        this.skillManager.generate({
+          targetDomain: 'experiment-derived',
+          strategy: 'from_scratch',
+          constraints: [{ type: 'max_tokens', value: 500 }],
+          customPrompt: skillPrompt,
+        });
+        this.logger.info(`Cortex: created skill from Cerebellum ${label} experiment`);
+      } catch {
+        // Skill generation failure should not disrupt
+      }
+    }
+
+    // 发出意识事件 — 技能从实验中学习
+    this.consciousness.emit({
+      type: 'skill.learned',
+      source: 'cortex',
+      data: {
+        origin: 'cerebellum',
+        hypothesis: experiment.hypothesis,
+        lessons,
+        prompt: skillPrompt,
+      },
+    });
   }
 
   /**
