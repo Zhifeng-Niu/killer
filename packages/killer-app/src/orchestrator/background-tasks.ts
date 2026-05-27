@@ -3248,3 +3248,84 @@ export function buildUserExpertiseProfile(
 
   return { domains, terminologyHint, explanationHint };
 }
+
+/**
+ * 情感-响应策略建议
+ */
+export interface EmotionalResponseStrategy {
+  /** 情感驱动的语气建议 */
+  toneHint: string;
+  /** 情感驱动的响应长度建议 */
+  lengthHint: string;
+  /** 情感驱动的共情建议 */
+  empathyAction: string;
+}
+
+/**
+ * 将情感状态映射为响应策略
+ *
+ * 基于 valence（效价）和 arousal（唤醒度）二维空间，
+ * 推导 agent 应采用的语气、长度和共情行为。
+ * 高唤醒+负效价 → 耐心详细；高唤醒+正效价 → 简洁积极；
+ * 低唤醒 → 平衡温和。
+ */
+export function mapEmotionToResponseStrategy(context: {
+  valence: number;
+  arousal: number;
+  intensity: number;
+  primaryEmotion: string;
+}): EmotionalResponseStrategy {
+  const { valence, arousal, intensity } = context;
+
+  // 高强度负效价 → 用户可能挫败/焦虑
+  if (valence < -0.3 && intensity > 0.4) {
+    return {
+      toneHint: 'Patient, reassuring, and supportive.',
+      lengthHint: 'Provide thorough step-by-step explanations. Avoid jargon unless user expertise suggests otherwise.',
+      empathyAction: 'Acknowledge the difficulty before proposing solutions. Validate their frustration.',
+    };
+  }
+
+  // 高唤醒+正效价 → 用户兴奋/高兴
+  if (valence > 0.3 && arousal > 0.3 && intensity > 0.4) {
+    return {
+      toneHint: 'Enthusiastic and energetic. Match their positive energy.',
+      lengthHint: 'Keep it concise and action-oriented. They want to move fast.',
+      empathyAction: 'Celebrate the positive moment briefly, then focus on next steps.',
+    };
+  }
+
+  // 高唤醒+低效价 → 用户愤怒/急躁
+  if (arousal > 0.5 && valence < 0.1 && intensity > 0.3) {
+    return {
+      toneHint: 'Calm, professional, and solution-focused.',
+      lengthHint: 'Be direct and actionable. Minimize pleasantries, maximize solutions.',
+      empathyAction: 'Address the urgency directly. "Let me help you fix this right away."',
+    };
+  }
+
+  // 低唤醒+负效价 → 用户低落/疲惫
+  if (arousal < -0.1 && valence < -0.2 && intensity > 0.3) {
+    return {
+      toneHint: 'Warm, gentle, and encouraging.',
+      lengthHint: 'Offer concise, clear guidance. Do not overwhelm with details.',
+      empathyAction: 'Show care. Offer to handle more of the cognitive load.',
+    };
+  }
+
+  // 低唤醒 → 平静状态
+  if (arousal < 0.1) {
+    return {
+      toneHint: 'Balanced and thoughtful.',
+      lengthHint: 'Moderate detail. Match the calm pace.',
+      empathyAction: 'Be present and reliable. No special action needed.',
+    };
+  }
+
+  // 默认
+  return {
+    toneHint: 'Natural and responsive.',
+    lengthHint: 'Adapt to the context and question.',
+    empathyAction: 'Be attentive to emotional cues.',
+  };
+}

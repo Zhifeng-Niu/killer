@@ -47,6 +47,7 @@ import {
   generateIntentPreloads,
   analyzeConversationRhythm,
   buildUserExpertiseProfile,
+  mapEmotionToResponseStrategy,
   AUTO_DREAM_INTERVAL,
   AUTO_EVOLVE_INTERVAL,
   AUTO_PROACTIVE_INTERVAL,
@@ -2258,6 +2259,54 @@ describe('background-tasks', () => {
           profile.domains[1].evidenceCount,
         );
       }
+    });
+  });
+
+  describe('mapEmotionToResponseStrategy', () => {
+    it('should suggest patience for high-intensity negative valence', () => {
+      const strategy = mapEmotionToResponseStrategy({
+        valence: -0.5, arousal: 0.2, intensity: 0.6, primaryEmotion: 'sadness',
+      });
+      expect(strategy.toneHint).toContain('Patient');
+      expect(strategy.empathyAction).toContain('Acknowledge');
+    });
+
+    it('should suggest enthusiasm for positive valence high arousal', () => {
+      const strategy = mapEmotionToResponseStrategy({
+        valence: 0.6, arousal: 0.5, intensity: 0.7, primaryEmotion: 'joy',
+      });
+      expect(strategy.toneHint).toContain('Enthusiastic');
+      expect(strategy.lengthHint).toContain('concise');
+    });
+
+    it('should suggest calm directness for high arousal low valence', () => {
+      const strategy = mapEmotionToResponseStrategy({
+        valence: -0.1, arousal: 0.7, intensity: 0.5, primaryEmotion: 'anger',
+      });
+      expect(strategy.toneHint).toContain('Calm');
+      expect(strategy.empathyAction).toContain('urgency');
+    });
+
+    it('should suggest warmth for low arousal negative valence', () => {
+      const strategy = mapEmotionToResponseStrategy({
+        valence: -0.25, arousal: -0.2, intensity: 0.5, primaryEmotion: 'sadness',
+      });
+      expect(strategy.toneHint).toContain('Warm');
+      expect(strategy.empathyAction).toContain('care');
+    });
+
+    it('should suggest balanced tone for low arousal calm state', () => {
+      const strategy = mapEmotionToResponseStrategy({
+        valence: 0.0, arousal: -0.2, intensity: 0.2, primaryEmotion: 'neutral',
+      });
+      expect(strategy.toneHint).toContain('Balanced');
+    });
+
+    it('should return natural defaults for neutral state', () => {
+      const strategy = mapEmotionToResponseStrategy({
+        valence: 0.1, arousal: 0.2, intensity: 0.1, primaryEmotion: 'neutral',
+      });
+      expect(strategy.toneHint).toContain('Natural');
     });
   });
 });

@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -3464,6 +3464,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       restoredTopicContext: this.computeRestoredTopicContext(),
       conversationRhythm: this.computeConversationRhythm(),
       userExpertise: this.computeUserExpertise(),
+      emotionalStrategy: this.computeEmotionalStrategy(),
     });
   }
 
@@ -3618,6 +3619,18 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     if (profile.domains.length === 0) return undefined;
     const topDomains = profile.domains.slice(0, 3);
     return `${profile.terminologyHint} ${profile.explanationHint} (Top domains: ${topDomains.map(d => `${d.domain}(${d.depth.toFixed(1)})`).join(', ')})`;
+  }
+
+  private computeEmotionalStrategy(): string | undefined {
+    const es = this.persona.emotionalState.getState();
+    if (es.intensity < 0.2) return undefined;
+    const strategy = mapEmotionToResponseStrategy({
+      valence: es.current.valence,
+      arousal: es.current.arousal,
+      intensity: es.intensity,
+      primaryEmotion: es.primaryEmotion,
+    });
+    return `Tone: ${strategy.toneHint} Length: ${strategy.lengthHint} Empathy: ${strategy.empathyAction}`;
   }
 
   /**

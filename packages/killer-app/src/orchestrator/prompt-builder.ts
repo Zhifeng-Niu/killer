@@ -98,6 +98,8 @@ export interface PromptBuilderDeps {
   conversationRhythm?: string;
   /** 用户知识专长画像 */
   userExpertise?: string;
+  /** 情感驱动的响应策略 */
+  emotionalStrategy?: string;
 }
 
 /**
@@ -322,6 +324,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 用户知识专长 ===
   if (deps.userExpertise) {
     parts.push(`\nUSER EXPERTISE — ${deps.userExpertise}`);
+  }
+
+  // === 情感响应策略 ===
+  if (deps.emotionalStrategy) {
+    parts.push(`\nEMOTIONAL RESPONSE STRATEGY — ${deps.emotionalStrategy}`);
   }
 
   // === 自主行动建议 ===
