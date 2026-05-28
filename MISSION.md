@@ -1,64 +1,61 @@
 ---
-orientation: creative
+orientation: engineer
 status: active
-started_at: 2026-05-28T07:33:42Z
-expedition_branch: odyssey/20260528-153342
+started_at: 2026-05-28T09:57:23Z
+expedition_branch: odyssey/20260528-175723
 baseline_metric: null
 best_metric: null
 total_waypoints: 0
 consecutive_discards: 0
 ---
 
-# Mission: 生物学隐喻体系重构 — 从 Cell 到 Organism
+# Mission: Runtime Self-Evolution — Agent Modifies Its Own Source, Adds Tools, Changes Architecture
 
 ## Goal
-重新审视 Odysseus Agent Framework 的生物学隐喻体系。当前 "Cell = Agent" 的隐喻在生物学上不准确：Cell 是细胞层面（没有自己的脑区、人格、目标），而 Agent 已经是一个完整的智能个体。需要找到更准确的隐喻映射，同时保持架构的一致性和美感。
+
+Enable Odysseus Agent to evolve at runtime by:
+1. **Self-modifying source code** — Agent can write/edit its own TypeScript modules, compile, and hot-reload
+2. **Adding new tools dynamically** — Agent invents new tools at runtime (not just using pre-built ones)
+3. **Architectural mutation** — Agent can restructure its own module graph, add new subsystems, replace implementations
+
+This is NOT parameter tuning or prompt engineering. This is a code-level self-evolution loop: perceive gap → reason about fix → write/modify source → compile → hot-reload → verify → continue.
 
 ## Context
 
-当前系统的隐喻冲突：
+Odysseus is a Brain+Cell fusion architecture with:
+- **cortex/** — Darwinian evolution on Skills, DNA, Prompts (currently static config)
+- **brainstem/tools/** — ToolExecutor with registered tools (currently all pre-compiled)
+- **plugins/** — Dynamic plugin loading from filesystem (closest to runtime extension)
+- **hippocampus/** — 6-layer memory (Procedural layer already stores learned patterns)
 
-**个体尺度（准确）**：brainstem、hippocampus、prefrontal、cortex、cerebellum、consciousness — 这些是一个生物个体的大脑区域。OdysseusAgent 主进程就是这个"个体"。
+The plugin system is the closest existing mechanism to runtime extension, but plugins are still human-written files placed in a directory. The agent cannot create them itself.
 
-**细胞尺度（不准确）**：Cell = 独立 agent，有自己的 CellDNA、personality、capabilities、甚至可以 spawn。但生物学上，一个细胞没有 hippocampus，不会做 planning，没有人格——这些都是 organism 级别的特征。
+### Key Insight
 
-**结果**：每个 "Cell"（agent）内部又有 brainstem/hippocampus 等脑区。如果 Cell 是细胞，它不应该有脑。如果它有脑，那它不是细胞，而是个体/organism。
-
-### 需要回答的问题
-
-1. OdysseusAgent 主进程 = 什么生物实体？（个体？群体？超个体？）
-2. Spawn 出来的 sub-agent = 什么？（细胞？个体？器官？）
-3. 多 agent 协作 = 什么？（组织？群落？生态系统？）
-4. CellDNA = 还叫 DNA 吗？还是物种特征？
-5. Synapse（agent 间通信）= 还叫突触吗？还是社会通信？
-6. 现有脑区隐喻（brainstem、hippocampus 等）= 保持还是重构？
-
-### 可能的方向
-
-- **超个体方向**（蚂蚁/蜜蜂）：OdysseusAgent = 蚁群，sub-agent = 工蚁/兵蚁，每个都是独立个体
-- **多脑方向**（章鱼）：主进程 = 中枢脑，sub-agent = 触手脑（半独立）
-- **器官方向**（多细胞生物）：OdysseusAgent = 生物体，sub-agent = 器官（心脏、肝脏各有功能但不是独立个体）
-- **微生物方向**（菌群）：OdysseusAgent = 宿主，sub-agent = 共生微生物
-- **神经方向**（当前）：OdysseusAgent = 大脑，sub-agent = 神经元/神经核团
+The jump from "agent uses tools" to "agent creates tools" is the same as the jump from "organism uses sticks" to "organism makes tools". This is the threshold of intentional self-improvement.
 
 ## Scope
 
 ### Modifiable
-- `CLAUDE.md` — 架构描述和隐喻体系
-- `packages/odysseus-core/src/` — 类型名、接口名、目录名
-- `packages/odysseus-core/src/cortex/` — CellDNA, CellType 等概念
-- `packages/odysseus-core/src/synapse/` — 通信隐喻
-- `MISSION.md`, `PROPOSAL*.md` — 设计文档
+- `packages/odysseus-core/src/cortex/` — Evolution engine (currently static, needs runtime capability)
+- `packages/odysseus-core/src/brainstem/tools/` — Tool system (needs self-registration API)
+- `packages/odysseus-app/src/skills/` — Skill compilation (needs runtime compilation)
+- `packages/odysseus-app/src/plugins/` — Plugin loading (needs in-memory plugin creation)
+- New: `packages/odysseus-core/src/evolution/` — Self-modification subsystem
+- New: `packages/odysseus-app/src/tools/evolution/` — Evolution-related tools
 
 ### Read-Only (PROTECTED)
-- 功能逻辑不变 — 只改名字和隐喻，不改行为
+- `packages/odysseus-core/src/consciousness/` — Event types must remain stable
+- `packages/odysseus-core/src/synapse/` — Cell communication protocol
+- Existing test files (tests define correctness)
 
 ## Metrics
 
 | Name | Unit | Measure Command | Direction |
 |------|------|----------------|-----------|
-| metaphor_consistency | - | 人工评估（全系统隐喻是否在同一尺度） | higher |
-| type_error_count | - | npx tsc --noEmit 2>&1 | lower |
+| type_error_count | - | cd packages/odysseus-app && npx tsc --noEmit 2>&1 | lower |
+| evolution_capability_score | 0-10 | Manual eval: can agent create+register+use a new tool at runtime? | higher |
+| self_modification_roundtrip | pass/fail | Agent writes code → compiles → loads → executes → verified | higher |
 
 ## Guard
 ```bash
@@ -66,33 +63,56 @@ cd packages/odysseus-app && npx tsc --noEmit 2>&1
 ```
 
 ## Termination
-- 找到一致的隐喻体系 AND 更新 CLAUDE.md + 类型定义
+- Agent can successfully: (1) identify a capability gap, (2) write TypeScript source for a new tool, (3) compile it, (4) register it at runtime, (5) use it in subsequent turns
 - OR stuck (10 consecutive discards)
 - OR user interrupt (/odyssey-cancel)
 
 ## Waypoint Plan
 
-### WP1: 生物学隐喻分析 — 当前体系的尺度冲突
-- 列出所有隐喻的使用场景
-- 识别哪些在同一尺度、哪些跨尺度
-- 确定最核心的隐喻冲突点
+### WP1: Architecture Research — Self-Evolution Subsystem Design
+- Study existing plugin system, skill compilation, and tool registration
+- Design the evolution subsystem API surface
+- Identify minimal changes needed for runtime code generation + loading
 
-### WP2: 方向选择 — 5个候选方向评估
-- 对每个方向做：一致性、美感、工程可行性、扩展性评分
-- 与用户讨论选定方向
+### WP2: Runtime Code Compilation — TypeScript → JS at Runtime
+- Implement runtime TypeScript compilation (using esbuild or ts.transpileModule)
+- Sandbox compiled code for safety
+- Hot-reload mechanism that doesn't crash on syntax errors
 
-### WP3: 隐喻映射表 — 新体系的完整对应
-- 旧术语 → 新术语的映射表
-- 每个新术语的生物学准确性和工程含义
+### WP3: Dynamic Tool Registration — Agent Creates Tools
+- ToolDefinition builder API (name, description, parameters, execute function)
+- In-memory tool registration (no filesystem required, but optional persist)
+- Validation: generated tools must conform to Tool interface
 
-### WP4: 代码影响评估 — 重命名范围
-- 哪些类型/接口/目录需要重命名
-- 哪些保持不变（脑区隐喻大多准确）
-- 迁移策略（渐进式 vs 一次性）
+### WP4: Self-Modification Loop — The Evolution Cycle
+- Perceive: agent detects capability gap (failed tool call, user request for new ability)
+- Reason: LLM generates TypeScript source for the new capability
+- Compile: runtime transpilation + type checking
+- Load: register the new tool/skill/module
+- Verify: test the new capability in sandbox
+- Integrate: if verified, make available; if not, rollback
 
-### WP5: 方案文档 — PROPOSAL 输出
-- 写成正式的架构提案
-- 包含迁移计划和影响范围
+### WP5: Source Code Mutation — Editing Existing Modules
+- Read own source (tool to read source files)
+- Targeted editing (tool to modify specific functions/modules)
+- Safe reload with rollback on failure
+- Diff visualization for human oversight
+
+### WP6: Architecture Evolution — Adding/Replacing Subsystems
+- Dynamic module loading beyond tools (new middleware, new cognitive processes)
+- Architecture validation before applying changes
+- Snapshot + rollback for architectural mutations
+
+### WP7: Safety & Guardrails — Preventing Self-Destruction
+- Mutation sandbox: never run unverified code in main process
+- Core module protection: certain modules cannot be modified
+- Human approval flow for high-risk mutations
+- Rollback mechanism with checkpointing
+
+### WP8: Integration Testing — End-to-End Evolution
+- Scenario: agent encounters task it can't do → creates tool → uses it → succeeds
+- Scenario: agent identifies inefficiency → modifies own module → improves
+- Type safety verification after all mutations
 
 ## What's Been Tried
 
