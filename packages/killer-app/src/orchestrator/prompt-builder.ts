@@ -131,6 +131,8 @@ export interface PromptBuilderDeps {
   semanticNetworkGuidance?: string;
   /** 响应时机指导 */
   responseTimingGuidance?: string;
+  /** 对话摘要压缩 */
+  conversationSummary?: string;
 }
 
 /**
@@ -430,6 +432,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 响应时机 ===
   if (deps.responseTimingGuidance) {
     parts.push(`\nRESPONSE TIMING — Adapt response depth and structure:\n${deps.responseTimingGuidance}`);
+  }
+
+  // === 对话摘要 ===
+  if (deps.conversationSummary) {
+    parts.push(`\nCONVERSATION SUMMARY — Earlier context (compressed):\n${deps.conversationSummary}`);
   }
 
   // === 自主行动建议 ===

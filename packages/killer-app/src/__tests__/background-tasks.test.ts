@@ -129,6 +129,11 @@ import {
   assessResponseTiming,
   generatePrefetchHints,
   formatTimingGuidance,
+  extractSummaryItems,
+  deduplicateSummaryItems,
+  extractTopicsFromMessages,
+  generateConversationSummary,
+  formatConversationSummary,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -3967,6 +3972,95 @@ describe('background-tasks', () => {
       expect(guidance).toContain('策略:');
       expect(guidance).toContain('复杂度:');
       expect(guidance).toContain('建议结构:');
+    });
+  });
+
+  describe('Conversation Summary Compression', () => {
+    const messages = [
+      { role: 'user' as const, content: '我决定使用 PostgreSQL 作为数据库' },
+      { role: 'assistant' as const, content: '好的，我来配置 PostgreSQL 连接' },
+      { role: 'user' as const, content: '报错了：connection refused，端口 5432' },
+      { role: 'assistant' as const, content: '修改了 config/database.ts 中的连接配置' },
+      { role: 'user' as const, content: '修好了，现在可以连接了' },
+      { role: 'user' as const, content: '需要支持批量插入，不能逐条执行' },
+    ];
+
+    it('should extract summary items from messages', () => {
+      const items = extractSummaryItems(messages);
+      expect(items.length).toBeGreaterThanOrEqual(3);
+      const types = items.map(i => i.type);
+      expect(types).toContain('decision');
+      expect(types).toContain('error');
+    });
+
+    it('should deduplicate similar items', () => {
+      const items = extractSummaryItems(messages);
+      const deduped = deduplicateSummaryItems(items);
+      expect(deduped.length).toBeLessThanOrEqual(items.length);
+    });
+
+    it('should extract topics from messages', () => {
+      const topics = extractTopicsFromMessages(messages);
+      expect(topics).toContain('database');
+    });
+
+    it('should generate structured summary', () => {
+      const summary = generateConversationSummary(messages, 10);
+      expect(summary.originalRange.from).toBe(10);
+      expect(summary.originalRange.to).toBe(15);
+      expect(summary.items.length).toBeGreaterThanOrEqual(1);
+      expect(summary.topics).toContain('database');
+    });
+
+    it('should cap items at 15', () => {
+      const longMessages = Array.from({ length: 50 }, (_, i) => ({
+        role: 'user' as const,
+        content: `决定用方案${i}，报错了error${i}`,
+      }));
+      const summary = generateConversationSummary(longMessages);
+      expect(summary.items.length).toBeLessThanOrEqual(15);
+    });
+
+    it('should sort items by importance', () => {
+      const items = extractSummaryItems(messages);
+      if (items.length >= 2) {
+        const sorted = deduplicateSummaryItems(items).sort((a, b) => b.importance - a.importance);
+        for (let i = 1; i < sorted.length; i++) {
+          expect(sorted[i].importance).toBeLessThanOrEqual(sorted[i - 1].importance);
+        }
+      }
+    });
+
+    it('should format summary for prompt injection', () => {
+      const summary = generateConversationSummary(messages);
+      const formatted = formatConversationSummary(summary);
+      expect(formatted).toContain('话题:');
+      expect(formatted).toContain('轮次');
+      expect(formatted).toContain('[决策]');
+    });
+
+    it('should return empty string for empty summary', () => {
+      const summary = generateConversationSummary([
+        { role: 'user', content: '你好' },
+      ]);
+      const formatted = formatConversationSummary(summary);
+      expect(formatted).toBe('');
+    });
+
+    it('should detect code changes', () => {
+      const msgs = [
+        { role: 'assistant' as const, content: '修改了 src/config.ts 中的配置' },
+      ];
+      const items = extractSummaryItems(msgs);
+      expect(items.some(i => i.type === 'code-change')).toBe(true);
+    });
+
+    it('should detect requirements from user messages', () => {
+      const msgs = [
+        { role: 'user' as const, content: '需要支持并发请求，不能阻塞主线程' },
+      ];
+      const items = extractSummaryItems(msgs);
+      expect(items.some(i => i.type === 'requirement')).toBe(true);
     });
   });
 });

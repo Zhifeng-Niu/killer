@@ -2878,6 +2878,7 @@ export function scoreSectionRelevance(
     'INTENT DECOMPOSITION': 0.7,
     'SEMANTIC NETWORK': 0.6,
     'RESPONSE TIMING': 0.65,
+    'CONVERSATION SUMMARY': 0.7,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -6161,6 +6162,279 @@ export function formatTimingGuidance(assessment: ResponseTimingAssessment): stri
   }
 
   parts.push(`理由: ${assessment.reason}`);
+
+  return parts.join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Waypoint 88: Conversation Summary Compression — 对话摘要压缩
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 摘要中保留的信息类型
+ */
+export type SummaryItemType =
+  | 'decision'     // 用户或 Agent 做出的决策
+  | 'error'        // 遇到的错误/问题
+  | 'solution'     // 找到的解决方案
+  | 'code-change'  // 代码变更（文件、函数名）
+  | 'requirement'  // 需求/约束条件
+  | 'fact'         // 关键事实/数据点
+  | 'action';      // 执行的动作/工具调用
+
+/**
+ * 摘要条目
+ */
+export interface SummaryItem {
+  type: SummaryItemType;
+  content: string;
+  /** 来源轮次索引 */
+  turnIndex: number;
+  /** 重要性 0-1 */
+  importance: number;
+}
+
+/**
+ * 对话摘要
+ */
+export interface ConversationSummary {
+  /** 压缩前的轮次范围 */
+  originalRange: { from: number; to: number };
+  /** 压缩后的摘要条目 */
+  items: SummaryItem[];
+  /** 话题标签 */
+  topics: string[];
+  /** 生成时间 */
+  createdAt: number;
+}
+
+/**
+ * 决策检测模式
+ */
+const DECISION_PATTERNS = [
+  /(?:决定|选择|确定|用|采用|采用.*方案)\s*[:：]?\s*(.{5,80})/i,
+  /(?:we'?ll|let's|decided to|chose to|going with)\s+(.{5,80})/i,
+];
+
+/**
+ * 错误检测模式
+ */
+const SUMMARY_ERROR_PATTERNS = [
+  /(?:错误|异常|报错|失败|error|fail|exception)\s*[:：]?\s*(.{3,80})/i,
+  /(?:cannot|can't|unable to|doesn't|won't)\s+(.{3,60})/i,
+];
+
+/**
+ * 解决方案检测模式
+ */
+const SOLUTION_PATTERNS = [
+  /(?:解决了|修好了|修复了|搞定了|现在可以|success|fixed|resolved)\s*[:：]?\s*(.{3,80})/i,
+  /(?:用.*方案|通过.*方式|修改.*后)\s*(.{3,60})/i,
+];
+
+/**
+ * 代码变更检测模式
+ */
+const CODE_CHANGE_PATTERNS = [
+  /(?:修改|编辑|更新|新增|删除|创建)\s*(?:了|了文件)?\s*([A-Za-z0-9_./\-]+\.\w+)/i,
+  /(?:在|往|给)\s*([A-Za-z0-9_./\-]+\.\w+)\s*(?:中|里|添加|写入)/i,
+];
+
+/**
+ * 需求检测模式
+ */
+const REQUIREMENT_PATTERNS = [
+  /(?:需要|必须|要求|不能|不要|应该|must|should|need to|require)\s*(.{5,80})/i,
+  /(?:约束|限制|前提|条件|假设)\s*[:：]?\s*(.{3,60})/i,
+];
+
+/**
+ * 从消息中提取摘要条目
+ */
+export function extractSummaryItems(
+  messages: Array<{ role: string; content: string }>,
+  startTurn: number = 0,
+): SummaryItem[] {
+  const items: SummaryItem[] = [];
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const turnIndex = startTurn + i;
+    const content = msg.content;
+
+    // 决策
+    for (const pattern of DECISION_PATTERNS) {
+      const match = pattern.exec(content);
+      if (match) {
+        items.push({
+          type: 'decision',
+          content: match[1].trim().slice(0, 120),
+          turnIndex,
+          importance: msg.role === 'user' ? 0.8 : 0.6,
+        });
+      }
+    }
+
+    // 错误
+    for (const pattern of SUMMARY_ERROR_PATTERNS) {
+      const match = pattern.exec(content);
+      if (match) {
+        items.push({
+          type: 'error',
+          content: match[1].trim().slice(0, 120),
+          turnIndex,
+          importance: 0.75,
+        });
+      }
+    }
+
+    // 解决方案
+    for (const pattern of SOLUTION_PATTERNS) {
+      const match = pattern.exec(content);
+      if (match) {
+        items.push({
+          type: 'solution',
+          content: match[1].trim().slice(0, 120),
+          turnIndex,
+          importance: 0.7,
+        });
+      }
+    }
+
+    // 代码变更
+    for (const pattern of CODE_CHANGE_PATTERNS) {
+      const match = pattern.exec(content);
+      if (match) {
+        items.push({
+          type: 'code-change',
+          content: match[1].trim(),
+          turnIndex,
+          importance: 0.65,
+        });
+      }
+    }
+
+    // 需求
+    for (const pattern of REQUIREMENT_PATTERNS) {
+      const match = pattern.exec(content);
+      if (match && msg.role === 'user') {
+        items.push({
+          type: 'requirement',
+          content: match[1].trim().slice(0, 120),
+          turnIndex,
+          importance: 0.85,
+        });
+      }
+    }
+
+    // 关键事实：包含数字或版本号的语句
+    const factMatch = /(?:版本|大小|数量|频率|阈值|version|size|count|threshold)\s*[:：]?\s*(\S+)/i.exec(content);
+    if (factMatch) {
+      items.push({
+        type: 'fact',
+        content: factMatch[0].trim().slice(0, 80),
+        turnIndex,
+        importance: 0.5,
+      });
+    }
+  }
+
+  return items;
+}
+
+/**
+ * 去重摘要条目（相似内容合并）
+ */
+export function deduplicateSummaryItems(items: SummaryItem[]): SummaryItem[] {
+  const seen = new Map<string, SummaryItem>();
+  const result: SummaryItem[] = [];
+
+  for (const item of items) {
+    // 简单去重键：type + 内容前 30 字符
+    const key = `${item.type}:${item.content.slice(0, 30).toLowerCase()}`;
+    const existing = seen.get(key);
+    if (existing) {
+      // 保留更高重要性的
+      if (item.importance > existing.importance) {
+        const idx = result.indexOf(existing);
+        result[idx] = item;
+        seen.set(key, item);
+      }
+    } else {
+      seen.set(key, item);
+      result.push(item);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * 从消息中提取话题标签
+ */
+export function extractTopicsFromMessages(
+  messages: Array<{ role: string; content: string }>,
+): string[] {
+  const topicPatterns: Array<{ pattern: RegExp; label: string }> = [
+    { pattern: /(?:数据库|database|sql|查询|表|索引)/i, label: 'database' },
+    { pattern: /(?:API|接口|endpoint|路由|请求|响应)/i, label: 'api' },
+    { pattern: /(?:部署|deploy|CI|CD|pipeline|发布)/i, label: 'deployment' },
+    { pattern: /(?:测试|test|spec|coverage|mock)/i, label: 'testing' },
+    { pattern: /(?:性能|performance|优化|缓存|延迟)/i, label: 'performance' },
+    { pattern: /(?:安全|security|auth|加密|权限)/i, label: 'security' },
+    { pattern: /(?:架构|architecture|设计|模块|组件)/i, label: 'architecture' },
+    { pattern: /(?:错误|bug|debug|排查|修复)/i, label: 'debugging' },
+  ];
+
+  const allText = messages.map(m => m.content).join(' ');
+  return topicPatterns
+    .filter(tp => tp.pattern.test(allText))
+    .map(tp => tp.label);
+}
+
+/**
+ * 生成对话摘要
+ */
+export function generateConversationSummary(
+  messages: Array<{ role: string; content: string }>,
+  startTurn: number = 0,
+): ConversationSummary {
+  const rawItems = extractSummaryItems(messages, startTurn);
+  const items = deduplicateSummaryItems(rawItems)
+    .sort((a, b) => b.importance - a.importance)
+    .slice(0, 15);
+
+  const topics = extractTopicsFromMessages(messages);
+
+  return {
+    originalRange: { from: startTurn, to: startTurn + messages.length - 1 },
+    items,
+    topics,
+    createdAt: Date.now(),
+  };
+}
+
+/**
+ * 格式化对话摘要（用于 prompt 注入）
+ */
+export function formatConversationSummary(summary: ConversationSummary): string {
+  if (summary.items.length === 0) return '';
+
+  const parts: string[] = [];
+
+  if (summary.topics.length > 0) {
+    parts.push(`话题: ${summary.topics.join(', ')}`);
+  }
+
+  parts.push(`轮次 ${summary.originalRange.from}-${summary.originalRange.to} 摘要:`);
+
+  for (const item of summary.items) {
+    const typeLabel: Record<SummaryItemType, string> = {
+      decision: '决策', error: '错误', solution: '解决',
+      'code-change': '代码', requirement: '需求', fact: '事实', action: '动作',
+    };
+    parts.push(`  [${typeLabel[item.type]}] ${item.content}`);
+  }
 
   return parts.join('\n');
 }
