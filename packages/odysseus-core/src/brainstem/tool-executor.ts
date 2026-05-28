@@ -81,6 +81,33 @@ function toolIsReadOnly(tool: Tool, params: unknown): boolean {
 }
 
 /**
+ * 并发池 — 限制同时执行的 Promise 数量
+ */
+async function parallelPool<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
+
+  let nextIdx = 0;
+  async function worker(): Promise<void> {
+    while (nextIdx < items.length) {
+      const idx = nextIdx++;
+      try {
+        results[idx] = { status: 'fulfilled', value: await fn(items[idx]) };
+      } catch (err) {
+        results[idx] = { status: 'rejected', reason: err };
+      }
+    }
+  }
+
+  const workerCount = Math.min(limit, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+
+/**
  * 工具执行器
  */
 export class ToolExecutor {
@@ -137,17 +164,20 @@ export class ToolExecutor {
   }
 
   /**
-   * 批量执行工具调用 — 只读工具并行，写工具串行
+   * 批量执行工具调用 — 只读工具并行（有并发上限），写工具串行
    *
-   * 分区策略（来自 Claude Code 的启发）：
+   * 分区策略：
    * 1. 将所有 toolCalls 分为 readOnly 和 write 两组
-   * 2. readOnly 工具通过 Promise.all 并行执行
+   * 2. readOnly 工具通过并发池并行执行（上限 maxConcurrency）
    * 3. write 工具逐个串行执行
    * 4. 合并结果，保持原始调用顺序
+   *
+   * 使用 Promise.allSettled 语义 — 单个工具失败不阻塞其他工具
    */
   async executeBatch(
     calls: BatchToolCall[],
     onProgress?: (name: string, progress: ToolProgress) => void,
+    maxConcurrency: number = 5,
   ): Promise<BatchToolResult[]> {
     if (calls.length === 0) return [];
 
@@ -182,18 +212,35 @@ export class ToolExecutor {
 
     const results: BatchToolResult[] = [];
 
-    // 并行执行只读工具
+    // 并行执行只读工具（带并发上限和故障隔离）
     if (readOnlyCalls.length > 0) {
-      const parallelResults = await Promise.all(
-        readOnlyCalls.map(async (call) => {
+      const settled = await parallelPool(
+        readOnlyCalls,
+        maxConcurrency,
+        async (call) => {
           const start = Date.now();
           const result = await this.execute(call.name, call.params, onProgress
             ? (p) => onProgress(call.name, p)
             : undefined);
           return { name: call.name, id: call.id, result, durationMs: Date.now() - start, parallel: true };
-        }),
+        },
       );
-      results.push(...parallelResults);
+
+      for (const s of settled) {
+        if (s.status === 'fulfilled') {
+          results.push(s.value);
+        } else {
+          // 不应该走到这里（execute 内部 catch），但以防万一
+          const call = readOnlyCalls[settled.indexOf(s)];
+          results.push({
+            name: call.name,
+            id: call.id,
+            result: { success: false, error: String(s.reason?.message ?? s.reason ?? 'Unknown error') },
+            durationMs: 0,
+            parallel: true,
+          });
+        }
+      }
     }
 
     // 串行执行写工具

@@ -106,8 +106,31 @@ export class PlanExecutor {
       return null;
     }
 
-    // 按顺序返回第一个就绪步骤
-    return readySteps.sort((a, b) => a.order - b.order)[0];
+    return readySteps[0];
+  }
+
+  /**
+   * 获取所有就绪步骤（支持并行调度）
+   */
+  getReadyActions(planId: string): PlanStep[] {
+    const plan = this.plans.get(planId);
+    if (!plan) {
+      return [];
+    }
+
+    return this.planner.getReadySteps(plan);
+  }
+
+  /**
+   * 获取执行层级（拓扑排序）— 每层可并行
+   */
+  getExecutionLevels(planId: string): PlanStep[][] {
+    const plan = this.plans.get(planId);
+    if (!plan) {
+      return [];
+    }
+
+    return this.planner.getExecutionLevels(plan);
   }
 
   /**
@@ -132,9 +155,9 @@ export class PlanExecutor {
         const updatedPlan = this.planner.updateStepStatus(plan, stepId, 'ready', result);
         this.plans.set(planId, updatedPlan);
       } else {
-        // 重试耗尽 — 标记为 skipped 让执行流继续
+        // 重试耗尽 — 部分回滚到失败步骤，再尝试 replan
         this.stepRetryCount.delete(stepId);
-        let updatedPlan = this.planner.updateStepStatus(plan, stepId, 'skipped', result);
+        let updatedPlan = this.planner.partialRollback(plan, stepId);
         if (updatedPlan.strategy !== 'exploratory') {
           updatedPlan = this.planner.replan(updatedPlan, stepId);
         }

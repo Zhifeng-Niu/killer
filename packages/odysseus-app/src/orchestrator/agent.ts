@@ -86,6 +86,9 @@ import {
   DeliveryReportGenerator,
   type DeliveryReport,
   type StepReport,
+  SelfReviewer,
+  type ReviewContext,
+  type ReviewResult,
   type ChainResult,
   type TaskExecutionResult,
 } from '@odysseus/core';
@@ -184,6 +187,7 @@ export class OdysseusAgent implements IDriveSource {
   selfMonitor!: SelfMonitor;
   instructionParser!: InstructionParser;
   stepVerifier!: StepVerifier;
+  selfReviewer!: SelfReviewer;
   deliveryReport!: DeliveryReportGenerator;
   scheduledRunner!: ScheduledTaskRunner;
   readonly hooks: LifecycleHooks = new LifecycleHooks();
@@ -1448,6 +1452,9 @@ Examples:
     // Delivery Report Generator — 执行报告与交付
     this.deliveryReport = new DeliveryReportGenerator();
 
+    // Self Reviewer — 执行后自审查
+    this.selfReviewer = new SelfReviewer();
+
     // Scheduled Task Runner — 定时任务调度
     this.scheduledRunner = new ScheduledTaskRunner();
   }
@@ -1585,19 +1592,49 @@ Examples:
       // 将计划步骤描述转化为实际执行
       const result = await this.executeStepAction(step);
 
-      this.planExecutor.reportStepResult(planId, step.id, {
+      // 自审查：执行后质量检查
+      const stepResult: StepResult = {
         success: result.success,
         output: result.output,
         error: result.error,
         completedAt: Date.now(),
+      };
+
+      const plan = this.planExecutor.getPlan(planId);
+      const previousResults = plan
+        ? plan.steps
+            .filter(s => s.result && (s.status === 'completed' || s.status === 'skipped'))
+            .map(s => ({ description: s.description, result: s.result! }))
+        : [];
+
+      const reviewResult = this.selfReviewer.review({
+        stepDescription: step.description,
+        result: stepResult,
+        previousResults,
       });
+
+      if (!reviewResult.passed) {
+        this.logger.info(`Self-review issues: ${reviewResult.issues.join('; ')}`);
+      }
+
+      this.consciousness.emit({
+        type: 'execution.progress',
+        source: 'prefrontal',
+        data: {
+          planId,
+          stepId: step.id,
+          review: { score: reviewResult.score, passed: reviewResult.passed, issues: reviewResult.issues },
+        },
+      });
+
+      this.planExecutor.reportStepResult(planId, step.id, stepResult);
 
       this.updatePrefrontalStatus();
 
-      // 检查计划是否完成
-      const plan = this.planExecutor.getPlan(planId);
-      if (plan) {
-        const allCompleted = plan.steps.every(
+      // 检查计划是否完成（复用自审查阶段获取的 plan）
+      const updatedPlan = this.planExecutor.getPlan(planId);
+      if (updatedPlan) {
+        const allCompleted = updatedPlan.steps.every(
           s => s.status === 'completed' || s.status === 'skipped'
         );
         if (allCompleted) {
@@ -1605,11 +1642,11 @@ Examples:
           this.consciousness.emit({
             type: 'goal.completed',
             source: 'prefrontal',
-            data: { planId, goalId: plan.goalId },
+            data: { planId, goalId: updatedPlan.goalId },
           });
 
           // 生成交付报告
-          this.generateAndEmitDeliveryReport(plan.goalId, plan);
+          this.generateAndEmitDeliveryReport(updatedPlan.goalId, updatedPlan);
         }
       }
     } catch (error) {

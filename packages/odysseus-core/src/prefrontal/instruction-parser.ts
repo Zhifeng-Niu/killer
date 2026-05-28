@@ -26,6 +26,36 @@ export interface ParsedInstruction {
   steps: ParsedStep[];
   constraints: string[];
   executionMode: 'sequential' | 'parallel' | 'mixed';
+  /** 置信度评分 (0-1) */
+  confidence: number;
+  /** 检测到的歧义点 */
+  ambiguities: Ambiguity[];
+}
+
+/** 歧义检测结果 */
+export interface Ambiguity {
+  /** 歧义文本 */
+  text: string;
+  /** 歧义类型 */
+  type: 'vague_action' | 'unclear_target' | 'ambiguous_scope' | 'missing_context';
+  /** 置信度影响 (0-1, 每个歧义降低多少) */
+  impact: number;
+  /** 建议的澄清 */
+  suggestion: string;
+}
+
+/** 决策上下文 — 为执行引擎提供语义理解 */
+export interface DecisionContext {
+  /** 指令意图分类 */
+  intent: 'create' | 'modify' | 'query' | 'delete' | 'analyze' | 'explore' | 'unknown';
+  /** 目标实体 */
+  target?: string;
+  /** 涉及的文件/路径 */
+  filePaths: string[];
+  /** 风险评估提示 */
+  riskHint: 'safe' | 'destructive' | 'irreversible' | 'external' | 'unknown';
+  /** 是否需要用户确认 */
+  needsConfirmation: boolean;
 }
 
 /** LLM 接口 */
@@ -104,15 +134,145 @@ export class InstructionParser {
     const normalized = instruction.trim();
     const ruleResult = this.parseWithRules(normalized);
 
+    // 歧义检测
+    const ambiguities = this.detectAmbiguities(normalized);
+    const confidence = Math.max(0, 1 - ambiguities.reduce((sum, a) => sum + a.impact, 0));
+
+    const result: ParsedInstruction = { ...ruleResult, confidence, ambiguities };
+
     if (ruleResult.steps.length >= 2) {
-      return ruleResult;
+      return result;
     }
 
     if (this.llm) {
-      return this.parseWithLLM(normalized, ruleResult);
+      const llmResult = await this.parseWithLLM(normalized, ruleResult);
+      return { ...llmResult, confidence, ambiguities };
     }
 
-    return ruleResult;
+    return result;
+  }
+
+  /**
+   * 分析指令的决策上下文 — 为执行引擎提供语义理解
+   */
+  analyzeDecisionContext(instruction: string): DecisionContext {
+    const lower = instruction.toLowerCase();
+
+    // 意图分类
+    const intentMap: Array<[RegExp, DecisionContext['intent']]> = [
+      [/^(?:create|build|add|new|make|generate|init|write)\b/i, 'create'],
+      [/^(?:modify|update|change|edit|fix|refactor|rename)\b/i, 'modify'],
+      [/^(?:get|show|list|read|find|search|query|check|display)\b/i, 'query'],
+      [/^(?:delete|remove|drop|clean|clear|purge)\b/i, 'delete'],
+      [/^(?:analyze|review|audit|assess|evaluate|inspect)\b/i, 'analyze'],
+      [/^(?:explore|investigate|discover|browse)\b/i, 'explore'],
+    ];
+
+    let intent: DecisionContext['intent'] = 'unknown';
+    for (const [pattern, type] of intentMap) {
+      if (pattern.test(instruction)) {
+        intent = type;
+        break;
+      }
+    }
+
+    // 提取文件路径
+    const filePaths: string[] = [];
+    const pathPatterns = [
+      /["']([\/.][^\s"']+)["']/g,
+      /(?:file|path)\s+(?:at\s+)?["']?([\/.][^\s"']+)["']?/gi,
+      /(?:in|to|from)\s+["']?([\/.][^\s"']+\.\w+)["']?/gi,
+    ];
+    for (const pattern of pathPatterns) {
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(instruction)) !== null) {
+        filePaths.push(match[1]);
+      }
+    }
+
+    // 风险评估
+    let riskHint: DecisionContext['riskHint'] = 'unknown';
+    if (/delete|remove|drop|purge|clean|clear/i.test(lower)) {
+      riskHint = 'destructive';
+    } else if (/force|overwrite|replace|irreversible/i.test(lower)) {
+      riskHint = 'irreversible';
+    } else if (/api|http|fetch|request|webhook|deploy|push/i.test(lower)) {
+      riskHint = 'external';
+    } else if (/read|list|show|find|search|get/i.test(lower)) {
+      riskHint = 'safe';
+    }
+
+    // 是否需要用户确认
+    const needsConfirmation = riskHint === 'destructive' || riskHint === 'irreversible';
+
+    // 提取目标实体
+    const targetMatch = instruction.match(
+      /(?:the\s+)?(?:file|module|function|class|component|service|config|test)\s+["']?(\S+)["']?/i
+    );
+
+    return {
+      intent,
+      target: targetMatch?.[1],
+      filePaths: [...new Set(filePaths)],
+      riskHint,
+      needsConfirmation,
+    };
+  }
+
+  /**
+   * 歧义检测 — 识别模糊、不明确的指令
+   */
+  private detectAmbiguities(text: string): Ambiguity[] {
+    const ambiguities: Ambiguity[] = [];
+
+    // 1. 模糊动作检测
+    const vagueActions = [
+      { pattern: /\b(?:handle|process|deal\s+with|take\s+care\s+of|manage)\b/i, action: 'vague_action' },
+      { pattern: /\b(?:fix|improve|optimize|enhance|refactor)\b(?!.*\b(?:in|at|of|for)\b)/i, action: 'vague_action' },
+    ];
+    for (const { pattern } of vagueActions) {
+      const match = text.match(pattern);
+      if (match) {
+        ambiguities.push({
+          text: match[0],
+          type: 'vague_action',
+          impact: 0.2,
+          suggestion: `Specify what "${match[0]}" means concretely — what should change and how?`,
+        });
+      }
+    }
+
+    // 2. 不明确目标检测
+    if (/\b(?:it|this|that|these|those)\b/i.test(text) && !/\b(?:file|module|function|class)\b/i.test(text)) {
+      ambiguities.push({
+        text: text.match(/\b(?:it|this|that|these|those)\b/i)![0],
+        type: 'unclear_target',
+        impact: 0.25,
+        suggestion: 'Replace pronouns with specific names (file, function, module)',
+      });
+    }
+
+    // 3. 模糊范围检测
+    if (/\b(?:everything|all|some|stuff|things|etc\.?)\b/i.test(text)) {
+      ambiguities.push({
+        text: text.match(/\b(?:everything|all|some|stuff|things|etc\.?)\b/i)![0],
+        type: 'ambiguous_scope',
+        impact: 0.15,
+        suggestion: 'List specific items instead of using broad quantifiers',
+      });
+    }
+
+    // 4. 缺失上下文检测
+    if (text.length > 50 && !/\b(?:because|since|for|reason|why|context)\b/i.test(text)) {
+      ambiguities.push({
+        text: text.slice(0, 30) + '...',
+        type: 'missing_context',
+        impact: 0.05,
+        suggestion: 'Consider adding motivation or context for better execution',
+      });
+    }
+
+    return ambiguities;
   }
 
   /**
@@ -193,7 +353,7 @@ export class InstructionParser {
         : parallelizableCount === 0 ? 'sequential'
           : 'mixed';
 
-    return { raw: text, goal, steps, constraints, executionMode };
+    return { raw: text, goal, steps, constraints, executionMode, confidence: 1, ambiguities: [] };
   }
 
   /**
@@ -234,6 +394,8 @@ Format: { "goal": string, "steps": [{ "description": string, "tool": string|null
         steps,
         constraints: parsed.constraints ?? ruleResult.constraints,
         executionMode: parsed.executionMode ?? 'mixed',
+        confidence: ruleResult.confidence,
+        ambiguities: ruleResult.ambiguities,
       };
     } catch {
       return ruleResult;

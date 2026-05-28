@@ -27,7 +27,7 @@ export type {
 export { DEFAULT_PREFRONTAL_CONFIG } from './types.js';
 
 // 类导出
-export { Planner } from './planner.js';
+export { Planner, topologicalSort, detectCycle } from './planner.js';
 export { PlanExecutor } from './executor.js';
 export { RiskAssessor } from './risk.js';
 export { DecisionEngine } from './decision.js';
@@ -52,6 +52,8 @@ export {
 export type {
   ParsedStep,
   ParsedInstruction,
+  Ambiguity,
+  DecisionContext,
 } from './instruction-parser.js';
 
 // Step Verifier — multi-dimensional execution result validation
@@ -76,3 +78,14 @@ export type {
   StepReport,
   DeliveryReportDeps,
 } from './delivery-report.js';
+
+// Self Review — post-execution quality review
+export {
+  SelfReviewer,
+} from './self-review.js';
+export type {
+  ReviewDimension,
+  ReviewResult,
+  ReviewContext,
+  SelfReviewConfig,
+} from './self-review.js';

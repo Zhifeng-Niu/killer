@@ -76,6 +76,11 @@ pnpm build
 - WP4: AutonomousLoop 强化 — 质量门控（5 连续失败暂停）+ 停滞恢复（自动 replan/decompose）+ 用户输入重置计数器
 - WP5: DeliveryReport — 结构化交付报告（步骤状态/质量评分/关键决策/代码变更）+ consciousness 事件流输出
 - 总计：861 行新增/修改，0 构建错误
+- WP6: ChainCheckpoint — ToolChain 检查点保存/断点恢复 + Promise.allSettled 并行故障隔离 + failedAtIndex 跟踪
+- WP7: OrchestrationDAG — Kahn 拓扑排序分层执行 + DFS 循环检测 + createPlan 即时断环 + partialRollback 部分回滚
+- WP8: ParallelFlow — parallelPool 并发池（worker stealing 模式）+ executeBatch 并发上限（默认 5）+ 故障隔离
+- WP9: SelfReview — 4 维度自审查（correctness/completeness/consistency/efficiency）+ reviewLoop 修正循环 + consciousness 事件流
+- WP10: SemanticPrecision — 4 类型歧义检测 + 置信度评分 + DecisionContext 语义上下文（intent/riskHint/needsConfirmation）
 
 ### Dead Ends
 {None yet.}

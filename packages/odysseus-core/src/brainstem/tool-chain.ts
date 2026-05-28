@@ -82,6 +82,8 @@ export interface ChainResult {
   allSucceeded: boolean;
   /** 执行上下文快照 */
   context: ExecutionContext;
+  /** 失败步骤索引（用于 resume） */
+  failedAtIndex?: number;
 }
 
 // ─── 工具链构建器 ───
@@ -208,7 +210,7 @@ export class ToolChain {
   }
 
   /**
-   * 执行整个链
+   * 执行整个链（带检查点保存，支持从断点恢复）
    */
   async execute(): Promise<ChainResult> {
     const startTime = Date.now();
@@ -216,12 +218,60 @@ export class ToolChain {
     let stepsExecuted = 0;
     let allSucceeded = true;
     let finalOutput: unknown = undefined;
+    let lastCompletedIndex = -1;
 
-    for (const step of this.steps) {
-      const result = await this.executeStep(step, stepResults);
-      stepsExecuted += result.stepsExecuted;
-      if (!result.success) allSucceeded = false;
-      finalOutput = result.output;
+    for (let i = 0; i < this.steps.length; i++) {
+      const step = this.steps[i];
+      try {
+        const result = await this.executeStep(step, stepResults);
+        stepsExecuted += result.stepsExecuted;
+        if (!result.success) allSucceeded = false;
+        finalOutput = result.output;
+        lastCompletedIndex = i;
+
+        // 保存检查点（每步完成后持久化上下文）
+        this.saveCheckpoint(i, stepResults);
+      } catch {
+        // 步骤异常崩溃 — 保存已完成部分，不丢失结果
+        allSucceeded = false;
+        this.saveCheckpoint(i, stepResults);
+        break;
+      }
+    }
+
+    return {
+      stepResults,
+      finalOutput,
+      durationMs: Date.now() - startTime,
+      stepsExecuted,
+      allSucceeded,
+      context: this.ctx,
+      failedAtIndex: allSucceeded ? undefined : lastCompletedIndex,
+    };
+  }
+
+  /**
+   * 从检查点恢复执行
+   */
+  async resume(failedAtIndex: number): Promise<ChainResult> {
+    // 从失败步骤开始重试
+    const startTime = Date.now();
+    const stepResults = new Map<string, ToolResult>();
+    let stepsExecuted = 0;
+    let allSucceeded = true;
+    let finalOutput: unknown = undefined;
+
+    for (let i = failedAtIndex; i < this.steps.length; i++) {
+      try {
+        const result = await this.executeStep(this.steps[i], stepResults);
+        stepsExecuted += result.stepsExecuted;
+        if (!result.success) allSucceeded = false;
+        finalOutput = result.output;
+        this.saveCheckpoint(i, stepResults);
+      } catch {
+        allSucceeded = false;
+        break;
+      }
     }
 
     return {
@@ -285,21 +335,37 @@ export class ToolChain {
     step: ParallelStep,
     results: Map<string, ToolResult>,
   ): Promise<{ success: boolean; output: unknown[]; stepsExecuted: number }> {
-    const outputs = await Promise.all(
+    // Promise.allSettled — 单个工具失败不阻塞其他工具
+    const settled = await Promise.allSettled(
       step.steps.map(async (subStep) => {
-        const result = await this.executor.execute(subStep.tool, subStep.params);
-        results.set(subStep.id, result);
-        if (result.success && result.data !== undefined) {
-          this.ctx.recordStepOutput(subStep.id, result.data);
+        try {
+          const result = await this.executor.execute(subStep.tool, subStep.params);
+          results.set(subStep.id, result);
+          if (result.success && result.data !== undefined) {
+            this.ctx.recordStepOutput(subStep.id, result.data);
+          }
+          return result;
+        } catch (error) {
+          const failedResult: ToolResult = {
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+          results.set(subStep.id, failedResult);
+          return failedResult;
         }
-        return result;
       }),
     );
 
-    const allOk = outputs.every(r => r.success);
-    const data = outputs.map(r => r.data);
+    const outputs: ToolResult[] = settled.map(s =>
+      s.status === 'fulfilled'
+        ? s.value
+        : { success: false, error: String(s.reason?.message ?? 'Unknown error') },
+    );
 
-    return { success: allOk, output: data, stepsExecuted: step.steps.length };
+    const successCount = outputs.filter(r => r.success).length;
+    const data = outputs.map(r => ('data' in r ? r.data : undefined) ?? r.error);
+
+    return { success: successCount === step.steps.length, output: data, stepsExecuted: step.steps.length };
   }
 
   private async executeBranchStep(
@@ -365,12 +431,18 @@ export class ToolChain {
       const result = step.transform(this.ctx);
       this.ctx.set(step.outputKey, result);
       return { success: true, output: result, stepsExecuted: 1 };
-    } catch (error) {
-      return {
-        success: false,
-        output: undefined,
-        stepsExecuted: 0,
-      };
+    } catch {
+      return { success: false, output: undefined, stepsExecuted: 0 };
     }
+  }
+
+  /** 保存检查点到上下文，支持后续 resume */
+  private saveCheckpoint(stepIndex: number, results: Map<string, ToolResult>): void {
+    this.ctx.setMetadata(`_checkpoint_${stepIndex}`, {
+      stepIndex,
+      completedStepIds: Array.from(results.keys()),
+      timestamp: Date.now(),
+      resultCount: results.size,
+    });
   }
 }

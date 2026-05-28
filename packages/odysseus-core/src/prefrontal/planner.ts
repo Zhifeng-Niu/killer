@@ -141,9 +141,101 @@ Examples:
 }
 
 /**
+ * 拓扑排序 — 返回分层执行层级
+ *
+ * 每层内的步骤可以并行执行，层间有严格依赖。
+ * 如果检测到环则返回 null。
+ */
+export function topologicalSort(steps: PlanStep[]): PlanStep[][] | null {
+  const stepMap = new Map(steps.map(s => [s.id, s]));
+  const inDegree = new Map<string, number>();
+  const adj = new Map<string, string[]>();
+
+  for (const step of steps) {
+    inDegree.set(step.id, step.dependencies.length);
+    for (const depId of step.dependencies) {
+      if (!adj.has(depId)) adj.set(depId, []);
+      adj.get(depId)!.push(step.id);
+    }
+  }
+
+  const queue: string[] = [];
+  for (const [id, deg] of inDegree) {
+    if (deg === 0) queue.push(id);
+  }
+
+  const levels: PlanStep[][] = [];
+  let processed = 0;
+
+  while (queue.length > 0) {
+    const levelSize = queue.length;
+    const level: PlanStep[] = [];
+
+    for (let i = 0; i < levelSize; i++) {
+      const id = queue.shift()!;
+      const step = stepMap.get(id);
+      if (step) level.push(step);
+      processed++;
+
+      for (const next of adj.get(id) ?? []) {
+        const newDeg = (inDegree.get(next) ?? 0) - 1;
+        inDegree.set(next, newDeg);
+        if (newDeg === 0) queue.push(next);
+      }
+    }
+
+    if (level.length > 0) levels.push(level);
+  }
+
+  return processed === steps.length ? levels : null;
+}
+
+/**
+ * 检测循环依赖（DFS）
+ */
+export function detectCycle(steps: PlanStep[]): string[] | null {
+  const stepMap = new Map(steps.map(s => [s.id, s]));
+  const visited = new Set<string>();
+  const inStack = new Set<string>();
+  const path: string[] = [];
+
+  const dfs = (id: string): boolean => {
+    if (inStack.has(id)) {
+      const cycleStart = path.indexOf(id);
+      path.push(id);
+      return true;
+    }
+    if (visited.has(id)) return false;
+
+    visited.add(id);
+    inStack.add(id);
+    path.push(id);
+
+    const step = stepMap.get(id);
+    if (step) {
+      for (const depId of step.dependencies) {
+        if (dfs(depId)) return true;
+      }
+    }
+
+    path.pop();
+    inStack.delete(id);
+    return false;
+  };
+
+  for (const step of steps) {
+    if (dfs(step.id)) {
+      return path.slice(path.indexOf(path[path.length - 1]));
+    }
+  }
+
+  return null;
+}
+
+/**
  * 规划器
  *
- * 负责将目标分解为可执行的步骤
+ * 负责将目标分解为可执行的步骤，支持 DAG 依赖图和拓扑排序。
  */
 export class Planner {
   private readonly llm: PlannerLLM | null;
@@ -154,6 +246,7 @@ export class Planner {
 
   /**
    * 创建计划 — 使用 LLM 智能分解（如果可用）或规则回退
+   * 创建后立即进行循环检测，有环则自动修复依赖。
    */
   async createPlan(goal: Goal): Promise<Plan> {
     const stepDescriptions = this.llm
@@ -177,14 +270,35 @@ export class Planner {
         steps[0].status = 'ready';
         lastSequentialIdx = 0;
       } else if (isParallel) {
-        // 并行步骤依赖同一个前序步骤
         steps[i].dependencies = [steps[lastSequentialIdx].id];
         steps[i].status = steps[lastSequentialIdx].status === 'ready' ? 'ready' : 'blocked';
       } else {
-        // 顺序步骤依赖前一个
         steps[i].dependencies = [steps[i - 1].id];
         steps[i].status = 'blocked';
         lastSequentialIdx = i;
+      }
+    }
+
+    // 创建时立即检测循环依赖并修复
+    const cycle = detectCycle(steps);
+    if (cycle) {
+      // 断环：移除环中最后一条依赖边
+      const lastInCycle = cycle[cycle.length - 2];
+      const firstInCycle = cycle[cycle.length - 1];
+      const step = steps.find(s => s.id === lastInCycle);
+      if (step) {
+        step.dependencies = step.dependencies.filter(d => d !== firstInCycle);
+      }
+    }
+
+    // 用拓扑排序重新编排 order
+    const topoLevels = topologicalSort(steps);
+    if (topoLevels) {
+      let orderIdx = 0;
+      for (const level of topoLevels) {
+        for (const step of level) {
+          step.order = orderIdx++;
+        }
       }
     }
 
@@ -238,15 +352,12 @@ export class Planner {
   }
 
   /**
-   * 获取就绪的步骤
+   * 获取就绪的步骤（返回所有依赖满足的步骤，支持并行调度）
    */
   getReadySteps(plan: Plan): PlanStep[] {
-    return plan.steps.filter(step => {
-      if (step.status !== 'ready') {
-        return false;
-      }
+    const ready = plan.steps.filter(step => {
+      if (step.status !== 'ready') return false;
 
-      // 检查所有依赖是否完成或已跳过（跳过的步骤视为可继续）
       for (const depId of step.dependencies) {
         const depStep = plan.steps.find(s => s.id === depId);
         if (!depStep || (depStep.status !== 'completed' && depStep.status !== 'skipped')) {
@@ -256,6 +367,66 @@ export class Planner {
 
       return true;
     });
+
+    return ready.sort((a, b) => a.order - b.order);
+  }
+
+  /**
+   * 获取执行层级（拓扑排序结果）— 每层可并行，层间有序
+   */
+  getExecutionLevels(plan: Plan): PlanStep[][] {
+    const levels = topologicalSort(plan.steps);
+    return levels ?? [plan.steps];
+  }
+
+  /**
+   * 部分回滚 — 从失败步骤回滚到指定安全点，保留安全点之前的结果
+   */
+  partialRollback(plan: Plan, failedStepId: string, rollbackTo?: string): Plan {
+    const failedIdx = plan.steps.findIndex(s => s.id === failedStepId);
+    if (failedIdx === -1) return plan;
+
+    // 确定回滚目标：指定的安全点 或 失败步骤之前最后一个成功的步骤
+    let rollbackIdx = 0;
+    if (rollbackTo) {
+      const targetIdx = plan.steps.findIndex(s => s.id === rollbackTo);
+      if (targetIdx !== -1 && targetIdx < failedIdx) {
+        rollbackIdx = targetIdx;
+      }
+    } else {
+      // 找到失败步骤之前最近的一个成功步骤，回滚到它之后
+      for (let i = failedIdx - 1; i >= 0; i--) {
+        if (plan.steps[i].status === 'completed') {
+          rollbackIdx = i + 1;
+          break;
+        }
+      }
+    }
+
+    const newSteps = plan.steps.map((step, idx) => {
+      // 保留回滚点之前的步骤
+      if (idx < rollbackIdx) return step;
+
+      // 回滚范围内的步骤重置为 ready（保留依赖关系）
+      return {
+        ...step,
+        status: 'ready' as const,
+        result: undefined,
+      };
+    });
+
+    // 确保依赖一致性：只有依赖都完成的步骤才是 ready
+    for (let i = rollbackIdx; i < newSteps.length; i++) {
+      const depsOk = newSteps[i].dependencies.every(depId => {
+        const dep = newSteps.find(s => s.id === depId);
+        return dep?.status === 'completed' || dep?.status === 'skipped';
+      });
+      if (!depsOk) {
+        newSteps[i] = { ...newSteps[i], status: 'blocked' };
+      }
+    }
+
+    return { ...plan, steps: newSteps };
   }
 
   /**
