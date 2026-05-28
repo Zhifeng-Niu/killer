@@ -99,7 +99,8 @@ export type EventType =
   | 'mission.resumed'
   // Prefrontal 事件 (规划编排)
   | 'goal.created'
-  | 'goal.completed';
+  | 'goal.completed'
+  | 'execution.progress';
 
 /**
  * 轨迹记录

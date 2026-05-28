@@ -1484,6 +1484,24 @@ Examples:
     // 解析 plan ID 和 step 信息
     const planMatch = content.match(/Plan "([^"]+)" step (\d+)\/(\d+): (.+)/);
     const stepDesc = planMatch ? planMatch[4] : content.replace('[AUTO-CONTINUE] ', '');
+    const goalId = planMatch ? planMatch[1] : '';
+    const stepNum = planMatch ? parseInt(planMatch[2]) : 0;
+    const totalSteps = planMatch ? parseInt(planMatch[3]) : 0;
+
+    // 发射执行进度事件
+    if (planMatch) {
+      this.consciousness.emit({
+        type: 'execution.progress',
+        source: 'prefrontal',
+        data: {
+          goalId,
+          step: stepNum,
+          total: totalSteps,
+          description: stepDesc,
+          autoContinueCount: this.autoContinueCount,
+        },
+      });
+    }
 
     // 构建 prompt（轻量版 — 不含用户画像、情感等）
     const systemContext = this.buildSystemPrompt(stepDesc);
