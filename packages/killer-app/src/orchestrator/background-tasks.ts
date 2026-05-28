@@ -6647,3 +6647,217 @@ export function formatCorrectionResult(result: CorrectionResult): string {
 
   return parts.join('\n');
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Waypoint 90: Context Window Budget Optimizer — 预算优化器
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Section 预算分配
+ */
+export interface SectionBudget {
+  prefix: string;
+  /** 分配的字符预算 */
+  charBudget: number;
+  /** 实际字符数 */
+  actualChars: number;
+  /** 权重分数 */
+  weight: number;
+  /** 操作: 'keep' | 'truncate' | 'drop' */
+  action: 'keep' | 'truncate' | 'drop';
+}
+
+/**
+ * 预算分配结果
+ */
+export interface BudgetAllocation {
+  sections: SectionBudget[];
+  totalBudget: number;
+  totalUsed: number;
+  utilization: number;
+}
+
+/**
+ * Section 预算优先级（固定权重，可被 learned offsets 调整）
+ */
+const SECTION_BUDGET_WEIGHTS: Record<string, number> = {
+  'You have ': 0.15,           // Identity — 始终高优先级
+  'DREAM INSIGHTS': 0.03,
+  'META-COGNITION': 0.04,
+  'ATTENTION STATE': 0.03,
+  'RESPONSE STRATEGY': 0.04,
+  'PRELOADED CONTEXT': 0.04,
+  'TOOL PERFORMANCE': 0.04,
+  'TOOL FAILURE PATTERNS': 0.03,
+  'LEARNED BEHAVIORS': 0.03,
+  'TEMPORAL CONTEXT': 0.03,
+  'CONVERSATION FLOW': 0.03,
+  'LENGTH PREFERENCE': 0.02,
+  'TOOL PRIORITY': 0.03,
+  'CONVERSATION HEALTH': 0.03,
+  'MULTI-INTENT': 0.04,
+  'INPUT AMBIGUITY': 0.04,
+  'GOAL DEPENDENCIES': 0.03,
+  'TOPIC TRANSITION': 0.02,
+  'SUGGESTED ACTIONS': 0.04,
+  'CONVERSATION RHYTHM': 0.02,
+  'USER EXPERTISE': 0.02,
+  'EMOTIONAL RESPONSE STRATEGY': 0.03,
+  'PERCEPTION FUSION': 0.03,
+  'RESTORED CONTEXT': 0.04,
+  'STRATEGY COHERENCE': 0.03,
+  'COGNITIVE STATE': 0.03,
+  'COMPOSITE RESPONSE STRATEGY': 0.04,
+  'INTENT EVOLUTION': 0.02,
+  'STYLE GUIDANCE': 0.03,
+  'KNOWLEDGE GRAPH': 0.03,
+  'COGNITIVE FATIGUE': 0.03,
+  'GAP RECOVERY': 0.04,
+  'LEARNED LESSONS': 0.03,
+  'RHYTHM ADAPTATION': 0.02,
+  'INTENT DECOMPOSITION': 0.04,
+  'SEMANTIC NETWORK': 0.03,
+  'RESPONSE TIMING': 0.03,
+  'CONVERSATION SUMMARY': 0.05,
+  'SELF-CORRECTION': 0.04,
+};
+
+/** 最小保留预算（字符） */
+const MIN_SECTION_BUDGET = 50;
+/** 低权重阈值 — 低于此值可能被 drop */
+const DROP_THRESHOLD = 0.02;
+
+/**
+ * 计算 section 实际字符数
+ */
+function getSectionLength(prompt: string, prefix: string): number {
+  const startIdx = prompt.indexOf(prefix);
+  if (startIdx === -1) return 0;
+
+  // 找到下一个 section 的起始位置
+  let endIdx = prompt.length;
+  for (const otherPrefix of Object.keys(SECTION_BUDGET_WEIGHTS)) {
+    if (otherPrefix === prefix) continue;
+    const otherIdx = prompt.indexOf(otherPrefix, startIdx + prefix.length);
+    if (otherIdx > startIdx && otherIdx < endIdx) {
+      endIdx = otherIdx;
+    }
+  }
+
+  return endIdx - startIdx;
+}
+
+/**
+ * 分配 context window 预算
+ */
+export function allocateBudget(
+  prompt: string,
+  totalBudget: number,
+  learnedOffsets?: Record<string, number>,
+): BudgetAllocation {
+  const sections: SectionBudget[] = [];
+
+  // 收集活跃 sections
+  const activePrefixes = Object.keys(SECTION_BUDGET_WEIGHTS)
+    .filter(prefix => prompt.includes(prefix));
+
+  if (activePrefixes.length === 0) {
+    return { sections: [], totalBudget, totalUsed: 0, utilization: 0 };
+  }
+
+  // 计算调整后权重
+  const adjustedWeights: Record<string, number> = {};
+  let totalWeight = 0;
+
+  for (const prefix of activePrefixes) {
+    const base = SECTION_BUDGET_WEIGHTS[prefix] ?? 0.03;
+    const offset = learnedOffsets?.[prefix] ?? 0;
+    const adjusted = Math.max(0.01, base + offset);
+    adjustedWeights[prefix] = adjusted;
+    totalWeight += adjusted;
+  }
+
+  // 按权重比例分配预算
+  let totalUsed = 0;
+
+  for (const prefix of activePrefixes) {
+    const weight = adjustedWeights[prefix];
+    const ratio = weight / totalWeight;
+    const charBudget = Math.max(MIN_SECTION_BUDGET, Math.floor(totalBudget * ratio));
+    const actualChars = getSectionLength(prompt, prefix);
+
+    let action: 'keep' | 'truncate' | 'drop';
+    if (actualChars <= charBudget) {
+      action = 'keep';
+    } else if (weight < DROP_THRESHOLD && actualChars > charBudget * 3) {
+      action = 'drop';
+    } else {
+      action = 'truncate';
+    }
+
+    const effectiveBudget = action === 'drop' ? 0 : charBudget;
+    totalUsed += Math.min(actualChars, effectiveBudget);
+
+    sections.push({
+      prefix,
+      charBudget: effectiveBudget,
+      actualChars,
+      weight,
+      action,
+    });
+  }
+
+  return {
+    sections,
+    totalBudget,
+    totalUsed,
+    utilization: totalBudget > 0 ? totalUsed / totalBudget : 0,
+  };
+}
+
+/**
+ * 按预算裁剪 prompt
+ */
+export function pruneByBudget(prompt: string, allocation: BudgetAllocation): string {
+  let result = prompt;
+
+  for (const section of allocation.sections) {
+    if (section.action === 'drop') {
+      // 移除整个 section
+      const startIdx = result.indexOf(section.prefix);
+      if (startIdx === -1) continue;
+
+      let endIdx = result.length;
+      for (const other of allocation.sections) {
+        if (other.prefix === section.prefix) continue;
+        const otherIdx = result.indexOf(other.prefix, startIdx + section.prefix.length);
+        if (otherIdx > startIdx && otherIdx < endIdx) {
+          endIdx = otherIdx;
+        }
+      }
+
+      result = result.slice(0, startIdx) + result.slice(endIdx);
+    } else if (section.action === 'truncate') {
+      const startIdx = result.indexOf(section.prefix);
+      if (startIdx === -1) continue;
+
+      const endIdx = Math.min(startIdx + section.charBudget, result.length);
+      // 找下一个 section 起始
+      let nextSectionIdx = result.length;
+      for (const other of allocation.sections) {
+        if (other.prefix === section.prefix) continue;
+        const otherIdx = result.indexOf(other.prefix, startIdx + section.prefix.length);
+        if (otherIdx > startIdx && otherIdx < nextSectionIdx) {
+          nextSectionIdx = otherIdx;
+        }
+      }
+
+      const actualEnd = Math.min(endIdx, nextSectionIdx);
+      if (actualEnd < nextSectionIdx) {
+        result = result.slice(0, actualEnd) + '...' + result.slice(nextSectionIdx);
+      }
+    }
+  }
+
+  return result;
+}

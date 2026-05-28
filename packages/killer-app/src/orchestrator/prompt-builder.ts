@@ -9,7 +9,7 @@ import type { PersonaEngine } from '../persona/engine.js';
 import type { HippocampusEngine, Episode } from '@killer/core';
 import type { ToolExecutor, EssenceForge, Plan } from '@killer/core';
 import type { ContextWindowManager, ContextMessage } from './context.js';
-import { scoreSectionRelevance, deduplicateSections } from './background-tasks.js';
+import { scoreSectionRelevance, deduplicateSections, allocateBudget, pruneByBudget } from './background-tasks.js';
 
 /**
  * 系统提示构建所需的依赖
@@ -135,6 +135,8 @@ export interface PromptBuilderDeps {
   conversationSummary?: string;
   /** 自校正指导 */
   correctionGuidance?: string;
+  /** 预算优化后的裁剪 prompt（由 agent 计算） */
+  prunedPrompt?: string;
 }
 
 /**
@@ -1015,7 +1017,14 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
     }
   }
 
-  return parts.join('\n');
+  // === 预算优化：精细截断/丢弃超限 sections ===
+  const joined = parts.join('\n');
+  const budget = allocateBudget(joined, MAX_PROMPT_CHARS, deps.sectionWeightOffsets);
+  if (budget.utilization > 0.8 && budget.sections.some(s => s.action !== 'keep')) {
+    return pruneByBudget(joined, budget);
+  }
+
+  return joined;
 }
 
 /**

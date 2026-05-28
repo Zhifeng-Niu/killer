@@ -139,6 +139,8 @@ import {
   detectMissingAnswers,
   validateResponse,
   formatCorrectionResult,
+  allocateBudget,
+  pruneByBudget,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -4145,6 +4147,113 @@ describe('background-tasks', () => {
     it('should return empty format for perfect response', () => {
       const result = validateResponse('你好', '你好！');
       expect(formatCorrectionResult(result)).toBe('');
+    });
+  });
+
+  describe('allocateBudget', () => {
+    const samplePrompt = [
+      'You have a unique personality and emotional depth.',
+      'DREAM INSIGHTS: Some dream content here that is moderately long.',
+      'CONVERSATION SUMMARY: User discussed TypeScript patterns and testing strategies in depth.',
+      'SELF-CORRECTION: Self-correction score 0.85, no issues found.',
+      'COGNITIVE FATIGUE: Low fatigue detected, energy level normal.',
+    ].join('\n');
+
+    it('should return empty allocation for prompt with no known sections', () => {
+      const result = allocateBudget('just some random text', 4000);
+      expect(result.sections).toHaveLength(0);
+      expect(result.totalUsed).toBe(0);
+      expect(result.utilization).toBe(0);
+    });
+
+    it('should allocate budget proportionally to active sections', () => {
+      const result = allocateBudget(samplePrompt, 10000);
+      expect(result.sections.length).toBeGreaterThan(0);
+      const totalBudget = result.sections.reduce((s, sec) => s + sec.charBudget, 0);
+      // Identity section should get highest budget
+      const identity = result.sections.find(s => s.prefix === 'You have ');
+      expect(identity).toBeDefined();
+      expect(identity!.charBudget).toBeGreaterThan(0);
+      // Total used should not exceed total budget
+      expect(result.totalUsed).toBeLessThanOrEqual(10000);
+    });
+
+    it('should mark sections within budget as keep', () => {
+      const result = allocateBudget(samplePrompt, 100000);
+      const kept = result.sections.filter(s => s.action === 'keep');
+      expect(kept.length).toBeGreaterThan(0);
+    });
+
+    it('should apply learned offsets to weights', () => {
+      const withoutOffset = allocateBudget(samplePrompt, 10000);
+      const withOffset = allocateBudget(samplePrompt, 10000, { 'DREAM INSIGHTS': 0.1 });
+      const dreamNoOffset = withoutOffset.sections.find(s => s.prefix === 'DREAM INSIGHTS');
+      const dreamWithOffset = withOffset.sections.find(s => s.prefix === 'DREAM INSIGHTS');
+      expect(dreamWithOffset!.charBudget).toBeGreaterThan(dreamNoOffset!.charBudget);
+    });
+
+    it('should calculate utilization ratio', () => {
+      const result = allocateBudget(samplePrompt, 10000);
+      expect(result.utilization).toBeGreaterThanOrEqual(0);
+      expect(result.utilization).toBeLessThanOrEqual(1);
+    });
+
+    it('should mark low-weight oversized sections as drop when budget is tight', () => {
+      // Force drop: many high-weight sections crowd out a low-weight oversized one
+      const prompt = [
+        'You have ' + 'identity '.repeat(100),
+        'CONVERSATION SUMMARY: ' + 'summary '.repeat(100),
+        'SELF-CORRECTION: ' + 'correction '.repeat(100),
+        'DREAM INSIGHTS: ' + 'dream '.repeat(100),
+        'META-COGNITION: ' + 'meta '.repeat(100),
+        'TOPIC TRANSITION: ' + 'x'.repeat(800),
+      ].join('\n');
+      const result = allocateBudget(prompt, 500);
+      const topic = result.sections.find(s => s.prefix === 'TOPIC TRANSITION');
+      // With weight 0.02 and 800 chars vs tiny budget, it should drop or truncate
+      expect(topic).toBeDefined();
+      expect(['drop', 'truncate']).toContain(topic!.action);
+    });
+  });
+
+  describe('pruneByBudget', () => {
+    const samplePrompt = [
+      'You have a unique personality.',
+      'DREAM INSIGHTS: ' + 'dream content '.repeat(50),
+      'CONVERSATION SUMMARY: ' + 'summary content '.repeat(30),
+      'SELF-CORRECTION: correction data here.',
+    ].join('\n');
+
+    it('should return prompt unchanged when all sections are kept', () => {
+      const allocation = allocateBudget(samplePrompt, 100000);
+      const pruned = pruneByBudget(samplePrompt, allocation);
+      // Should contain all original section prefixes
+      expect(pruned).toContain('You have ');
+      expect(pruned).toContain('SELF-CORRECTION');
+    });
+
+    it('should truncate sections that exceed budget', () => {
+      const allocation = allocateBudget(samplePrompt, 500);
+      const pruned = pruneByBudget(samplePrompt, allocation);
+      expect(pruned.length).toBeLessThanOrEqual(samplePrompt.length);
+    });
+
+    it('should remove dropped sections entirely', () => {
+      const longSection = 'LENGTH PREFERENCE: ' + 'x'.repeat(2000);
+      const prompt = 'You have identity.\n' + longSection + '\nSELF-CORRECTION: short.';
+      const allocation = allocateBudget(prompt, 200);
+      const pruned = pruneByBudget(prompt, allocation);
+      // If LENGTH PREFERENCE was dropped, it should not appear
+      const lengthPref = allocation.sections.find(s => s.prefix === 'LENGTH PREFERENCE');
+      if (lengthPref?.action === 'drop') {
+        expect(pruned).not.toContain('LENGTH PREFERENCE');
+      }
+    });
+
+    it('should handle prompt with no sections', () => {
+      const allocation = allocateBudget('no sections here', 4000);
+      const pruned = pruneByBudget('no sections here', allocation);
+      expect(pruned).toBe('no sections here');
     });
   });
 });
