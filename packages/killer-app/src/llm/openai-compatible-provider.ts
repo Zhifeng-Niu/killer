@@ -45,19 +45,20 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     models: ['MiniMax-M2.7', 'MiniMax-M2.7-highspeed'],
     envKey: 'MINIMAX_API_KEY',
     description: 'MiniMax (海螺 AI)',
+    keyPrefix: 'sk-cp-',
     helpUrl: 'https://platform.minimaxi.com/',
     anthropicBaseUrl: 'https://api.minimaxi.com/anthropic/v1/messages',
     anthropicModels: ['MiniMax-M2.7', 'MiniMax-M2.7-highspeed'],
   },
   glm: {
     baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4/chat/completions',
-    defaultModel: 'glm-4.7',
-    models: ['glm-5.1', 'glm-5', 'glm-4.7', 'glm-4.5-air'],
+    defaultModel: 'GLM-4.7',
+    models: ['GLM-5.1', 'GLM-5', 'GLM-4.7', 'GLM-4.5-Air'],
     envKey: 'GLM_API_KEY',
     description: 'GLM / 智谱 AI',
     helpUrl: 'https://open.bigmodel.cn/',
     anthropicBaseUrl: 'https://open.bigmodel.cn/api/anthropic/v1/messages',
-    anthropicModels: ['glm-5.1', 'glm-5', 'glm-4.7', 'glm-4.5-air'],
+    anthropicModels: ['GLM-5.1', 'GLM-5', 'GLM-4.7', 'GLM-4.5-Air'],
   },
   deepseek: {
     baseUrl: 'https://api.deepseek.com/v1/chat/completions',
@@ -82,6 +83,7 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
     envKey: 'MOONSHOT_API_KEY',
     description: 'Moonshot / Kimi (月之暗面)',
+    keyPrefix: 'sk-kimi',
     helpUrl: 'https://platform.moonshot.cn/',
   },
   baichuan: {
@@ -120,6 +122,39 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     envKey: 'GEMINI_API_KEY',
     description: 'Google Gemini',
     helpUrl: 'https://aistudio.google.com/apikey',
+  },
+  groq: {
+    baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
+    defaultModel: 'llama-3.3-70b-versatile',
+    models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
+    envKey: 'GROQ_API_KEY',
+    description: 'Groq (超快推理)',
+    keyPrefix: 'gsk_',
+    helpUrl: 'https://console.groq.com/keys',
+  },
+  together: {
+    baseUrl: 'https://api.together.xyz/v1/chat/completions',
+    defaultModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+    models: ['meta-llama/Llama-3.3-70B-Instruct-Turbo', 'mistralai/Mixtral-8x7B-Instruct-v0.1'],
+    envKey: 'TOGETHER_API_KEY',
+    description: 'Together AI',
+    helpUrl: 'https://api.together.xyz/settings/api-keys',
+  },
+  stepfun: {
+    baseUrl: 'https://api.stepfun.com/v1/chat/completions',
+    defaultModel: 'step-2-16k',
+    models: ['step-2-16k', 'step-1-8k', 'step-1-flash'],
+    envKey: 'STEPFUN_API_KEY',
+    description: 'Stepfun / 阶跃星辰',
+    helpUrl: 'https://platform.stepfun.com/',
+  },
+  hunyuan: {
+    baseUrl: 'https://api.hunyuan.cloud.tencent.com/v1/chat/completions',
+    defaultModel: 'hunyuan-turbos',
+    models: ['hunyuan-turbos', 'hunyuan-pro', 'hunyuan-lite'],
+    envKey: 'HUNYUAN_API_KEY',
+    description: 'Hunyuan / 混元 (腾讯)',
+    helpUrl: 'https://console.cloud.tencent.com/hunyuan',
   },
 };
 
@@ -287,10 +322,23 @@ export class OpenAICompatibleProvider implements LLMProvider {
       'Content-Type': 'application/json',
     };
 
+    // 转换消息格式：killer-core 用 camelCase，API 需要 snake_case
+    const apiMessages = messages.map(m => {
+      if (m.role === 'tool') {
+        const tm = m as { role: 'tool'; toolCallId: string; content: string };
+        return { role: 'tool', tool_call_id: tm.toolCallId, content: tm.content };
+      }
+      if (m.role === 'assistant' && 'tool_calls' in m) {
+        const am = m as { role: 'assistant'; content: string; tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }> };
+        return { role: 'assistant', content: am.content, tool_calls: am.tool_calls };
+      }
+      return m;
+    });
+
     const body: Record<string, unknown> = {
       model: this.model,
       max_tokens: this.maxTokens,
-      messages,
+      messages: apiMessages,
       tools,
       tool_choice: 'auto',
     };
@@ -447,4 +495,101 @@ export function formatProviderError(
     default:
       return `${preset?.description ?? provider} 请求失败 (${status})。${helpSuffix}`;
   }
+}
+
+/** 内置 provider（非 OpenAI-compatible） */
+const BUILTIN_PROVIDER_OPTIONS: Array<{ name: string; description: string; envKey: string; dualProtocol?: boolean }> = [
+  { name: 'anthropic', description: 'Anthropic (Claude)', envKey: 'ANTHROPIC_API_KEY' },
+  { name: 'openai', description: 'OpenAI (GPT)', envKey: 'OPENAI_API_KEY' },
+  { name: 'openrouter', description: 'OpenRouter (聚合多模型)', envKey: 'OPENROUTER_API_KEY' },
+  { name: 'gemini', description: 'Google Gemini', envKey: 'GOOGLE_API_KEY' },
+  { name: 'mock', description: '体验模式 (无需 API key)', envKey: '' },
+];
+
+/**
+ * 从 registry 派生 init-wizard 所需的 Provider 列表
+ *
+ * 单一数据源：所有 provider 信息从 OPENAI_COMPATIBLE_PROVIDERS + 内置列表派生，
+ * 避免 init-wizard 维护重复的 PROVIDER_OPTIONS 数组。
+ */
+export function getProviderOptions(): Array<{
+  name: string;
+  description: string;
+  envKey: string;
+  dualProtocol?: boolean;
+}> {
+  const options: Array<{ name: string; description: string; envKey: string; dualProtocol?: boolean }> = [];
+
+  // OpenAI-compatible providers（从 registry 派生）
+  for (const [name, preset] of Object.entries(OPENAI_COMPATIBLE_PROVIDERS)) {
+    options.push({
+      name,
+      description: preset.description,
+      envKey: preset.envKey,
+      dualProtocol: !!preset.anthropicBaseUrl,
+    });
+  }
+
+  // 内置 providers
+  options.push(...BUILTIN_PROVIDER_OPTIONS);
+
+  return options;
+}
+
+/**
+ * 从 registry 派生 env key → provider 的映射
+ *
+ * 用于自动扫描环境变量中已有的 API Key。
+ */
+export function getProviderEnvKeys(): Record<string, string> {
+  const mapping: Record<string, string> = {};
+
+  for (const [name, preset] of Object.entries(OPENAI_COMPATIBLE_PROVIDERS)) {
+    mapping[preset.envKey] = name;
+  }
+
+  for (const builtin of BUILTIN_PROVIDER_OPTIONS) {
+    if (builtin.envKey) {
+      mapping[builtin.envKey] = builtin.name;
+    }
+  }
+
+  return mapping;
+}
+
+/**
+ * 从 API Key 格式自动推断服务商
+ *
+ * 基于 registry 的 keyPrefix 字段 + 内置规则进行匹配。
+ * 单一数据源：keyPrefix 定义在 registry 中，此函数消费 registry 数据。
+ */
+export function detectProviderFromKey(key: string): { provider: string; confidence: 'high' | 'low' } | null {
+  if (!key || key.length < 10) return null;
+
+  // 从 registry 的 keyPrefix 字段匹配
+  for (const [name, preset] of Object.entries(OPENAI_COMPATIBLE_PROVIDERS)) {
+    if (preset.keyPrefix && key.startsWith(preset.keyPrefix)) {
+      return { provider: name, confidence: 'high' };
+    }
+  }
+
+  // 内置 provider 特殊规则（无 keyPrefix 的特殊格式）
+  if (key.startsWith('sk-ant-')) return { provider: 'anthropic', confidence: 'high' };
+  if (key.startsWith('sk-or-')) return { provider: 'openrouter', confidence: 'high' };
+  if (key.startsWith('AIza')) return { provider: 'gemini', confidence: 'high' };
+
+  // 智谱 GLM — JWT 格式 (三段 base64url)
+  if (/^eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(key)) {
+    return { provider: 'glm', confidence: 'high' };
+  }
+
+  // OpenAI — 通常包含 proj- 或 org- 段
+  if (key.startsWith('sk-') && (key.includes('proj-') || key.includes('org-'))) {
+    return { provider: 'openai', confidence: 'high' };
+  }
+
+  // 低置信度 — sk- 前缀但不确定
+  if (key.startsWith('sk-')) return { provider: 'deepseek', confidence: 'low' };
+
+  return null;
 }

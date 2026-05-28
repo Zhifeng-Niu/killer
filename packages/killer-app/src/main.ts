@@ -6,6 +6,7 @@
 
 import { KillerAgent, type AgentConfig } from './orchestrator/index.js';
 import { createLLMProvider, getSupportedProviders } from './llm/factory.js';
+import { OPENAI_COMPATIBLE_PROVIDERS, formatProviderError } from './llm/openai-compatible-provider.js';
 import { startReadlineLoop } from './cli/index.js';
 import { startTUI } from './tui/index.js';
 import { APIServer } from './api/index.js';
@@ -49,6 +50,10 @@ function showBanner(config: KillerConfig): void {
       yi: 'Yi (零一万物)',
       siliconflow: 'SiliconFlow (硅基流动)',
       volcengine: '火山方舟 (字节跳动)',
+      groq: 'Groq',
+      together: 'Together AI',
+      stepfun: '阶跃星辰',
+      hunyuan: '混元 (腾讯)',
       anthropic: 'Anthropic (Claude)',
       openai: 'OpenAI (GPT)',
       openrouter: 'OpenRouter',
@@ -173,12 +178,56 @@ function parseArgs(): { debug: boolean; help: boolean; api: boolean; port: numbe
 }
 
 /**
+ * 启动时轻量级 API Key 验证
+ *
+ * 发一个 maxTokens=5 的请求验证 key 是否有效。
+ * 401 时打印友好警告（不阻断启动）。
+ */
+async function validateApiKey(config: KillerConfig): Promise<void> {
+  if (config.llm.provider === 'mock' || !config.llm.apiKey) return;
+
+  const preset = OPENAI_COMPATIBLE_PROVIDERS[config.llm.provider];
+  if (!preset) return;
+
+  const YELLOW = '\x1b[33m';
+  const DIM = '\x1b[2m';
+  const R = '\x1b[0m';
+
+  try {
+    const response = await fetch(preset.baseUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${config.llm.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: config.llm.model || preset.defaultModel,
+        max_tokens: 5,
+        messages: [{ role: 'user', content: 'Hi' }],
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (response.status === 401) {
+      const helpUrl = preset.helpUrl;
+      console.log(`  ${YELLOW}⚠ API key 验证失败 (401 Unauthorized)${R}`);
+      console.log(`  ${DIM}Key 可能已过期。${helpUrl ? `获取新 key: ${helpUrl}` : '请检查 API key'}${R}`);
+      console.log(`  ${DIM}Agent 仍会启动，但 API 调用将失败。运行 /key <new-key> 可热更新。${R}`);
+      console.log('');
+    }
+  } catch {
+    // 网络错误 — 不阻断启动
+  }
+}
+
+/**
  * 验证配置 — 无 API key 时引导用户配置或 fallback 到 mock provider
  */
 async function validateConfig(config: KillerConfig): Promise<void> {
   const validProviders = [
     'anthropic', 'openai', 'openrouter', 'gemini', 'mock',
     'minimax', 'glm', 'deepseek', 'qwen', 'moonshot', 'baichuan', 'yi', 'siliconflow', 'volcengine',
+    'groq', 'together', 'stepfun', 'hunyuan',
     'openai-compatible',
   ];
   if (!validProviders.includes(config.llm.provider)) {
@@ -310,11 +359,16 @@ async function main(): Promise<void> {
   const logger = Logger.getInstance();
   logger.setLevel(config.logging.level as 'debug' | 'info' | 'warn' | 'error' | 'silent');
 
-  // 显示横幅
-  showBanner(config);
+  // 决定是否使用 TUI 模式（需要在 banner 和 boot 之前判断）
+  const useTUI = tui || !cli;
+
+  // 显示横幅（TUI 模式下跳过 — TUI 有自己的 header）
+  if (!useTUI) {
+    showBanner(config);
+  }
 
   // 提示 fresh 模式
-  if (fresh) {
+  if (fresh && !useTUI) {
     console.log(`  ${'\x1b[33m'}Fresh start${'\x1b[0m'} — starting clean, no previous session restored.`);
     console.log('');
   }
@@ -387,10 +441,17 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Boot 完成，恢复日志级别（CLI 模式下也恢复，以便运行时错误能显示）
-  if (isCliMode) {
+  // Boot 完成，恢复日志级别
+  // TUI 模式下保持 error 级别 — 避免 INFO 日志混入 Ink 渲染输出
+  // CLI 模式下恢复原始级别
+  if (useTUI) {
+    logger.setLevel('error');
+  } else if (isCliMode) {
     logger.setLevel(savedLevel);
   }
+
+  // 后台验证 API Key（不阻断启动）
+  validateApiKey(config).catch(() => {});
 
   // 启动 HTTP API 服务器（如果请求）
   let apiServer: APIServer | undefined;
@@ -428,8 +489,6 @@ async function main(): Promise<void> {
   }
 
   // 启动交互式界面
-  const useTUI = tui || !cli;
-
   if (useTUI) {
     const instance = startTUI(agent);
     instance.waitUntilExit().then(() => shutdown());

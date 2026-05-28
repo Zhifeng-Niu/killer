@@ -14,7 +14,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as readline from 'node:readline';
-import { OPENAI_COMPATIBLE_PROVIDERS } from '../llm/openai-compatible-provider.js';
+import {
+  OPENAI_COMPATIBLE_PROVIDERS,
+  getProviderOptions,
+  getProviderEnvKeys,
+  detectProviderFromKey as detectProviderFromRegistry,
+} from '../llm/openai-compatible-provider.js';
 
 interface ProviderOption {
   name: string;
@@ -24,77 +29,11 @@ interface ProviderOption {
   dualProtocol?: boolean;
 }
 
-export const PROVIDER_OPTIONS: ProviderOption[] = [
-  { name: 'deepseek', description: 'DeepSeek (推荐 — 性价比最高)', envKey: 'DEEPSEEK_API_KEY' },
-  { name: 'glm', description: 'GLM / 智谱 AI', envKey: 'GLM_API_KEY', dualProtocol: true },
-  { name: 'minimax', description: 'MiniMax (海螺 AI)', envKey: 'MINIMAX_API_KEY', dualProtocol: true },
-  { name: 'qwen', description: 'Qwen / 通义千问 (阿里云)', envKey: 'DASHSCOPE_API_KEY' },
-  { name: 'moonshot', description: 'Moonshot / Kimi (月之暗面)', envKey: 'MOONSHOT_API_KEY' },
-  { name: 'siliconflow', description: 'SiliconFlow (硅基流动)', envKey: 'SILICONFLOW_API_KEY' },
-  { name: 'volcengine', description: 'Volcengine / 火山方舟 (字节跳动)', envKey: 'VOLCENGINE_API_KEY' },
-  { name: 'baichuan', description: 'Baichuan / 百川智能', envKey: 'BAICHUAN_API_KEY' },
-  { name: 'yi', description: 'Yi / 零一万物', envKey: 'YI_API_KEY' },
-  { name: 'anthropic', description: 'Anthropic (Claude)', envKey: 'ANTHROPIC_API_KEY' },
-  { name: 'openai', description: 'OpenAI (GPT)', envKey: 'OPENAI_API_KEY' },
-  { name: 'openrouter', description: 'OpenRouter (聚合多模型)', envKey: 'OPENROUTER_API_KEY' },
-  { name: 'gemini', description: 'Google Gemini', envKey: 'GOOGLE_API_KEY' },
-  { name: 'mock', description: '体验模式 (无需 API key)', envKey: '' },
-];
+/** 从 registry 派生的 provider 列表 — 单一数据源 */
+export const PROVIDER_OPTIONS: ProviderOption[] = getProviderOptions();
 
-/** 获取 API Key 的链接 */
-const HELP_LINKS: Record<string, string> = {
-  deepseek: 'https://platform.deepseek.com/api_keys',
-  glm: 'https://open.bigmodel.cn/usercenter/apikeys',
-  minimax: 'https://platform.minimaxi.com/',
-  qwen: 'https://dashscope.console.aliyun.com/apiKey',
-  moonshot: 'https://platform.moonshot.cn/console/api-keys',
-  siliconflow: 'https://cloud.siliconflow.cn/account/ak',
-  volcengine: 'https://console.volcengine.com/ark',
-  baichuan: 'https://platform.baichuan-ai.com/',
-  yi: 'https://platform.lingyiwanwu.com/',
-  anthropic: 'https://console.anthropic.com/settings/keys',
-  openai: 'https://platform.openai.com/api-keys',
-  openrouter: 'https://openrouter.ai/keys',
-  gemini: 'https://aistudio.google.com/apikey',
-};
-
-/**
- * 从 API Key 格式自动推断服务商
- *
- * 已知的 Key 前缀格式:
- * - Anthropic: sk-ant-api03-...
- * - OpenRouter: sk-or-...
- * - Google Gemini: AIza...
- * - DeepSeek: sk-... (24位 hex)
- * - OpenAI: sk-... (较长，通常含 proj- 或 org- 前缀)
- * - 智谱 GLM: JWT 格式 (xxx.yyy.zzz)
- * - 其他中国服务商: sk-... 或纯 hex 字符串
- */
-export function detectProviderFromKey(key: string): { provider: string; confidence: 'high' | 'low' } | null {
-  if (!key || key.length < 10) return null;
-
-  // 高置信度 — 前缀唯一
-  if (key.startsWith('sk-ant-')) return { provider: 'anthropic', confidence: 'high' };
-  if (key.startsWith('sk-or-')) return { provider: 'openrouter', confidence: 'high' };
-  if (key.startsWith('AIza')) return { provider: 'gemini', confidence: 'high' };
-  if (key.startsWith('sk-cp-')) return { provider: 'minimax', confidence: 'high' };
-  if (key.startsWith('sk-kimi')) return { provider: 'moonshot', confidence: 'high' };
-
-  // 智谱 GLM — JWT 格式 (三段 base64url，含 "." 分隔)
-  if (/^eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(key)) {
-    return { provider: 'glm', confidence: 'high' };
-  }
-
-  // OpenAI — 通常包含 proj- 或 org- 段
-  if (key.startsWith('sk-') && (key.includes('proj-') || key.includes('org-'))) {
-    return { provider: 'openai', confidence: 'high' };
-  }
-
-  // 低置信度 — sk- 前缀但不确定是哪家
-  if (key.startsWith('sk-')) return { provider: 'deepseek', confidence: 'low' };
-
-  return null;
-}
+/** 从 registry 重新导出 detectProviderFromKey（单一数据源） */
+export { detectProviderFromRegistry as detectProviderFromKey };
 
 /**
  * 让用户选择模型（可选步骤）
@@ -165,7 +104,7 @@ async function handleKeyPaste(
     provider = PROVIDER_OPTIONS.find(p => p.name === providerName)!;
     confidence = 'high';
   } else {
-    const detected = detectProviderFromKey(key);
+    const detected = detectProviderFromRegistry(key);
     if (detected) {
       providerName = detected.provider;
       provider = PROVIDER_OPTIONS.find(p => p.name === providerName)!;
@@ -182,11 +121,10 @@ async function handleKeyPaste(
     }
   }
 
-  // 模型选择
-  const model = await selectModel(providerName, question);
-
-  // 双协议选择
-  const protocol = await selectProtocol(providerName, question);
+  // 高置信度 → 跳过模型/协议选择（消费级 0 交互）
+  const skipOptionalSteps = confidence === 'high';
+  const model = skipOptionalSteps ? undefined : await selectModel(providerName, question);
+  const protocol = skipOptionalSteps ? undefined : await selectProtocol(providerName, question);
 
   // 测试连接
   console.log('  验证中...');
@@ -264,22 +202,34 @@ export async function runInitWizard(): Promise<void> {
     // ── 智能检测：扫描 env 中已有的 key ──
     const detectedKeys = detectAvailableKeys();
 
-    if (detectedKeys.length > 0) {
-      console.log('  ✓ 检测到 API Key:');
+    if (detectedKeys.length === 1) {
+      // 单 key 零交互 — 自动保存
+      const dk = detectedKeys[0];
+      const provider = PROVIDER_OPTIONS.find(p => p.envKey === dk.envKey);
+      if (provider) {
+        await saveConfig(provider.name, dk.key, undefined);
+        console.log(`  ✓ 检测到 ${provider.description}，已自动配置！`);
+        console.log('  运行 killer 即可启动。');
+        return;
+      }
+    }
+
+    if (detectedKeys.length > 1) {
+      console.log('  ✓ 检测到多个 API Key:');
       for (const dk of detectedKeys) {
         const provider = PROVIDER_OPTIONS.find(p => p.envKey === dk.envKey);
         console.log(`    ${provider?.description ?? dk.envKey}: ${maskKey(dk.key)}`);
       }
       console.log('');
-      const useDetected = await question('  直接使用？(Y/n): ');
-      if (useDetected.trim().toLowerCase() !== 'n') {
-        const dk = detectedKeys[0];
-        const provider = PROVIDER_OPTIONS.find(p => p.envKey === dk.envKey);
-        if (provider) {
-          await saveConfig(provider.name, dk.key, undefined);
-          console.log(`  ✓ 已配置 ${provider.description}！`);
-          return;
-        }
+      const useDetected = await question('  选择使用哪个？(输入编号，回车=第一个): ');
+      const idx = parseInt(useDetected.trim(), 10) - 1;
+      const dkIdx = (!isNaN(idx) && idx >= 0 && idx < detectedKeys.length) ? idx : 0;
+      const dk = detectedKeys[dkIdx];
+      const provider = PROVIDER_OPTIONS.find(p => p.envKey === dk.envKey);
+      if (provider) {
+        await saveConfig(provider.name, dk.key, undefined);
+        console.log(`  ✓ 已配置 ${provider.description}！`);
+        return;
       }
       console.log('');
     }
@@ -320,7 +270,8 @@ export async function runInitWizard(): Promise<void> {
       return;
     }
 
-    const link = HELP_LINKS[selected.name];
+    const preset = OPENAI_COMPATIBLE_PROVIDERS[selected.name];
+    const link = preset?.helpUrl;
     const keyPrompt = link
       ? `  粘贴 ${selected.envKey} (获取: ${link}): `
       : `  粘贴 ${selected.envKey}: `;

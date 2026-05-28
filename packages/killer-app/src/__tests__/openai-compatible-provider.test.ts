@@ -30,7 +30,7 @@ describe('OpenAICompatibleProvider', () => {
     it('should have GLM with correct endpoints', () => {
       const glm = OPENAI_COMPATIBLE_PROVIDERS.glm;
       expect(glm.baseUrl).toContain('open.bigmodel.cn');
-      expect(glm.models).toContain('glm-4.7');
+      expect(glm.models).toContain('GLM-4.7');
       expect(glm.envKey).toBe('GLM_API_KEY');
     });
 
@@ -64,9 +64,9 @@ describe('OpenAICompatibleProvider', () => {
       const provider = new OpenAICompatibleProvider({
         provider: 'glm',
         apiKey: 'test-key',
-        model: 'glm-5.1',
+        model: 'GLM-5.1',
       });
-      expect(provider.getModel()).toBe('glm-5.1');
+      expect(provider.getModel()).toBe('GLM-5.1');
     });
   });
 

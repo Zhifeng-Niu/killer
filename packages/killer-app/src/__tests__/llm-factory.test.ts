@@ -64,8 +64,8 @@ describe('LLM Factory', () => {
   });
 
   it('should throw for unknown provider', () => {
-    expect(() => createLLMProvider({ provider: 'groq' as never, apiKey: 'test' }))
-      .toThrow('Unknown provider: "groq"');
+    expect(() => createLLMProvider({ provider: 'totally-fake-provider' as never, apiKey: 'test' }))
+      .toThrow('Unknown provider: "totally-fake-provider"');
   });
 
   it('should not wrap mock provider in resilience', () => {

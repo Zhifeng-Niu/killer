@@ -118,7 +118,7 @@ export function generateBootGreeting(ctx: GreetingContext): string {
     ];
     parts.push(`  ${c.value(firstBootGreetings[Math.floor(Math.random() * firstBootGreetings.length)])}`);
     parts.push('');
-    parts.push(c.muted('  (输入 /help 查看命令，或直接开始聊天。)'));
+    parts.push(c.muted('  (Type /help for commands, or just start chatting.)'));
     parts.push('');
     return parts.join('\n');
   }
@@ -191,7 +191,7 @@ export function generateBootGreeting(ctx: GreetingContext): string {
   }
 
   parts.push('');
-  parts.push(c.info('  输入 /help 查看命令，或直接开始聊天。'));
+  parts.push(c.info('  Type /help for commands, or just start chatting.'));
   parts.push('');
 
   return parts.join('\n');

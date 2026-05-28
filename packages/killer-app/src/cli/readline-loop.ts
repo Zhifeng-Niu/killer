@@ -983,7 +983,7 @@ export function startReadlineLoop(agent: KillerAgent): readline.Interface {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: '💬 ',
+    prompt: '▸ ',
     historySize: MAX_HISTORY,
     completer: (line: string) => {
       const commandNames = CLI_COMMANDS.map(cmd => `/${cmd.name}`);

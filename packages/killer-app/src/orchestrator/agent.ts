@@ -56,6 +56,7 @@ import {
   type ToolDefinition,
   type ChatMessage,
   type ToolCall,
+  type IDriveSource,
 } from '@killer/core';
 import { ShellExecutor } from './shell-executor.js';
 import { SensoryRouter, CLIChannel, OutputManager } from '../sensory/index.js';
@@ -105,7 +106,7 @@ const TECHNICAL = /\b(function|class|error|bug|fix|implement|test|deploy|code|ap
  *
  * 编排所有核心模块，提供统一的启动和停止接口
  */
-export class KillerAgent {
+export class KillerAgent implements IDriveSource {
   private readonly config: AgentConfig;
   private readonly status: AgentStatus;
   private readonly prefrontalConfig: PrefrontalConfig;
@@ -1056,6 +1057,8 @@ Examples:
       ...DEFAULT_LOOP_CONFIG,
       debugLogging: this.config.debugLogging,
       dreamingMode: this.config.memory.dreamingEnabled,
+      driveSource: this,
+      driveIntervalMs: 3000,
     };
 
     this.brainstem = new BrainstemLoop(
@@ -1443,6 +1446,39 @@ Examples:
   /** 自主执行连续计数器 */
   private autoContinueCount = 0;
   private static readonly MAX_AUTO_CONTINUES = 20;
+
+  // ─── IDriveSource — BrainstemLoop 自主驱动接口 ───
+
+  hasPendingWork(): boolean {
+    try {
+      return this.planExecutor?.getActivePlans()
+        .some(p => this.planExecutor.getNextAction(p.id) !== null) ?? false;
+    } catch { return false; }
+  }
+
+  getNextTaskDescription(): string | null {
+    try {
+      for (const plan of this.planExecutor?.getActivePlans() ?? []) {
+        const step = this.planExecutor.getNextAction(plan.id);
+        if (step) return step.description;
+      }
+    } catch { /* planExecutor not ready */ }
+    return null;
+  }
+
+  getTaskContext(): Record<string, unknown> {
+    try {
+      const plans = this.planExecutor?.getActivePlans() ?? [];
+      return {
+        activePlans: plans.length,
+        steps: plans.map(p => ({
+          id: p.id,
+          goal: p.goalId,
+          pending: p.steps.filter(s => s.status === 'ready').length,
+        })),
+      };
+    } catch { return { activePlans: 0 }; }
+  }
 
   /**
    * 自主执行循环：检查未完成的 plan steps，自动入队执行
@@ -1870,6 +1906,22 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         source: 'brainstem',
         data: state.currentPerception,
       });
+
+      // Goal drive bridge: 将 goal_drive 感知桥接到 processInput（完整工具链）
+      const perception = state.currentPerception;
+      if (perception?.source === 'internal' && perception.data) {
+        const d = perception.data as Record<string, unknown>;
+        if (d.type === 'goal_drive' && typeof d.description === 'string') {
+          const taskDesc = d.description as string;
+          if (!this.processing && this.autoContinueCount < KillerAgent.MAX_AUTO_CONTINUES) {
+            this.autoContinueCount++;
+            this.logger.info(`Goal drive → processInput: "${taskDesc.slice(0, 60)}"`);
+            this.processInput(taskDesc, 'internal').catch((err) => {
+              this.logger.error('Goal drive processInput error', err);
+            });
+          }
+        }
+      }
     });
 
     this.brainstem.on('reasoningComplete', (state) => {
@@ -3219,7 +3271,10 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
     if (!supportsNative) {
       // Provider 不支持原生 function calling — 用文本 follow-up 获取最终响应
-      const followUpPrompt = `Based on these tool results, provide your final answer to the user's request:\n${response}`;
+      const hasErrors = response.toLowerCase().includes('error') || response.toLowerCase().includes('failed');
+      const followUpPrompt = hasErrors
+        ? `Some tools failed. Here's what happened:\n${response.slice(0, 2000)}\n\nYou MUST continue working on the user's task. Do NOT just explain the error. Try alternative approaches: use different tools, break the task into smaller steps, or use your own knowledge. Keep working until the task is actually done.`
+        : `Based on these tool results, provide your final answer to the user's request:\n${response}`;
       const followUp = await this.callLLMWithRetry(followUpPrompt, systemContext, onToken);
       return followUp;
     }
@@ -3253,9 +3308,9 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
     let round = 1;
     const callHistory: string[] = [];
-    const MAX_ROUNDS = 15;
 
-    while (round < MAX_ROUNDS) {
+    // 无硬性轮次限制 — 通过重复检测和 token 预算自然收敛
+    while (true) {
       onStatus?.('Reasoning...');
 
       let result;
@@ -3264,6 +3319,12 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         this.logger.warn(`Native function calling failed in loop: ${errMsg}`);
+        // 不静默停止 — 让模型基于已有结果继续工作
+        try {
+          const fallbackPrompt = `A tool execution error occurred: ${errMsg.slice(0, 200)}.\nYou MUST continue working on the user's original task. Based on what you've already accomplished, find an alternative approach. Do NOT just explain the error — actually complete the task or make meaningful progress using other available tools or knowledge.`;
+          const fallbackResponse = await this.callLLMWithRetry(fallbackPrompt, systemContext, onToken);
+          if (fallbackResponse) return fallbackResponse;
+        } catch { /* fallback also failed */ }
         break;
       }
 
@@ -3347,7 +3408,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
           const resultStr = toolExecResult.success
             ? (typeof toolExecResult.data === 'string' ? toolExecResult.data : JSON.stringify(toolExecResult.data))
-            : `Error: ${toolExecResult.error}`;
+            : `Tool "${toolName}" failed: ${toolExecResult.error}. IMPORTANT: Do NOT give up. Try a different approach, use alternative tools, or break the task into smaller steps. The user expects you to complete the task.`;
 
           const truncated = resultStr.length > 8000
             ? resultStr.slice(0, 8000) + '\n...[truncated]'
@@ -3365,24 +3426,12 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           messages.push({
             role: 'tool',
             toolCallId: toolCall.id,
-            content: `[Tool Error: ${toolName}] ${errMsg}`,
+            content: `[Tool Error: ${toolName}] ${errMsg}. IMPORTANT: Do NOT stop. Try a different approach or alternative tool to complete the task.`,
           });
         }
       }
     }
 
-    // 超过最大轮次 — 做一次总结
-    onStatus?.('Summarizing...');
-    try {
-      const finalResult = await (provider as any).completeWithTools(
-        [...messages, { role: 'user', content: 'Summarize what was done and provide your final response.' }],
-        [],
-      );
-      if (finalResult.content) {
-        onToken?.('\n' + finalResult.content);
-        return finalResult.content;
-      }
-    } catch { /* fallback to existing response */ }
     return response;
   }
 

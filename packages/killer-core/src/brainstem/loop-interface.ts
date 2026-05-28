@@ -19,6 +19,21 @@ export interface ExperimentWaypointResult {
 }
 
 /**
+ * 自主驱动源 — Agent 注入此接口让 BrainstemLoop 能检测未完成工作
+ *
+ * 当感知队列为空、无外部输入时，BrainstemLoop 通过此接口检测是否有
+ * 未完成的 Goals/Plans，并自动生成内部感知继续推进。
+ */
+export interface IDriveSource {
+  /** 是否有未完成的任务 */
+  hasPendingWork(): boolean;
+  /** 获取下一个待执行任务的描述，无则返回 null */
+  getNextTaskDescription(): string | null;
+  /** 获取任务上下文（plan ID、step info 等） */
+  getTaskContext(): Record<string, unknown>;
+}
+
+/**
  * 实验编排器接口 — BrainstemLoop 通过此接口与 Cerebellum 交互
  *
  * 使用接口而非具体类，避免循环依赖。
@@ -90,6 +105,10 @@ export interface LoopConfig {
   deepReflection: boolean;
   /** 可注入的日志接口，默认静默 */
   logger?: KernelLogger;
+  /** 自主驱动源 — 注入后 perceive() 空闲时会自动检测未完成任务 */
+  driveSource?: IDriveSource;
+  /** 两次 drive 检查的最小间隔（ms），默认 3000 */
+  driveIntervalMs?: number;
 }
 
 /**

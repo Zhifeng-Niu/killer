@@ -96,13 +96,17 @@ export function divider(width: number, char = box.h, color = colors.dimmed): { t
 export const spinners = {
   /** 思考中 — 月相旋转 */
   thinking: ['◐', '◓', '◑', '◒'],
-  /** 等待中 — 脉冲点 */
+  /** 等待中 — braille 旋转 */
   pulse: ['⠁', '⠃', '⠇', '⡇', '⣇', '⣧', '⣷', '⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣟', '⡿'],
   /** 流式输出 — 光标闪烁 */
   streaming: ['▊', '▋', '▊', ' '],
+  /** 打字中 — 波浪点 */
+  typing: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
+  /** 加载中 — 轨道 */
+  loading: ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈'],
 } as const;
 
-// ── 消息气泡前缀 ──
+// ── 消息气泡前缀 ──（保留供外部使用）
 
 export const bubble = {
   user: '╭─',

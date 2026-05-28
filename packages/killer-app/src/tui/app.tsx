@@ -10,7 +10,7 @@ import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { ChatPanel, type ChatMessage } from './chat-panel.js';
 import { Sidebar, type SidebarData } from './sidebar.js';
 import { InputArea } from './input-area.js';
-import { colors, box, statusDot, statusColor, spinners } from './theme.js';
+import { colors, box } from './theme.js';
 import type { KillerAgent } from '../orchestrator/index.js';
 import { generateBootGreeting } from '../cli/greeting.js';
 
@@ -41,21 +41,19 @@ export function KillerTUI({ agent }: KillerTUIProps) {
   const [isThinking, setIsThinking] = useState(false);
   const [agentStatus, setAgentStatus] = useState<'idle' | 'thinking' | 'streaming' | 'error'>('idle');
   const [statusDetail, setStatusDetail] = useState<string>('');
-  const [spinnerFrame, setSpinnerFrame] = useState(0);
+
   const abortRef = useRef<AbortController | null>(null);
   const lastUserInputRef = useRef<string | null>(null);
+  // 去重：记录已渲染的消息 ID，防止 streaming 刷新时重复渲染
+  const renderedIdsRef = useRef<Set<string>>(new Set());
+  // 消息池：用 ref 持有真实数据，只 setState 时真正变更
+  const messagesRef = useRef<ChatMessage[]>([]);
 
-  // Spinner 动画 — 思考时循环帧
-  useEffect(() => {
-    if (agentStatus !== 'thinking' && agentStatus !== 'streaming') return;
-    const timer = setInterval(() => {
-      setSpinnerFrame(f => (f + 1) % spinners.thinking.length);
-    }, 120);
-    return () => clearInterval(timer);
-  }, [agentStatus]);
+  // Header 不使用动画 spinner — 避免全屏重绘导致消息滚动
+  // 动画仅在 InputArea 和 ThinkingIndicator 内部（组件级隔离）
 
   // 采集 sidebar 数据
-  const sidebarData = useSidebarData(agent, agentStatus);
+  const sidebarData = useSidebarData(agent, agentStatus, messages.length);
 
   // Boot greeting — 首条系统消息
   useEffect(() => {
@@ -69,7 +67,8 @@ export function KillerTUI({ agent }: KillerTUIProps) {
     // 去除 ANSI 颜色码（ink 用自己的颜色系统）
     const clean = greeting.replace(/\x1b\[[0-9;]*m/g, '').trim();
     if (clean) {
-      setMessages([createMessage('agent', clean)]);
+      const msg = createMessage('agent', clean);
+      replaceMessages([msg]);
     }
   }, [agent]);
 
@@ -80,12 +79,39 @@ export function KillerTUI({ agent }: KillerTUIProps) {
         const ev = event as { type?: string; data?: { type?: string; content?: string } };
         if (ev.type === 'proactive.suggestion' && ev.data?.content) {
           const prefix = ev.data.type === 'suggestion' ? '💡' : ev.data.type === 'insight' ? '🔮' : '📌';
-          setMessages(prev => [...prev, createMessage('system', `${prefix} ${ev.data!.content}`)]);
+          appendMessage(createMessage('system', `${prefix} ${ev.data!.content}`));
         }
       } catch { /* 静默忽略事件处理错误 */ }
     });
     return unsubscribe;
   }, [agent]);
+
+  // 安全更新消息：只对实际变化的数据触发 setState（避免 Ink 全量重绘）
+  const updateMessage = useCallback((id: string, updater: (msg: ChatMessage) => ChatMessage) => {
+    const pool = messagesRef.current;
+    const idx = pool.findIndex(m => m.id === id);
+    if (idx === -1) return;
+    const updated = updater(pool[idx]);
+    // 如果内容没变，跳过 setState
+    if (updated.content === pool[idx].content && updated.streaming === pool[idx].streaming) return;
+    pool[idx] = updated;
+    setMessages([...pool]);
+  }, []);
+
+  const appendMessage = useCallback((msg: ChatMessage) => {
+    // 已经渲染过则跳过
+    if (renderedIdsRef.current.has(msg.id)) return;
+    renderedIdsRef.current.add(msg.id);
+    const pool = messagesRef.current;
+    messagesRef.current = [...pool, msg];
+    setMessages(messagesRef.current);
+  }, []);
+
+  const replaceMessages = useCallback((msgs: ChatMessage[]) => {
+    renderedIdsRef.current = new Set(msgs.map(m => m.id));
+    messagesRef.current = msgs;
+    setMessages(msgs);
+  }, []);
 
   // Esc 取消流式输出，Ctrl+C 优雅退出
   const shutdownRef = useRef(false);
@@ -102,20 +128,24 @@ export function KillerTUI({ agent }: KillerTUIProps) {
       abortRef.current = null;
       setIsThinking(false);
       setAgentStatus('idle');
-      setMessages(prev => {
-        const last = prev[prev.length - 1];
+      const pool = messagesRef.current;
+      if (pool.length > 0) {
+        const last = pool[pool.length - 1];
         if (last?.streaming) {
-          return [...prev.slice(0, -1), { ...last, streaming: false, content: last.content + '\n\n[已取消]' }];
+          updateMessage(last.id, (m) => ({
+            ...m,
+            streaming: false,
+            content: m.content + '\n\n[已取消]'
+          }));
         }
-        return prev;
-      });
+      }
     }
   });
 
   const handleSubmit = useCallback(async (rawInput: string) => {
     // /clear 清空聊天显示
     if (rawInput === '/clear') {
-      setMessages([]);
+      replaceMessages([]);
       return;
     }
 
@@ -123,7 +153,7 @@ export function KillerTUI({ agent }: KillerTUIProps) {
     let input = rawInput;
     if (rawInput === '/retry') {
       if (!lastUserInputRef.current) {
-        setMessages(prev => [...prev, createMessage('system', '没有可重试的消息')]);
+        appendMessage(createMessage('system', '没有可重试的消息'));
         return;
       }
       input = lastUserInputRef.current;
@@ -133,22 +163,22 @@ export function KillerTUI({ agent }: KillerTUIProps) {
     if (input.startsWith('/find ') || input === '/find') {
       const keyword = input.slice(6).trim().toLowerCase();
       if (!keyword) {
-        setMessages(prev => [...prev, createMessage('system', '用法: /find <关键词>')]);
+        appendMessage(createMessage('system', '用法: /find <关键词>'));
         return;
       }
-      setMessages(prev => {
-        const results = prev.filter(m => m.content.toLowerCase().includes(keyword));
-        if (results.length === 0) {
-          return [...prev, createMessage('system', `未找到包含 "${keyword}" 的消息`)];
-        }
+      const pool = messagesRef.current;
+      const results = pool.filter(m => m.content.toLowerCase().includes(keyword));
+      if (results.length === 0) {
+        appendMessage(createMessage('system', `未找到包含 "${keyword}" 的消息`));
+      } else {
         const lines = results.slice(0, 10).map(m => {
           const role = m.role === 'user' ? '你' : m.role === 'agent' ? 'Killer' : m.role === 'error' ? '错误' : '系统';
           const preview = m.content.split('\n')[0].slice(0, 60);
           return `  ${role}: ${preview}${m.content.length > 60 ? '...' : ''}`;
         });
         const header = `找到 ${results.length} 条匹配 "${keyword}" 的消息:`;
-        return [...prev, createMessage('system', [header, ...lines].join('\n'))];
-      });
+        appendMessage(createMessage('system', [header, ...lines].join('\n')));
+      }
       return;
     }
 
@@ -159,12 +189,12 @@ export function KillerTUI({ agent }: KillerTUIProps) {
         const output = await handleCommand(input, agent);
         if (output) {
           if (output.startsWith('__EXIT__')) {
-            setMessages(prev => [...prev, createMessage('agent', output.slice(8))]);
+            appendMessage(createMessage('agent', output.slice(8)));
             await agent.shutdown();
             exit();
             return;
           }
-          setMessages(prev => [...prev, createMessage('system', output)]);
+          appendMessage(createMessage('system', output));
         }
         return;
       }
@@ -172,14 +202,14 @@ export function KillerTUI({ agent }: KillerTUIProps) {
 
     // API Key 智能检测 — 用户直接粘贴 Key
     if (looksLikeApiKey(input)) {
-      setMessages(prev => [...prev, createMessage('system', '检测到 API Key。请使用 /key 命令配置：/key ' + input.slice(0, 8) + '...')]);
+      appendMessage(createMessage('system', '检测到 API Key。请使用 /key 命令配置：/key ' + input.slice(0, 8) + '...'));
       return;
     }
 
     // 用户消息
     const userMsg = createMessage('user', input);
     lastUserInputRef.current = input;
-    setMessages(prev => [...prev, userMsg]);
+    appendMessage(userMsg);
 
     // Agent 回复
     if (abortRef.current) abortRef.current.abort();
@@ -193,13 +223,13 @@ export function KillerTUI({ agent }: KillerTUIProps) {
     const agentMsgId = `msg-${++msgCounter}`;
     const agentMsg = createMessage('agent', '', true);
     agentMsg.id = agentMsgId;
-    setMessages(prev => [...prev, agentMsg]);
+    appendMessage(agentMsg);
 
     try {
       let fullResponse = '';
       let lastFlush = 0;
       let statusSet = false;
-      const FLUSH_MS = 60;
+      const FLUSH_MS = 400;
       const result = await agent.processInput(input, 'cli', (token) => {
         if (ac.signal.aborted) return;
         fullResponse += token;
@@ -212,17 +242,23 @@ export function KillerTUI({ agent }: KillerTUIProps) {
         if (now - lastFlush >= FLUSH_MS) {
           lastFlush = now;
           const snapshot = fullResponse;
-          setMessages(prev => prev.map(m =>
-            m.id === agentMsgId ? { ...m, content: snapshot } : m
-          ));
+          // 只更新 content，不改变其他消息引用
+          updateMessage(agentMsgId, (m) => ({ ...m, content: snapshot }));
         }
       }, (status) => {
         if (ac.signal.aborted) return;
         setAgentStatus('thinking');
         setStatusDetail(status);
-        // 工具执行状态注入聊天面板（让用户看到 agent 在做什么）
+        // 工具执行状态 — 替换前一条工具状态消息（避免刷屏）
         if (status.includes('(') && !status.startsWith('Thinking') && !status.startsWith('Reasoning') && !status.startsWith('Summarizing') && !status.startsWith('Converging')) {
-          setMessages(prev => [...prev, createMessage('system', `  ${spinners.thinking[spinnerFrame]} ${status}`)]);
+          // 工具状态去重：替换前一条工具状态消息（避免刷屏）
+          const pool = messagesRef.current;
+          const last = pool[pool.length - 1];
+          if (last?.role === 'system' && last.content.startsWith('  ◉ ') && !last.content.includes('\n')) {
+            updateMessage(last.id, () => createMessage('system', `  ◉ ${status}`));
+          } else {
+            appendMessage(createMessage('system', `  ◉ ${status}`));
+          }
         }
       });
 
@@ -231,14 +267,12 @@ export function KillerTUI({ agent }: KillerTUIProps) {
         // 使用 processInput 返回值作为最终内容（包含工具链循环的最终结果）
         // 如果返回值非空就用它，否则 fallback 到流式累积的内容
         const finalContent = result?.content?.trim() || fullResponse;
-        setMessages(prev => prev.map(m =>
-          m.id === agentMsgId ? { ...m, content: finalContent, streaming: false, duration: elapsed } : m
-        ));
+        updateMessage(agentMsgId, (m) => ({ ...m, content: finalContent, streaming: false, duration: elapsed }));
       }
     } catch (error) {
       if (!ac.signal.aborted) {
         const msg = error instanceof Error ? error.message : String(error);
-        setMessages(prev => [...prev, createMessage('error', msg)]);
+        appendMessage(createMessage('error', msg));
         setAgentStatus('error');
       }
     } finally {
@@ -249,29 +283,81 @@ export function KillerTUI({ agent }: KillerTUIProps) {
     }
   }, [agent]);
 
+  const termCols = stdout?.columns ?? 80;
+  const showSidebar = termCols >= 80;
+  // Key validation warning from boot
+  const [keyWarning, setKeyWarning] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const diag = agent.getLLMDiagnostics() as Record<string, unknown> | null;
+      const err = diag?.lastError;
+      if (typeof err === 'string' && err.includes('401')) {
+        setKeyWarning('API key 无效或已过期');
+      }
+    } catch { /* diagnostics not available yet */ }
+    if (keyWarning) {
+      const timer = setTimeout(() => setKeyWarning(null), 15000);
+      return () => clearTimeout(timer);
+    }
+  }, [agent, keyWarning]);
+
   return (
     <Box flexDirection="column" height="100%">
-      {/* Header — 极简状态栏 */}
-      <Box borderStyle="single" borderBottom={true} borderLeft={false} borderRight={false} borderColor={colors.dimmed} paddingX={1}>
-        <Text color={statusDetail ? colors.primary : colors.primary} bold>{statusDot[agentStatus]} Killer</Text>
-        {sidebarData.model.startsWith('mock') && (
-          <>
-            <Text color={colors.dimmed}> {box.v} </Text>
-            <Text color={colors.warning}>demo</Text>
-          </>
-        )}
-        <Text color={colors.dimmed}> {box.v} </Text>
-        <Text color={colors.muted}>{sidebarData.model.length > 20 ? sidebarData.model.slice(0, 18) + '…' : sidebarData.model}</Text>
-        <Text color={colors.dimmed}> {box.v} </Text>
-        <Text color={colors.muted}>{sidebarData.uptime}</Text>
-        <Text color={colors.dimmed}> {box.v} </Text>
-        <Text color={colors.muted}>{messages.length}msg</Text>
-        {statusDetail && (
-          <>
-            <Text color={colors.dimmed}> {box.v} </Text>
-            <Text color={colors.primary}>{spinners.thinking[spinnerFrame]} {statusDetail}</Text>
-          </>
-        )}
+      {/* Key validation warning bar */}
+      {keyWarning && (
+        <Box paddingX={1}>
+          <Text color={colors.warning} bold>! </Text>
+          <Text color={colors.warning}>{keyWarning}</Text>
+          <Text color={colors.dimmed}> (/key &lt;new-key&gt;)</Text>
+        </Box>
+      )}
+
+      {/* Circuit breaker warning */}
+      {sidebarData.circuitState === 'open' && (
+        <Box paddingX={1}>
+          <Text color={colors.error} bold>● </Text>
+          <Text color={colors.error}>AI 服务离线 — 自动重试中</Text>
+          <Text color={colors.dimmed}> /health 查看详情</Text>
+        </Box>
+      )}
+      {sidebarData.circuitState === 'half-open' && (
+        <Box paddingX={1}>
+          <Text color={colors.warning}>◐ </Text>
+          <Text color={colors.warning}>重新连接中...</Text>
+        </Box>
+      )}
+
+      {/* Header — branded status bar */}
+      <Box flexDirection="column">
+        <Box paddingX={1}>
+          <Text color={colors.primary} bold>◈ Killer</Text>
+          {sidebarData.model.startsWith('mock') && (
+            <Text color={colors.warning}> demo</Text>
+          )}
+          <Text color={colors.dimmed}> · </Text>
+          <Text color={colors.muted}>{sidebarData.model.length > 20 ? sidebarData.model.slice(0, 18) + '…' : sidebarData.model}</Text>
+          <Text color={colors.dimmed}> · </Text>
+          <Text color={colors.muted}>{sidebarData.uptime}</Text>
+          <Text color={colors.dimmed}> · </Text>
+          <Text color={colors.muted}>{messages.length} msgs</Text>
+          {!showSidebar && (
+            <>
+              <Text color={colors.dimmed}> · </Text>
+              <Text color={colors.dimmed} italic>⌥ sidebar</Text>
+            </>
+          )}
+          {statusDetail && (
+            <>
+              <Text color={colors.dimmed}> · </Text>
+              <Text color={colors.primary}>◉ {statusDetail.length > 30 ? statusDetail.slice(0, 28) + '…' : statusDetail}</Text>
+            </>
+          )}
+        </Box>
+        <Box>
+          <Text color={colors.primary}>{box.hBold.repeat(3)}</Text>
+          <Text color={colors.primaryDim}>{box.hBold.repeat(3)}</Text>
+          <Text color={colors.dimmed}>{box.h.repeat(termCols - 6)}</Text>
+        </Box>
       </Box>
 
       {/* Main body: Chat + Sidebar */}
@@ -279,34 +365,35 @@ export function KillerTUI({ agent }: KillerTUIProps) {
         <Box flexDirection="column" flexGrow={1} paddingX={1}>
           <ChatPanel messages={messages} isThinking={isThinking} />
         </Box>
-        {(stdout?.columns ?? 80) >= 80 && <Sidebar data={sidebarData} />}
+        {showSidebar && <Sidebar data={sidebarData} />}
       </Box>
 
       {/* Input */}
       <InputArea
         onSubmit={handleSubmit}
         isProcessing={isThinking}
-        placeholder={statusDetail ? statusDetail : agentStatus === 'thinking' ? '思考中...' : agentStatus === 'streaming' ? '输出中...' : undefined}
+        placeholder={statusDetail ? (statusDetail.length > 40 ? statusDetail.slice(0, 38) + '…' : statusDetail) : agentStatus === 'thinking' ? '思考中...' : agentStatus === 'streaming' ? '输出中...' : undefined}
       />
     </Box>
   );
 }
 
-/** 采集 sidebar 数据的 hook */
-function useSidebarData(agent: KillerAgent, status: SidebarData['status']): SidebarData {
-  const [data, setData] = useState<SidebarData>(() => collectSidebarData(agent, status));
+/** 采集 sidebar 数据的 hook — idle 时低频轮询减少重绘 */
+function useSidebarData(agent: KillerAgent, status: SidebarData['status'], messagesCount: number): SidebarData {
+  const [data, setData] = useState<SidebarData>(() => collectSidebarData(agent, status, messagesCount));
+  const isActive = status === 'thinking' || status === 'streaming';
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setData(collectSidebarData(agent, status));
-    }, 2000);
+      setData(collectSidebarData(agent, status, messagesCount));
+    }, isActive ? 2000 : 10000);
     return () => clearInterval(interval);
-  }, [agent, status]);
+  }, [agent, status, messagesCount, isActive]);
 
   return data;
 }
 
-function collectSidebarData(agent: KillerAgent, status: SidebarData['status']): SidebarData {
+function collectSidebarData(agent: KillerAgent, status: SidebarData['status'], messagesCount: number): SidebarData {
   const agentStatus = agent.getStatus();
   const emotionalState = agent.persona.emotionalState.getState();
   const memStats = agent.getMemoryStats();
@@ -319,6 +406,22 @@ function collectSidebarData(agent: KillerAgent, status: SidebarData['status']): 
     : uptime < 3600000 ? `${Math.floor(uptime / 60000)}m`
     : `${Math.floor(uptime / 3600000)}h${Math.floor((uptime % 3600000) / 60000)}m`;
 
+  // Goal progress — extract from plan executor if available
+  const goalProgress = goals.slice(0, 5).map(g => {
+    const plan = agent.planExecutor?.getPlanByGoal(g.id);
+    if (plan) {
+      const completed = plan.steps.filter(s => s.status === 'completed' || s.status === 'skipped').length;
+      return { description: g.description, completed, total: plan.steps.length };
+    }
+    return { description: g.description, completed: 0, total: 0 };
+  });
+
+  // Circuit breaker state
+  const rawCircuit = llmDiag?.circuitState;
+  const circuitState: 'closed' | 'open' | 'half-open' =
+    rawCircuit === 'open' ? 'open' :
+    rawCircuit === 'half-open' ? 'half-open' : 'closed';
+
   return {
     emotion: emotionalState.primaryEmotion,
     emotionEmoji: emotionToEmoji(emotionalState.primaryEmotion),
@@ -326,22 +429,27 @@ function collectSidebarData(agent: KillerAgent, status: SidebarData['status']): 
     cellTypes: [...new Set(cells.map(c => c.config.type))],
     goalCount: goals.length,
     goals: goals.map(g => g.description),
+    goalProgress,
     episodeCount: memStats.totalEpisodes,
     shortTermMemory: memStats.shortTermCount,
     longTermMemory: memStats.longTermCount,
     uptime: uptimeStr,
     model: typeof llmDiag?.model === 'string' ? llmDiag.model : 'unknown',
     status,
+    circuitState,
+    messagesCount,
   };
 }
 
 function emotionToEmoji(emotion: string): string {
   const map: Record<string, string> = {
     neutral: '😐', happy: '😊', sad: '😢', angry: '😠',
-    fearful: '😨', surprised: '😮', disgusted: '🤢',
+    fear: '😨', fearful: '😨', surprised: '😮', disgusted: '🤢',
     curious: '🤔', excited: '🤩', calm: '😌',
+    joy: '😊', contentment: '😌', anxiety: '😰',
+    sadness: '😢', surprise: '😮', anticipation: '🤔',
   };
-  return map[emotion] || '🎭';
+  return map[emotion.toLowerCase()] || '🎭';
 }
 
 /** 命令处理 */
@@ -353,39 +461,48 @@ async function handleCommand(input: string, agent: KillerAgent): Promise<string>
   switch (cmd) {
     case 'help': {
       return [
-        '可用命令:',
-        '  /status      — Agent 状态',
-        '  /cells       — 活跃 Cells',
-        '  /spawn       — 生成新 Cell',
-        '  /goals       — 目标列表',
-        '  /memory      — 记忆统计',
-        '  /persona     — 人格信息',
-        '  /emotions    — 情感状态',
-        '  /narrative   — 自传记忆',
-        '  /predictions — 用户预测模型',
-        '  /dream       — 触发梦境',
-        '  /think       — 深度思考',
-        '  /evolve      — 达尔文进化',
-        '  /delegate    — 多 Cell 委派',
-        '  /diagnostics — 系统诊断',
-        '  /find <词>   — 搜索历史消息',
-        '  /retry       — 重发上一条消息',
-        '  /clear       — 清空聊天记录',
-        '  /health      — 健康报告',
-        '  /metrics     — 性能指标',
-        '  /sessions    — 会话列表',
-        '  /save        — 保存会话',
-        '  /load        — 加载会话',
-        '  /key <key>   — 热更新 API Key',
-        '  /approve <t> — 批准工具执行',
-        '  /deny <t>    — 禁止工具执行',
-        '  /model [n]   — 查看/切换模型',
-        '  /mode [m]    — 权限策略 auto|confirm|deny',
-        '  /learn       — 工具自创建说明',
-        '  /unlearn <t> — 移除动态工具',
-        '  /inspect     — 查看所有工具',
-        '  /mission     — Cerebellum 任务管理',
-        '  /exit        — 退出',
+        '# Commands',
+        '',
+        '## Core',
+        '- /status — Agent status',
+        '- /clear — Clear chat',
+        '- /retry — Resend last message',
+        '- /find <keyword> — Search messages',
+        '',
+        '## Cognitive',
+        '- /think — Deep reasoning',
+        '- /dream — Memory consolidation',
+        '- /evolve — Darwinian evolution',
+        '- /goals — Active goals',
+        '- /plan — Create a goal',
+        '- /delegate — Multi-cell delegation',
+        '- /cells — Active cells',
+        '- /spawn — Spawn new cell',
+        '',
+        '## Memory',
+        '- /memory — Memory stats',
+        '- /save — Save session',
+        '- /load — Load session',
+        '- /sessions — Session list',
+        '',
+        '## Identity',
+        '- /persona — Persona info',
+        '- /emotions — Emotional state',
+        '- /narrative — Autobiographical memory',
+        '- /predictions — User model',
+        '',
+        '## System',
+        '- /health — Health report',
+        '- /diagnostics — System diagnostics',
+        '- /metrics — Performance stats',
+        '- /model [name] — View/switch model',
+        '- /key <key> — Update API key',
+        '- /mode [policy] — Permission: auto|confirm|deny',
+        '- /approve <tool> — Approve tool',
+        '- /deny <tool> — Block tool',
+        '- /inspect — List all tools',
+        '- /mission — Mission control',
+        '- /exit — Quit',
       ].join('\n');
     }
     case 'status': {

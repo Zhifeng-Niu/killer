@@ -65,6 +65,9 @@ export class BrainstemLoop implements IBrainstemLoop {
   // 实验计数器
   private waypointCounter: number = 0;
 
+  // Goal drive 节流
+  private lastDriveTime: number = 0;
+
   constructor(
     llm: LLMProvider,
     tools: ToolExecutor,
@@ -232,7 +235,49 @@ export class BrainstemLoop implements IBrainstemLoop {
       return internalPerception;
     }
 
+    // Goal drive：检测未完成任务，自主生成内部感知
+    const drivePerception = this.goalDrive();
+    if (drivePerception) {
+      this.state.currentPerception = drivePerception;
+      this.emit('perceptionReceived', this.state);
+      this.log(`Goal drive: ${drivePerception.data && typeof drivePerception.data === 'object' && 'description' in (drivePerception.data as Record<string, unknown>) ? (drivePerception.data as Record<string, unknown>).description : 'unknown'}`);
+      return drivePerception;
+    }
+
     return null;
+  }
+
+  /**
+   * Goal drive — 自主驱动：检测未完成任务并生成内部感知
+   *
+   * 当 Agent 有未完成的 Plan steps 时，自动生成内部感知
+   * 推动脑干循环继续运转，不依赖外部输入。
+   */
+  private goalDrive(): Perception | null {
+    if (!this.config.driveSource) return null;
+
+    const now = Date.now();
+    const interval = this.config.driveIntervalMs ?? 3000;
+    if (now - this.lastDriveTime < interval) return null;
+
+    if (!this.config.driveSource.hasPendingWork()) return null;
+
+    const description = this.config.driveSource.getNextTaskDescription();
+    if (!description) return null;
+
+    this.lastDriveTime = now;
+
+    return {
+      id: generateId('drive'),
+      timestamp: now,
+      source: 'internal',
+      data: {
+        type: 'goal_drive',
+        description,
+        context: this.config.driveSource.getTaskContext(),
+      },
+      priority: 'normal',
+    };
   }
 
   /**

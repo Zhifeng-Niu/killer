@@ -41,6 +41,7 @@ export type {
 
 export type {
   IBrainstemLoop,
+  IDriveSource,
   LoopEvent,
   LoopConfig,
 } from './loop-interface.js';
