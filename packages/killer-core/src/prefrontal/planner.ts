@@ -52,24 +52,34 @@ function inferStrategy(description: string): PlanStrategy {
  * 将目标描述分解为步骤（规则回退）
  */
 function decomposeGoalByRules(description: string): string[] {
-  const steps: string[] = [];
-
-  // 尝试按 "→" 分割
-  const arrowSplit = description.split('→');
+  // 尝试按 "→" 或 "➜" 分割
+  const arrowSplit = description.split(/[→➜]/);
   if (arrowSplit.length > 1) {
     return arrowSplit.map((s, i) => `${i + 1}. ${s.trim()}`);
   }
 
-  // 尝试按编号列表分割
-  const numberedMatches = description.match(/\d+\.\s+[^.!?]+/g);
+  // 尝试按编号列表分割（中文和英文）
+  const numberedMatches = description.match(/\d+[.、)]\s*[^.!?。！？]+/g);
   if (numberedMatches && numberedMatches.length > 1) {
-    return numberedMatches;
+    return numberedMatches.map(s => s.trim());
   }
 
-  // 尝试按句子分割
+  // 尝试按中文句号、问号、感叹号分割
+  const cnSentences = description.split(/[。！？\n]+/).filter(s => s.trim().length > 0);
+  if (cnSentences.length > 1) {
+    return cnSentences.map((s, i) => `${i + 1}. ${s.trim()}`);
+  }
+
+  // 尝试按英文句子分割
   const sentences = description.split(/[.!?]+/).filter(s => s.trim().length > 0);
   if (sentences.length > 1) {
     return sentences.map((s, i) => `${i + 1}. ${s.trim()}`);
+  }
+
+  // 尝试按逗号/顿号分割（中文并列任务）
+  const commaParts = description.split(/[，、；]/).filter(s => s.trim().length > 5);
+  if (commaParts.length >= 2) {
+    return commaParts.map((s, i) => `${i + 1}. ${s.trim()}`);
   }
 
   // 默认：返回单个步骤
@@ -84,17 +94,24 @@ async function decomposeGoalByLLM(
   goalDescription: string,
 ): Promise<string[]> {
   const prompt = `You are a task planner. Break down this goal into 2-6 concrete, executable steps.
-Each step should be a specific action that can be performed using tools (code execution, file read/write, web search, etc.).
+Each step should be a specific action using tools (web search, file read/write, code execution, analysis).
 
 Goal: "${goalDescription}"
 
-Respond with ONLY the steps, one per line, numbered. No explanations. No markdown. No extra text.
-Example format:
-1. Search for existing implementations of X
-2. Read the current module structure
-3. Implement the core logic
-4. Write tests
-5. Run build to verify`;
+Rules:
+- Each step must start with an action verb
+- Be specific about WHAT to do, not vague goals
+- Steps should be ordered by dependency (what must happen first)
+- Mark steps that can run in parallel with [parallel] prefix
+
+Respond with ONLY numbered steps, one per line. No explanations, no markdown.
+
+Examples:
+1. [search] Search for existing implementations of X
+2. [analysis] Read and analyze the current module structure
+3. [code] Implement the core logic in module.ts
+4. [test] Write unit tests for the new functionality
+5. [verify] Run build and tests to verify everything works`;
 
   try {
     const response = await llm.complete(prompt);
@@ -146,15 +163,29 @@ export class Planner {
 
     const steps: PlanStep[] = stepDescriptions.map((desc, index) => ({
       id: generateId('step'),
-      description: desc,
+      description: desc.replace(/^\[parallel\]\s*/i, '').trim(),
       order: index,
-      dependencies: index > 0 ? [generateId('step')] : [],
-      status: index === 0 ? 'ready' : 'blocked',
+      dependencies: [] as string[],
+      status: 'ready' as const,
     }));
 
-    // 修正依赖关系
-    for (let i = 1; i < steps.length; i++) {
-      steps[i].dependencies = [steps[i - 1].id];
+    // 推断依赖关系：检测 [parallel] 标记
+    let lastSequentialIdx = 0;
+    for (let i = 0; i < stepDescriptions.length; i++) {
+      const isParallel = /^\[parallel\]/i.test(stepDescriptions[i]);
+      if (i === 0) {
+        steps[0].status = 'ready';
+        lastSequentialIdx = 0;
+      } else if (isParallel) {
+        // 并行步骤依赖同一个前序步骤
+        steps[i].dependencies = [steps[lastSequentialIdx].id];
+        steps[i].status = steps[lastSequentialIdx].status === 'ready' ? 'ready' : 'blocked';
+      } else {
+        // 顺序步骤依赖前一个
+        steps[i].dependencies = [steps[i - 1].id];
+        steps[i].status = 'blocked';
+        lastSequentialIdx = i;
+      }
     }
 
     return {
