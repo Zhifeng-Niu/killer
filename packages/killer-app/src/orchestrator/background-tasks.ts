@@ -2875,6 +2875,7 @@ export function scoreSectionRelevance(
     'GAP RECOVERY': 0.7,
     'LEARNED LESSONS': 0.6,
     'RHYTHM ADAPTATION': 0.55,
+    'INTENT DECOMPOSITION': 0.7,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -5475,4 +5476,165 @@ export function formatRhythmGuidance(profile: RhythmProfile): string {
   }
 
   return parts.join(' | ');
+}
+
+// ==================== 多粒度意图分解 ====================
+
+export type SubIntentType = 'question' | 'action' | 'exploration' | 'decision' | 'verification';
+
+export interface SubIntent {
+  /** 子意图描述 */
+  description: string;
+  /** 类型 */
+  type: SubIntentType;
+  /** 优先级（1 最高） */
+  priority: number;
+  /** 依赖的子意图序号 */
+  dependsOn: number[];
+  /** 估计复杂度 0-1 */
+  complexity: number;
+}
+
+export interface IntentDecomposition {
+  /** 原始输入 */
+  originalInput: string;
+  /** 分解出的子意图 */
+  subIntents: SubIntent[];
+  /** 执行序（按优先级和依赖排序后的索引） */
+  executionOrder: number[];
+  /** 是否需要逐步确认 */
+  requiresConfirmation: boolean;
+}
+
+const INTENT_TYPE_PATTERNS: Array<{ pattern: RegExp; type: SubIntentType }> = [
+  { pattern: /[?？]|怎么|如何|为什么|what|how|why|when|where/i, type: 'question' },
+  { pattern: /确认|验证|检查|对不对|correct|verify|check|confirm|right\?/i, type: 'verification' },
+  { pattern: /帮我|请|做|执行|运行|创建|删除|修改|add|create|delete|update|run|fix|implement/i, type: 'action' },
+  { pattern: /看看|试试|探索|了解一下|let's see|try|explore|investigate/i, type: 'exploration' },
+  { pattern: /选择|决定|应该|choose|decide|should|whether/i, type: 'decision' },
+];
+
+/**
+ * 判断子意图类型
+ */
+export function classifySubIntentType(text: string): SubIntentType {
+  for (const { pattern, type } of INTENT_TYPE_PATTERNS) {
+    if (pattern.test(text)) return type;
+  }
+  return 'action';
+}
+
+/**
+ * 估计复杂度
+ */
+export function estimateComplexity(text: string): number {
+  let score = 0;
+  if (text.length > 100) score += 0.2;
+  if (text.length > 200) score += 0.2;
+  if (/多个|所有|全部|批量|parallel|batch|all/i.test(text)) score += 0.2;
+  if (/然后|接着|之后|after that|then|next/i.test(text)) score += 0.15;
+  if (/依赖|基于|according to|based on|depends/i.test(text)) score += 0.15;
+  return Math.min(1, score + 0.2);
+}
+
+/**
+ * 检测子意图间的依赖关系
+ */
+export function detectDependencies(subIntents: SubIntent[]): void {
+  for (let i = 0; i < subIntents.length; i++) {
+    const text = subIntents[i].description.toLowerCase();
+    if (/基于|根据|上面|前面|之前的|based on|above|previous|prior/i.test(text)) {
+      for (let j = 0; j < i; j++) {
+        subIntents[i].dependsOn.push(j + 1);
+      }
+    }
+    if (/然后|接着|之后|then|next|after that/i.test(text) && i > 0) {
+      subIntents[i].dependsOn.push(i);
+    }
+  }
+}
+
+/**
+ * 计算执行序（拓扑排序）
+ */
+export function computeExecutionOrder(subIntents: SubIntent[]): number[] {
+  if (subIntents.length <= 1) return subIntents.map((_, i) => i + 1);
+
+  const indexed = subIntents.map((si, i) => ({ ...si, originalIndex: i }));
+  indexed.sort((a, b) => a.priority - b.priority || a.originalIndex - b.originalIndex);
+
+  const order: number[] = [];
+  const placed = new Set<number>();
+
+  for (const si of indexed) {
+    const idx = si.originalIndex + 1;
+    for (const dep of si.dependsOn) {
+      if (!placed.has(dep)) {
+        order.push(dep);
+        placed.add(dep);
+      }
+    }
+    if (!placed.has(idx)) {
+      order.push(idx);
+      placed.add(idx);
+    }
+  }
+
+  return order;
+}
+
+/**
+ * 分解复合意图
+ */
+export function decomposeIntent(input: string): IntentDecomposition {
+  const detected = detectMultiIntent(input);
+
+  if (detected.length <= 1) {
+    const type = classifySubIntentType(input);
+    const subIntent: SubIntent = {
+      description: input.slice(0, 100),
+      type,
+      priority: 1,
+      dependsOn: [],
+      complexity: estimateComplexity(input),
+    };
+    return {
+      originalInput: input,
+      subIntents: [subIntent],
+      executionOrder: [1],
+      requiresConfirmation: false,
+    };
+  }
+
+  const subIntents: SubIntent[] = detected.map((di, i) => ({
+    description: di.text,
+    type: classifySubIntentType(di.text),
+    priority: i + 1,
+    dependsOn: [],
+    complexity: estimateComplexity(di.text),
+  }));
+
+  detectDependencies(subIntents);
+  const executionOrder = computeExecutionOrder(subIntents);
+  const requiresConfirmation = subIntents.length > 3 || subIntents.some(si => si.complexity > 0.7);
+
+  return { originalInput: input, subIntents, executionOrder, requiresConfirmation };
+}
+
+/**
+ * 格式化意图分解为 prompt 文本
+ */
+export function formatIntentDecomposition(decomposition: IntentDecomposition): string | undefined {
+  if (decomposition.subIntents.length <= 1) return undefined;
+
+  const parts: string[] = [];
+  parts.push(`${decomposition.subIntents.length} sub-intents detected`);
+  parts.push(`execution order: ${decomposition.executionOrder.join(' → ')}`);
+
+  for (const si of decomposition.subIntents) {
+    const deps = si.dependsOn.length > 0 ? ` (after: #${si.dependsOn.join(', #')})` : '';
+    parts.push(`#${si.priority} [${si.type}] ${si.description.slice(0, 60)}${deps}`);
+  }
+
+  return parts.join('\n');
 }

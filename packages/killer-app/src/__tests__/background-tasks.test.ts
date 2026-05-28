@@ -112,6 +112,13 @@ import {
   createDefaultRhythmProfile,
   formatRhythmGuidance,
   type RhythmSample,
+  classifySubIntentType,
+  estimateComplexity,
+  decomposeIntent,
+  formatIntentDecomposition,
+  computeExecutionOrder,
+  detectDependencies,
+  type SubIntent,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -3729,6 +3736,77 @@ describe('background-tasks', () => {
       const guidance = formatRhythmGuidance(profile);
       expect(guidance).toContain('measured');
       expect(guidance).toContain('balanced');
+    });
+  });
+
+  describe('Intent Decomposition', () => {
+    it('should classify question type', () => {
+      expect(classifySubIntentType('how do I fix this bug?')).toBe('question');
+      expect(classifySubIntentType('帮我修一下代码')).toBe('action');
+      expect(classifySubIntentType('看看日志里有什么')).toBe('exploration');
+      expect(classifySubIntentType('应该用哪个方案')).toBe('decision');
+      expect(classifySubIntentType('确认一下配置是否正确')).toBe('verification');
+    });
+
+    it('should estimate complexity', () => {
+      expect(estimateComplexity('short text')).toBeLessThan(0.5);
+      expect(estimateComplexity('a'.repeat(250))).toBeGreaterThan(0.5);
+    });
+
+    it('should decompose single intent', () => {
+      const result = decomposeIntent('how do I fix the auth bug?');
+      expect(result.subIntents.length).toBe(1);
+      expect(result.executionOrder).toEqual([1]);
+      expect(result.requiresConfirmation).toBe(false);
+    });
+
+    it('should decompose multi-intent input', () => {
+      const input = '1. fix the bug 2. write tests 3. update docs';
+      const result = decomposeIntent(input);
+      expect(result.subIntents.length).toBe(3);
+      expect(result.executionOrder.length).toBe(3);
+    });
+
+    it('should detect dependencies between sub-intents', () => {
+      const subIntents: SubIntent[] = [
+        { description: 'create the database schema', type: 'action', priority: 1, dependsOn: [], complexity: 0.3 },
+        { description: '然后 populate it with seed data', type: 'action', priority: 2, dependsOn: [], complexity: 0.2 },
+      ];
+      detectDependencies(subIntents);
+      expect(subIntents[1].dependsOn).toContain(1);
+    });
+
+    it('should compute execution order respecting dependencies', () => {
+      const subIntents: SubIntent[] = [
+        { description: 'task A', type: 'action', priority: 1, dependsOn: [], complexity: 0.2 },
+        { description: 'task B', type: 'action', priority: 2, dependsOn: [1], complexity: 0.3 },
+        { description: 'task C', type: 'action', priority: 3, dependsOn: [], complexity: 0.1 },
+      ];
+      const order = computeExecutionOrder(subIntents);
+      expect(order).toContain(1);
+      expect(order).toContain(2);
+      expect(order).toContain(3);
+      // B depends on A, so A should come before B
+      expect(order.indexOf(1)).toBeLessThan(order.indexOf(2));
+    });
+
+    it('should require confirmation for complex multi-intent', () => {
+      const input = '1. refactor all modules 2. add batch processing 3. update tests 4. deploy';
+      const result = decomposeIntent(input);
+      expect(result.requiresConfirmation).toBe(true);
+    });
+
+    it('should format decomposition for prompt injection', () => {
+      const input = '1. fix auth bug 2. add unit tests';
+      const result = decomposeIntent(input);
+      const formatted = formatIntentDecomposition(result);
+      expect(formatted).toContain('sub-intents');
+      expect(formatted).toContain('execution order');
+    });
+
+    it('should return undefined for single intent formatting', () => {
+      const result = decomposeIntent('simple question?');
+      expect(formatIntentDecomposition(result)).toBeUndefined();
     });
   });
 });

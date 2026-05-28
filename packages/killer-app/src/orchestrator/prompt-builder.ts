@@ -125,6 +125,8 @@ export interface PromptBuilderDeps {
   learnedLessons?: string;
   /** 对话节奏指导 */
   rhythmGuidance?: string;
+  /** 意图分解指导 */
+  intentDecomposition?: string;
 }
 
 /**
@@ -409,6 +411,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 对话节奏自适应 ===
   if (deps.rhythmGuidance) {
     parts.push(`\nRHYTHM ADAPTATION — ${deps.rhythmGuidance}`);
+  }
+
+  // === 意图分解 ===
+  if (deps.intentDecomposition) {
+    parts.push(`\nINTENT DECOMPOSITION — Complex multi-intent detected:\n${deps.intentDecomposition}`);
   }
 
   // === 自主行动建议 ===
