@@ -1652,18 +1652,61 @@ What alternative approach should we try? One sentence only.`;
     }
 
     // 无明确 action — 用 LLM 理解步骤描述并生成工具调用
-    const prompt = `Execute this plan step using available tools. Respond with the result.
+    const planContext = this.buildStepExecutionContext(step);
+    const prompt = `Execute this plan step. Use tools if needed, otherwise provide direct analysis.
+
+${planContext}
 
 Plan step: "${step.description}"
 
-If this step requires using a tool, use it. If it's a reasoning/analysis step, provide the analysis directly.`;
+If this step requires using a tool, call it. If it's a reasoning/analysis step, provide the analysis directly.`;
 
     try {
-      const response = await this.callLLMWithRetry(prompt, '');
+      const systemCtx = this.buildSystemPrompt(step.description);
+      const response = await this.runNativeToolLoop(prompt, systemCtx);
       return { success: true, output: response };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  /**
+   * 构建 plan step 执行上下文
+   */
+  private buildStepExecutionContext(step: PlanStep): string {
+    const parts: string[] = [];
+
+    // 找到包含此 step 的 plan
+    const activePlans = this.planExecutor.getActivePlans();
+    const plan = activePlans.find(p => p.steps.some(s => s.id === step.id));
+    if (plan) {
+      parts.push(`Plan goal: ${plan.goalId}`);
+
+      // 已完成步骤的摘要
+      const completedSteps = plan.steps.filter(s => s.status === 'completed');
+      if (completedSteps.length > 0) {
+        parts.push(`Completed steps (${completedSteps.length}/${plan.steps.length}):`);
+        for (const cs of completedSteps.slice(-5)) {
+          const rawOutput = cs.result?.output;
+          const summary = rawOutput ? String(rawOutput).slice(0, 100) : '(no output)';
+          parts.push(`  ✓ ${cs.description} → ${summary}`);
+        }
+      }
+
+      // 下一步预览
+      const remainingSteps = plan.steps.filter(s => s.status !== 'completed' && s.status !== 'failed' && s.id !== step.id);
+      if (remainingSteps.length > 0) {
+        parts.push(`Remaining after this: ${remainingSteps.slice(0, 3).map(s => s.description).join(', ')}`);
+      }
+    }
+
+    // 可用工具列表
+    const toolNames = this.tools.list();
+    if (toolNames.length > 0) {
+      parts.push(`Available tools: ${toolNames.join(', ')}`);
+    }
+
+    return parts.join('\n');
   }
 
   /**

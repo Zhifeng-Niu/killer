@@ -71,6 +71,16 @@ npm test 2>&1
 24. **Header status indicator** — Shows ● 思考中/输出中/错误 in header bar when agent is active, visible even when sidebar is hidden.
 25. **Code review fixes** — CRITICAL: consciousness event listener cleanup (use unsubscribe return). HIGH: /retry direct flow, AbortController leak prevention, try-catch in event handler.
 
+#### Session 3 — Cognitive Pipeline Deep Cuts (WP90-96)
+
+96. **Context Window Budget Optimizer** (WP90): Proportional token budget with keep/truncate/drop per section — 45 weights, MIN_SECTION_BUDGET=50
+97. **Next-Turn Intent Prediction** (WP91): 9x9 transition matrix + knowledge graph influence + flow signals → predicted intent with actions
+98. **Cross-Module Cognitive Feedback** (WP92): 13 interaction rules (amplify/suppress/trigger/conflict), synergy/conflict detection, health scoring
+99. **Adaptive Tool Chain Orchestration** (WP93): Intent→tool chain templates (9 categories), learned pattern adjustment, step-skipping
+100. **Conversation Momentum Tracking** (WP94): 5-dimension momentum (topic depth, info density, engagement, goal progress, composite) with pace advice
+101. **Adaptive Persona Calibration** (WP95): 5 expression dimensions from 6 signals — formality/verbosity/empathy/technicalDepth/proactivity
+102. **Proactive Knowledge Gap Detector** (WP96): Regex detection of unknown concepts, unresolved references, missing context — coverage scored, injected as KNOWLEDGE GAPS section
+
 ### Dead Ends
 {None yet.}
 
