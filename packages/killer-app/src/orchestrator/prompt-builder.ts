@@ -141,6 +141,8 @@ export interface PromptBuilderDeps {
   nextTurnPrediction?: string;
   /** 跨模块认知反馈 */
   cognitiveFeedback?: string;
+  /** 自适应工具链编排 */
+  toolChainGuidance?: string;
 }
 
 /**
@@ -460,6 +462,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 跨模块认知反馈 ===
   if (deps.cognitiveFeedback) {
     parts.push(`\nMETA-FEEDBACK — Cognitive architecture self-awareness:\n${deps.cognitiveFeedback}`);
+  }
+
+  // === 自适应工具链编排 ===
+  if (deps.toolChainGuidance) {
+    parts.push(`\nTOOL CHAIN — Recommended tool sequence for predicted intent:\n${deps.toolChainGuidance}`);
   }
 
   // === 自主行动建议 ===

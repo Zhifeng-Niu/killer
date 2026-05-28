@@ -6722,6 +6722,7 @@ const SECTION_BUDGET_WEIGHTS: Record<string, number> = {
   'SELF-CORRECTION': 0.04,
   'NEXT-TURN PREDICTION': 0.03,
   'META-FEEDBACK': 0.03,
+  'TOOL CHAIN': 0.04,
 };
 
 /** 最小保留预算（字符） */
@@ -7200,5 +7201,159 @@ export function formatCognitiveFeedback(analysis: CognitiveFeedbackAnalysis): st
     lines.push(`建议: ${analysis.recommendations.join('、')}`);
   }
 
+  return lines.join('\n');
+}
+
+/**
+ * 自适应工具链编排
+ */
+
+/** 工具链建议 */
+export interface ToolChainSuggestion {
+  /** 目标意图 */
+  targetIntent: IntentCategory;
+  /** 推荐的工具链步骤 */
+  steps: Array<{
+    tool: string;
+    purpose: string;
+    optional: boolean;
+  }>;
+  /** 预估成功率 */
+  estimatedSuccessRate: number;
+  /** 依据 */
+  reasoning: string;
+}
+
+// 意图→工具链模板（基于常见开发工作流）
+const INTENT_TOOLCHAIN_TEMPLATES: Record<IntentCategory, Array<{ tool: string; purpose: string; optional: boolean }>> = {
+  debug: [
+    { tool: 'memory_recall', purpose: '检索相关错误历史', optional: false },
+    { tool: 'code_search', purpose: '定位错误代码', optional: false },
+    { tool: 'shell_exec', purpose: '复现/诊断错误', optional: true },
+    { tool: 'code_search', purpose: '确认修复位置', optional: false },
+  ],
+  feature: [
+    { tool: 'memory_recall', purpose: '检索相关架构决策', optional: false },
+    { tool: 'code_search', purpose: '了解现有代码结构', optional: false },
+    { tool: 'shell_exec', purpose: '运行测试验证', optional: true },
+  ],
+  refactor: [
+    { tool: 'code_search', purpose: '分析需要重构的代码', optional: false },
+    { tool: 'memory_recall', purpose: '检索重构模式', optional: false },
+    { tool: 'code_search', purpose: '确认依赖关系', optional: true },
+    { tool: 'shell_exec', purpose: '运行测试确保不破坏', optional: false },
+  ],
+  review: [
+    { tool: 'code_search', purpose: '审查目标代码', optional: false },
+    { tool: 'memory_recall', purpose: '检索代码规范', optional: false },
+    { tool: 'shell_exec', purpose: '运行静态检查', optional: true },
+  ],
+  deploy: [
+    { tool: 'shell_exec', purpose: '运行构建检查', optional: false },
+    { tool: 'memory_recall', purpose: '检索部署配置', optional: false },
+    { tool: 'shell_exec', purpose: '执行部署', optional: true },
+  ],
+  config: [
+    { tool: 'memory_recall', purpose: '检索配置模板', optional: false },
+    { tool: 'code_search', purpose: '查看当前配置', optional: false },
+    { tool: 'shell_exec', purpose: '验证配置', optional: true },
+  ],
+  learn: [
+    { tool: 'memory_recall', purpose: '检索相关概念', optional: false },
+    { tool: 'code_search', purpose: '查看示例代码', optional: true },
+  ],
+  question: [
+    { tool: 'memory_recall', purpose: '检索相关知识', optional: false },
+    { tool: 'code_search', purpose: '查找具体实现', optional: true },
+  ],
+  general: [],
+};
+
+/**
+ * 生成自适应工具链建议
+ */
+export function generateToolChainSuggestion(
+  targetIntent: IntentCategory,
+  availableTools: string[],
+  learnedPatterns: ToolPattern[],
+  lastToolUsed?: string,
+): ToolChainSuggestion {
+  const template = INTENT_TOOLCHAIN_TEMPLATES[targetIntent] ?? [];
+
+  if (template.length === 0) {
+    return {
+      targetIntent,
+      steps: [],
+      estimatedSuccessRate: 0,
+      reasoning: '无匹配的工具链模板',
+    };
+  }
+
+  // 过滤掉不可用的工具
+  const steps = template.filter(step => {
+    if (availableTools.length === 0) return true;
+    return availableTools.includes(step.tool);
+  });
+
+  // 用学习到的模式调整
+  let estimatedSuccessRate = 0.7;
+
+  // 检查 learned patterns 中是否有匹配的工具链前缀
+  if (steps.length >= 2 && learnedPatterns.length > 0) {
+    const firstTool = steps[0].tool;
+    const secondTool = steps[1].tool;
+    const matchingPattern = learnedPatterns.find(
+      p => p.sequence[0] === firstTool && p.sequence[1] === secondTool,
+    );
+    if (matchingPattern) {
+      estimatedSuccessRate = Math.max(estimatedSuccessRate, matchingPattern.successRate);
+    }
+  }
+
+  // 如果上一个工具与链中第一步匹配，从第二步开始
+  let adjustedSteps = steps;
+  if (lastToolUsed && steps.length >= 2 && steps[0].tool === lastToolUsed) {
+    adjustedSteps = steps.slice(1);
+  }
+
+  // 根据学习模式扩展：suggestNextTool 的结果
+  if (lastToolUsed && learnedPatterns.length > 0) {
+    const nextSuggestions = suggestNextTool(learnedPatterns, lastToolUsed, 2);
+    for (const suggested of nextSuggestions) {
+      if (!adjustedSteps.some(s => s.tool === suggested)) {
+        adjustedSteps.push({ tool: suggested, purpose: '基于历史模式推荐', optional: true });
+      }
+    }
+  }
+
+  const requiredSteps = adjustedSteps.filter(s => !s.optional).length;
+  const reasoningParts: string[] = [
+    `意图: ${targetIntent}`,
+    `步骤: ${adjustedSteps.map(s => s.tool).join(' → ')}`,
+  ];
+  if (lastToolUsed) reasoningParts.push(`接续: ${lastToolUsed}`);
+  reasoningParts.push(`必需步骤: ${requiredSteps}/${adjustedSteps.length}`);
+
+  return {
+    targetIntent,
+    steps: adjustedSteps,
+    estimatedSuccessRate: Math.min(0.95, estimatedSuccessRate),
+    reasoning: reasoningParts.join(' | '),
+  };
+}
+
+/**
+ * 格式化工具链建议为 prompt section
+ */
+export function formatToolChainSuggestion(suggestion: ToolChainSuggestion): string {
+  if (suggestion.steps.length === 0) return '';
+
+  const lines: string[] = [];
+  lines.push(`推荐工具链 (${(suggestion.estimatedSuccessRate * 100).toFixed(0)}% 成功率):`);
+  for (const step of suggestion.steps) {
+    const marker = step.optional ? '(可选)' : '(必需)';
+    lines.push(`  ${step.tool} ${marker} — ${step.purpose}`);
+  }
+  lines.push(`依据: ${suggestion.reasoning}`);
   return lines.join('\n');
 }

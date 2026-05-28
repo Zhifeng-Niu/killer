@@ -145,6 +145,9 @@ import {
   formatNextTurnPrediction,
   analyzeCrossModuleFeedback,
   formatCognitiveFeedback,
+  generateToolChainSuggestion,
+  formatToolChainSuggestion,
+  type ToolPattern,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -4433,6 +4436,79 @@ describe('background-tasks', () => {
       expect(result).toContain('协同');
       expect(result).toContain('冲突');
       expect(result).toContain('建议');
+    });
+  });
+
+  describe('generateToolChainSuggestion', () => {
+    it('should return empty for general intent', () => {
+      const result = generateToolChainSuggestion('general', [], []);
+      expect(result.steps).toHaveLength(0);
+      expect(result.estimatedSuccessRate).toBe(0);
+    });
+
+    it('should generate chain for debug intent', () => {
+      const result = generateToolChainSuggestion('debug', [], []);
+      expect(result.steps.length).toBeGreaterThan(0);
+      expect(result.steps[0].tool).toBe('memory_recall');
+      expect(result.estimatedSuccessRate).toBeGreaterThan(0);
+    });
+
+    it('should filter by available tools', () => {
+      const result = generateToolChainSuggestion('debug', ['memory_recall', 'code_search'], []);
+      expect(result.steps.every(s => ['memory_recall', 'code_search'].includes(s.tool))).toBe(true);
+    });
+
+    it('should skip first step when matching lastToolUsed', () => {
+      const result = generateToolChainSuggestion('debug', [], [], 'memory_recall');
+      expect(result.steps[0].tool).not.toBe('memory_recall');
+      expect(result.reasoning).toContain('接续');
+    });
+
+    it('should boost success rate with matching learned pattern', () => {
+      const patterns: ToolPattern[] = [{
+        sequence: ['memory_recall', 'code_search'],
+        successRate: 0.95,
+        occurrences: 5,
+        typicalContext: 'debugging',
+      }];
+      const result = generateToolChainSuggestion('debug', [], patterns);
+      expect(result.estimatedSuccessRate).toBeGreaterThanOrEqual(0.7);
+    });
+
+    it('should extend chain with learned next tools', () => {
+      const patterns: ToolPattern[] = [
+        { sequence: ['shell_exec', 'code_search'], successRate: 0.8, occurrences: 3, typicalContext: 'fix' },
+      ];
+      const result = generateToolChainSuggestion('debug', [], patterns, 'shell_exec');
+      expect(result.reasoning).toContain('接续');
+    });
+  });
+
+  describe('formatToolChainSuggestion', () => {
+    it('should return empty for no steps', () => {
+      const result = formatToolChainSuggestion({
+        targetIntent: 'general',
+        steps: [],
+        estimatedSuccessRate: 0,
+        reasoning: 'none',
+      });
+      expect(result).toBe('');
+    });
+
+    it('should format steps with markers', () => {
+      const result = formatToolChainSuggestion({
+        targetIntent: 'debug',
+        steps: [
+          { tool: 'memory_recall', purpose: '检索错误', optional: false },
+          { tool: 'code_search', purpose: '定位代码', optional: true },
+        ],
+        estimatedSuccessRate: 0.85,
+        reasoning: '意图: debug',
+      });
+      expect(result).toContain('85%');
+      expect(result).toContain('(必需)');
+      expect(result).toContain('(可选)');
+      expect(result).toContain('memory_recall');
     });
   });
 });
