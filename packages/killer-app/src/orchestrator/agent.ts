@@ -1497,7 +1497,38 @@ Examples:
     }
 
     this.logger.info(`Auto-continue completed: "${stepDesc.slice(0, 50)}" → ${response.length} chars`);
+
+    // 验证执行结果
+    const verification = this.verifyStepResult(stepDesc, response);
+    if (!verification.valid) {
+      this.logger.warn(`Step result verification failed: ${verification.reason}`);
+    }
+
     return { content: response };
+  }
+
+  /**
+   * 验证 step 执行结果是否有效
+   */
+  private verifyStepResult(stepDesc: string, response: string): { valid: boolean; reason?: string } {
+    if (!response || response.trim().length === 0) {
+      return { valid: false, reason: 'Empty response' };
+    }
+    if (response.length < 10) {
+      return { valid: false, reason: 'Response too short to be meaningful' };
+    }
+    const errorSignals = ['error:', 'exception:', 'failed:', 'timeout', 'unauthorized', 'forbidden'];
+    const lowerResponse = response.toLowerCase();
+    const hasError = errorSignals.some(sig => lowerResponse.includes(sig));
+    if (hasError && lowerResponse.includes('i cannot') === false) {
+      // 包含错误信号但不是"我不能"类型的正常拒绝
+      // 只有当错误信号出现在响应开头时才判定为失败
+      const firstLine = response.split('\n')[0].toLowerCase();
+      if (errorSignals.some(sig => firstLine.includes(sig))) {
+        return { valid: false, reason: `Error signal in first line: ${firstLine.slice(0, 80)}` };
+      }
+    }
+    return { valid: true };
   }
 
   /**
@@ -1684,12 +1715,16 @@ If this step requires using a tool, call it. If it's a reasoning/analysis step, 
 
       // 已完成步骤的摘要
       const completedSteps = plan.steps.filter(s => s.status === 'completed');
-      if (completedSteps.length > 0) {
-        parts.push(`Completed steps (${completedSteps.length}/${plan.steps.length}):`);
+      const skippedSteps = plan.steps.filter(s => s.status === 'skipped');
+      if (completedSteps.length > 0 || skippedSteps.length > 0) {
+        parts.push(`Progress (${completedSteps.length}/${plan.steps.length} done${skippedSteps.length > 0 ? `, ${skippedSteps.length} skipped` : ''}):`);
         for (const cs of completedSteps.slice(-5)) {
           const rawOutput = cs.result?.output;
           const summary = rawOutput ? String(rawOutput).slice(0, 100) : '(no output)';
           parts.push(`  ✓ ${cs.description} → ${summary}`);
+        }
+        for (const ss of skippedSteps.slice(-3)) {
+          parts.push(`  ⏭ ${ss.description} (skipped)`);
         }
       }
 
