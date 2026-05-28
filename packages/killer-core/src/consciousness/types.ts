@@ -100,7 +100,8 @@ export type EventType =
   // Prefrontal 事件 (规划编排)
   | 'goal.created'
   | 'goal.completed'
-  | 'execution.progress';
+  | 'execution.progress'
+  | 'execution.log';
 
 /**
  * 轨迹记录

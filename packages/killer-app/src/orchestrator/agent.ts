@@ -1505,6 +1505,11 @@ Examples:
 
     // 构建 prompt（轻量版 — 不含用户画像、情感等）
     const systemContext = this.buildSystemPrompt(stepDesc);
+    this.consciousness.emit({
+      type: 'execution.log',
+      source: 'prefrontal',
+      data: { phase: 'execute', step: stepNum, total: totalSteps, description: stepDesc },
+    });
     const response = await this.runNativeToolLoop(stepDesc, systemContext, onToken, onStatus);
 
     // 最小状态更新 — 只记对话历史
@@ -1520,6 +1525,17 @@ Examples:
     const verification = this.verifyStepResult(stepDesc, response);
     if (!verification.valid) {
       this.logger.warn(`Step result verification failed: ${verification.reason}`);
+      this.consciousness.emit({
+        type: 'execution.log',
+        source: 'prefrontal',
+        data: { phase: 'verify-failed', step: stepNum, reason: verification.reason },
+      });
+    } else {
+      this.consciousness.emit({
+        type: 'execution.log',
+        source: 'prefrontal',
+        data: { phase: 'verify-passed', step: stepNum, responseLength: response.length },
+      });
     }
 
     return { content: response };
