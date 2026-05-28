@@ -5,7 +5,7 @@ started_at: 2026-05-28T04:00:00Z
 expedition_branch: odyssey/20260528-112859
 baseline_metric: 2465
 best_metric: 2465
-total_waypoints: 0
+total_waypoints: 3
 consecutive_discards: 0
 ---
 
@@ -53,17 +53,22 @@ cd packages/killer-app && npx tsc --noEmit
 ## What's Been Tried
 
 ### Wins
-{Auto-updated by engine.}
+1. **WP8 — Complex intent detection** (detectComplexIntent): 4-category scoring to auto-detect multi-step tasks
+2. **WP9 — Intelligent step decomposition**: LLM prompt produces tool-oriented steps with [parallel] markers; Chinese NLP fallback; parallel dependency inference
+3. **WP10 — Plan quality scoring** (scorePlan): 5-signal evaluation; plan.created consciousness event with quality score
 
 ### Dead Ends
-{Auto-updated by engine.}
+1. **WP8 — Complex intent detection** (detectComplexIntent): 4-category scoring to auto-detect multi-step tasks
+2. **WP9 — Intelligent step decomposition**: LLM prompt produces tool-oriented steps with [parallel] markers; Chinese NLP fallback; parallel dependency inference
+3. **WP10 — Plan quality scoring** (scorePlan): 5-signal evaluation; plan.created consciousness event with quality score
 
 ### Surprises
 {Unexpected findings. Auto-updated in creative mode.}
 
 ## Current Best
 - metric: 0 type errors, 2465 tests (747 core + 1718 app)
-- Baseline: Autonomous execution loop complete (WP100-WP7), auto-plan creation not yet implemented
+- 3 waypoints: auto-plan creation pipeline complete
+- Complex intent detection, LLM step decomposition, plan quality scoring
 
 ## Ideas Backlog
 1. **意图复杂度检测** — 在 processInputCore 中检测用户输入是否包含多步骤任务信号（并列动作、时间序列、因果链）
