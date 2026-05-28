@@ -160,6 +160,8 @@ import {
   type IntentEvolution,
   computeConversationEnergy,
   formatConversationEnergy,
+  suggestResponseStructure,
+  formatResponseStructureGuidance,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -4892,6 +4894,74 @@ describe('background-tasks', () => {
       expect(result).toContain('30%');
       expect(result).toContain('下降');
       expect(result).toContain('精炼回复');
+    });
+  });
+
+  describe('suggestResponseStructure', () => {
+    it('should return default for no signals', () => {
+      const result = suggestResponseStructure(undefined, undefined, undefined, undefined);
+      expect(result.format).toBe('prose');
+      expect(result.reasoning).toBe('默认结构');
+    });
+
+    it('should suggest concise for crashing energy', () => {
+      const result = suggestResponseStructure(
+        { level: 0.2, trend: 'crashing', dropoffRisk: 0.7, recoveryAction: '' },
+        undefined, undefined, undefined,
+      );
+      expect(result.format).toBe('concise');
+      expect(result.leadWithConclusion).toBe(true);
+      expect(result.maxParagraphs).toBe(2);
+    });
+
+    it('should suggest bullets for stalled momentum', () => {
+      const result = suggestResponseStructure(
+        undefined,
+        { direction: 'stalled', topicDepthDelta: 0, infoDensity: 0.5, engagementScore: 0.3, goalProgress: 0, momentumScore: 0.2, paceAdvice: '' },
+        undefined, undefined,
+      );
+      expect(result.format).toBe('bullets');
+    });
+
+    it('should suggest numbered for deep rabbit hole', () => {
+      const result = suggestResponseStructure(
+        undefined, undefined,
+        { status: 'deep_rabbit_hole', coherence: 0.8, chainDepth: 15, fragmentationCount: 0, recoveryHint: '' },
+        undefined,
+      );
+      expect(result.format).toBe('numbered');
+      expect(result.leadWithConclusion).toBe(true);
+    });
+
+    it('should adjust for beginner expertise', () => {
+      const result = suggestResponseStructure(undefined, undefined, undefined, 'beginner');
+      expect(result.maxParagraphs).toBeGreaterThanOrEqual(4);
+      expect(result.maxCodeBlocks).toBeLessThanOrEqual(1);
+    });
+
+    it('should adjust for expert expertise', () => {
+      const result = suggestResponseStructure(undefined, undefined, undefined, 'expert');
+      expect(result.maxParagraphs).toBeLessThanOrEqual(3);
+      expect(result.maxCodeBlocks).toBe(3);
+    });
+  });
+
+  describe('formatResponseStructureGuidance', () => {
+    it('should return empty for default structure', () => {
+      const result = formatResponseStructureGuidance(suggestResponseStructure(undefined, undefined, undefined, undefined));
+      expect(result).toBe('');
+    });
+
+    it('should format concise structure', () => {
+      const result = formatResponseStructureGuidance(
+        suggestResponseStructure(
+          { level: 0.2, trend: 'crashing', dropoffRisk: 0.7, recoveryAction: '' },
+          undefined, undefined, undefined,
+        ),
+      );
+      expect(result).toContain('极简');
+      expect(result).toContain('先结论');
+      expect(result).toContain('依据');
     });
   });
 });

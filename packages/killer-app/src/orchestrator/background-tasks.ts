@@ -6728,6 +6728,7 @@ const SECTION_BUDGET_WEIGHTS: Record<string, number> = {
   'KNOWLEDGE GAPS': 0.03,
   'INTENT CHAIN HEALTH': 0.03,
   'CONVERSATION ENERGY': 0.03,
+  'RESPONSE STRUCTURE': 0.03,
 };
 
 /** 最小保留预算（字符） */
@@ -7978,5 +7979,118 @@ export function formatConversationEnergy(energy: ConversationEnergy): string {
   if (energy.recoveryAction) {
     lines.push(`建议: ${energy.recoveryAction}`);
   }
+  return lines.join('\n');
+}
+
+/**
+ * 自适应回复结构优化器
+ */
+
+export interface ResponseStructureGuidance {
+  /** 建议格式 */
+  format: 'prose' | 'bullets' | 'numbered' | 'code_heavy' | 'concise';
+  /** 建议最大段落数 */
+  maxParagraphs: number;
+  /** 是否建议先给结论 */
+  leadWithConclusion: boolean;
+  /** 建议代码块数 */
+  maxCodeBlocks: number;
+  /** 格式化理由 */
+  reasoning: string;
+}
+
+/**
+ * 基于多维状态建议回复结构
+ */
+export function suggestResponseStructure(
+  energy: ConversationEnergy | undefined,
+  momentum: MomentumState | undefined,
+  chainHealth: IntentChainHealth | undefined,
+  expertise: 'beginner' | 'intermediate' | 'expert' | undefined,
+): ResponseStructureGuidance {
+  // 默认结构
+  let format: ResponseStructureGuidance['format'] = 'prose';
+  let maxParagraphs = 4;
+  let leadWithConclusion = false;
+  let maxCodeBlocks = 2;
+  const reasons: string[] = [];
+
+  // === 能量驱动 ===
+  if (energy) {
+    if (energy.trend === 'crashing' || energy.dropoffRisk > 0.5) {
+      format = 'concise';
+      maxParagraphs = 2;
+      leadWithConclusion = true;
+      reasons.push('能量急降→简洁+先给结论');
+    } else if (energy.trend === 'declining') {
+      maxParagraphs = 3;
+      leadWithConclusion = true;
+      reasons.push('能量下降→精简+先给结论');
+    }
+  }
+
+  // === 动量驱动 ===
+  if (momentum) {
+    if (momentum.direction === 'accelerating') {
+      maxCodeBlocks = 3;
+      reasons.push('加速中→允许更多代码');
+    } else if (momentum.direction === 'stalled') {
+      format = 'bullets';
+      maxParagraphs = 3;
+      reasons.push('停滞→列表格式重新激活');
+    }
+  }
+
+  // === 意图链驱动 ===
+  if (chainHealth) {
+    if (chainHealth.status === 'deep_rabbit_hole') {
+      format = 'numbered';
+      leadWithConclusion = true;
+      reasons.push('意图链过深→编号列表+结构化');
+    } else if (chainHealth.status === 'fragmented') {
+      format = 'concise';
+      maxParagraphs = 2;
+      reasons.push('意图碎片化→极简回复聚焦主线');
+    }
+  }
+
+  // === 专业度驱动 ===
+  if (expertise === 'beginner') {
+    maxParagraphs = Math.max(maxParagraphs, 4);
+    maxCodeBlocks = Math.min(maxCodeBlocks, 1);
+    if (!reasons.some(r => r.includes('简洁'))) reasons.push('初学者→详细解释');
+  } else if (expertise === 'expert') {
+    maxParagraphs = Math.min(maxParagraphs, 3);
+    maxCodeBlocks = 3;
+    if (!reasons.some(r => r.includes('简洁'))) reasons.push('专家→简洁+代码');
+  }
+
+  return {
+    format,
+    maxParagraphs,
+    leadWithConclusion,
+    maxCodeBlocks,
+    reasoning: reasons.length > 0 ? reasons.join('、') : '默认结构',
+  };
+}
+
+/**
+ * 格式化回复结构建议为 prompt section
+ */
+export function formatResponseStructureGuidance(guidance: ResponseStructureGuidance): string {
+  if (guidance.reasoning === '默认结构') return '';
+
+  const formatLabels: Record<ResponseStructureGuidance['format'], string> = {
+    prose: '段落',
+    bullets: '要点列表',
+    numbered: '编号步骤',
+    code_heavy: '代码为主',
+    concise: '极简',
+  };
+
+  const lines: string[] = [
+    `格式: ${formatLabels[guidance.format]} | ≤${guidance.maxParagraphs}段 | ≤${guidance.maxCodeBlocks}代码块${guidance.leadWithConclusion ? ' | 先结论' : ''}`,
+    `依据: ${guidance.reasoning}`,
+  ];
   return lines.join('\n');
 }

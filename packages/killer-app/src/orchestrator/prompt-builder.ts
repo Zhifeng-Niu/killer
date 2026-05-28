@@ -153,6 +153,8 @@ export interface PromptBuilderDeps {
   intentChainHealth?: string;
   /** 对话能量模型 */
   conversationEnergy?: string;
+  /** 回复结构建议 */
+  responseStructure?: string;
 }
 
 /**
@@ -502,6 +504,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 对话能量模型 ===
   if (deps.conversationEnergy) {
     parts.push(`\nCONVERSATION ENERGY — User engagement self-monitoring:\n${deps.conversationEnergy}`);
+  }
+
+  // === 回复结构建议 ===
+  if (deps.responseStructure) {
+    parts.push(`\nRESPONSE STRUCTURE — Adaptive formatting guidance:\n${deps.responseStructure}`);
   }
 
   // === 自主行动建议 ===
