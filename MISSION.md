@@ -1,11 +1,11 @@
 ---
 orientation: engineer
-status: active
+status: complete
 started_at: 2026-05-29T06:00:00Z
 expedition_branch: odyssey/20260528-223038
 baseline_metric: 0
 best_metric: 0
-total_waypoints: 1
+total_waypoints: 2
 consecutive_discards: 0
 ---
 
@@ -54,6 +54,7 @@ pnpm build
 
 ### Wins
 - WP1: LongTaskEngine + IterativeRefiner + ErrorRecoveryManager + SelfMonitor (4 core modules, 1679 lines, build clean)
+- WP2: ToolChain (builder-pattern orchestration with serial/parallel/branch/loop/transform) + InstructionParser (rule-based + LLM-enhanced parsing) + ScheduledTaskRunner (once/recurring/daily scheduling) + ExecutionContext (cross-step state + snapshot/restore) — 4 modules, ~770 lines new code, fully integrated into agent.ts lifecycle, build clean
 
 ### Dead Ends
 {None yet.}
@@ -66,8 +67,6 @@ pnpm build
 - Baseline: 0 type errors
 
 ## Ideas Backlog
-1. ToolChain — 工具调用链编排引擎（串行/并行/条件分支/循环）
-2. InstructionParser — 结构化指令解析器（多步骤指令→执行计划）
-3. ScheduledTaskRunner — 定时任务调度器（cron、延迟、周期执行）
-4. ExecutionContext — 执行上下文管理器（跨步骤状态传递）
-5. DynamicToolComposer — 动态工具组合（运行时合成新工具）
+1. DynamicToolComposer — 动态工具组合（运行时合成新工具）
+2. InstructionFollowEvaluator — 指令遵循度评估器（量化 agent 对多步骤指令的执行准确率）
+3. LongChainExecutor — 超长链路执行器（100+ 步骤链的 checkpoint/resume + 流控）
