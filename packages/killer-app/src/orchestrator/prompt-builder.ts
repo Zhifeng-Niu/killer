@@ -149,6 +149,8 @@ export interface PromptBuilderDeps {
   personaCalibration?: string;
   /** 知识缺口检测 */
   knowledgeGaps?: string;
+  /** 意图链健康评估 */
+  intentChainHealth?: string;
 }
 
 /**
@@ -488,6 +490,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 知识缺口检测 ===
   if (deps.knowledgeGaps) {
     parts.push(`\nKNOWLEDGE GAPS — Detected information gaps to address:\n${deps.knowledgeGaps}`);
+  }
+
+  // === 意图链健康评估 ===
+  if (deps.intentChainHealth) {
+    parts.push(`\nINTENT CHAIN HEALTH — Conversation direction self-regulation:\n${deps.intentChainHealth}`);
   }
 
   // === 自主行动建议 ===

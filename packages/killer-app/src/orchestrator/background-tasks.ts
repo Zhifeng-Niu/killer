@@ -6726,6 +6726,7 @@ const SECTION_BUDGET_WEIGHTS: Record<string, number> = {
   'MOMENTUM': 0.03,
   'PERSONA CALIBRATION': 0.04,
   'KNOWLEDGE GAPS': 0.03,
+  'INTENT CHAIN HEALTH': 0.03,
 };
 
 /** 最小保留预算（字符） */
@@ -7768,5 +7769,97 @@ export function formatKnowledgeGapAnalysis(analysis: KnowledgeGapAnalysis): stri
     lines.push(`  - ${gap.description} → ${gap.suggestedAction}`);
   }
 
+  return lines.join('\n');
+}
+
+/**
+ * 意图链健康评估
+ */
+
+export interface IntentChainHealth {
+  /** 健康状态 */
+  status: 'healthy' | 'fragmented' | 'stalled' | 'deep_rabbit_hole';
+  /** 连贯性分数 0-1 */
+  coherence: number;
+  /** 当前链深度（连续相同类别的轮次） */
+  chainDepth: number;
+  /** 断裂次数（近期 pivot 数量） */
+  fragmentationCount: number;
+  /** 恢复建议 */
+  recoveryHint: string;
+}
+
+const CHAIN_HEALTH_THRESHOLDS = {
+  FRAGMENTATION_PIVOT_RATIO: 0.6,
+  DEEP_CHAIN_WARNING: 8,
+  DEEP_CHAIN_CRITICAL: 12,
+  COHERENCE_GOOD: 0.7,
+  COHERENCE_POOR: 0.4,
+};
+
+/**
+ * 评估意图链健康状态
+ */
+export function assessIntentChainHealth(
+  evolution: IntentEvolution,
+  currentCategory: IntentCategory,
+  turnsSinceLastCategoryChange: number,
+): IntentChainHealth {
+  const { transitions, activeChains } = evolution;
+
+  const totalTransitions = transitions.length;
+  const pivotCount = transitions.filter(t => t.type === 'pivot').length;
+  const gradualCount = transitions.filter(t => t.type === 'gradual').length;
+  const returnCount = transitions.filter(t => t.type === 'return').length;
+
+  const pivotRatio = totalTransitions > 0 ? pivotCount / totalTransitions : 0;
+  const positiveSignals = gradualCount * 0.1 + returnCount * 0.15;
+  const coherence = Math.max(0, Math.min(1, 1 - pivotRatio + positiveSignals));
+
+  const chainDepth = turnsSinceLastCategoryChange;
+  const lastChainMatch = activeChains[activeChains.length - 1]?.match(/×(\d+)/);
+  const activeChainDepth = lastChainMatch ? parseInt(lastChainMatch[1]) : 0;
+
+  const fragmentationCount = pivotCount;
+
+  let status: IntentChainHealth['status'];
+  let recoveryHint: string;
+
+  if (chainDepth >= CHAIN_HEALTH_THRESHOLDS.DEEP_CHAIN_CRITICAL) {
+    status = 'deep_rabbit_hole';
+    recoveryHint = `已在 ${currentCategory} 链深入 ${chainDepth} 轮 — 考虑总结进展或询问用户是否需要切换方向`;
+  } else if (coherence < CHAIN_HEALTH_THRESHOLDS.COHERENCE_POOR && fragmentationCount >= 3) {
+    status = 'fragmented';
+    recoveryHint = `近期 ${fragmentationCount} 次意图跳转 — 考虑总结当前状态，帮用户回到主线`;
+  } else if (chainDepth >= CHAIN_HEALTH_THRESHOLDS.DEEP_CHAIN_WARNING) {
+    status = 'stalled';
+    recoveryHint = `${currentCategory} 链已 ${chainDepth} 轮 — 可能需要提供阶段性总结或建议下一步`;
+  } else {
+    status = 'healthy';
+    recoveryHint = '';
+  }
+
+  return { status, coherence, chainDepth: Math.max(chainDepth, activeChainDepth), fragmentationCount, recoveryHint };
+}
+
+/**
+ * 格式化意图链健康评估为 prompt section
+ */
+export function formatIntentChainHealth(health: IntentChainHealth): string {
+  if (health.status === 'healthy') return '';
+
+  const statusLabels: Record<IntentChainHealth['status'], string> = {
+    healthy: '健康',
+    fragmented: '碎片化',
+    stalled: '停滞',
+    deep_rabbit_hole: '过深',
+  };
+
+  const lines: string[] = [
+    `意图链: ${statusLabels[health.status]} (连贯性 ${(health.coherence * 100).toFixed(0)}%, 深度 ${health.chainDepth}, 断裂 ${health.fragmentationCount})`,
+  ];
+  if (health.recoveryHint) {
+    lines.push(`建议: ${health.recoveryHint}`);
+  }
   return lines.join('\n');
 }

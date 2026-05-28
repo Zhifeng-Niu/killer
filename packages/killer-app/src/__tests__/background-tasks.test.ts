@@ -154,6 +154,10 @@ import {
   formatPersonaCalibration,
   detectKnowledgeGaps,
   formatKnowledgeGapAnalysis,
+  assessIntentChainHealth,
+  formatIntentChainHealth,
+  type IntentNode,
+  type IntentEvolution,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -4729,6 +4733,92 @@ describe('background-tasks', () => {
       expect(result).toContain('知识缺口');
       expect(result).toContain('覆盖率');
       expect(result).toContain('GraphQL');
+    });
+  });
+
+  describe('assessIntentChainHealth', () => {
+    const healthyEvolution: IntentEvolution = {
+      transitions: [
+        { from: 'question' as const, to: 'debug' as const, type: 'gradual' as const, description: '渐变' },
+        { from: 'debug' as const, to: 'debug' as const, type: 'gradual' as const, description: '延续' },
+      ],
+      dominantCategory: 'debug',
+      activeChains: ['debug×3'],
+    };
+
+    it('should return healthy for low-depth coherent chain', () => {
+      const result = assessIntentChainHealth(healthyEvolution, 'debug', 3);
+      expect(result.status).toBe('healthy');
+      expect(result.coherence).toBeGreaterThan(0.5);
+    });
+
+    it('should detect deep rabbit hole', () => {
+      const result = assessIntentChainHealth(healthyEvolution, 'debug', 14);
+      expect(result.status).toBe('deep_rabbit_hole');
+      expect(result.chainDepth).toBeGreaterThanOrEqual(12);
+      expect(result.recoveryHint).toContain('深入');
+    });
+
+    it('should detect stalled chain', () => {
+      const result = assessIntentChainHealth(healthyEvolution, 'debug', 9);
+      expect(result.status).toBe('stalled');
+      expect(result.recoveryHint).toContain('总结');
+    });
+
+    it('should detect fragmented chain', () => {
+      const fragmented: IntentEvolution = {
+        transitions: [
+          { from: 'debug' as const, to: 'feature' as const, type: 'pivot' as const, description: '突变' },
+          { from: 'feature' as const, to: 'deploy' as const, type: 'pivot' as const, description: '突变' },
+          { from: 'deploy' as const, to: 'question' as const, type: 'pivot' as const, description: '突变' },
+          { from: 'question' as const, to: 'config' as const, type: 'pivot' as const, description: '突变' },
+        ],
+        dominantCategory: 'general',
+        activeChains: [],
+      };
+      const result = assessIntentChainHealth(fragmented, 'config', 1);
+      expect(result.status).toBe('fragmented');
+      expect(result.fragmentationCount).toBe(4);
+      expect(result.coherence).toBeLessThan(0.5);
+    });
+
+    it('should compute coherence from positive signals', () => {
+      const withReturns: IntentEvolution = {
+        transitions: [
+          { from: 'debug' as const, to: 'question' as const, type: 'gradual' as const, description: '渐变' },
+          { from: 'question' as const, to: 'debug' as const, type: 'return' as const, description: '回归' },
+        ],
+        dominantCategory: 'debug',
+        activeChains: ['debug×2'],
+      };
+      const result = assessIntentChainHealth(withReturns, 'debug', 2);
+      expect(result.coherence).toBeGreaterThan(0.7);
+    });
+  });
+
+  describe('formatIntentChainHealth', () => {
+    it('should return empty for healthy status', () => {
+      const result = formatIntentChainHealth({
+        status: 'healthy',
+        coherence: 0.9,
+        chainDepth: 3,
+        fragmentationCount: 0,
+        recoveryHint: '',
+      });
+      expect(result).toBe('');
+    });
+
+    it('should format fragmented status with hint', () => {
+      const result = formatIntentChainHealth({
+        status: 'fragmented',
+        coherence: 0.3,
+        chainDepth: 2,
+        fragmentationCount: 4,
+        recoveryHint: '回到主线',
+      });
+      expect(result).toContain('碎片化');
+      expect(result).toContain('30%');
+      expect(result).toContain('回到主线');
     });
   });
 });
