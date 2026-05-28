@@ -25,3 +25,17 @@ export type {
 
 // Classes
 export { ConsciousnessStream } from './consciousness-stream.js';
+
+// Self Monitor — execution health and stagnation detection
+export {
+  SelfMonitor,
+  DEFAULT_SELF_MONITOR_CONFIG,
+} from './self-monitor.js';
+export type {
+  HealthStatus,
+  TimelineEntry,
+  ResourceSnapshot,
+  StagnationReport,
+  HealthReport,
+  SelfMonitorConfig,
+} from './self-monitor.js';

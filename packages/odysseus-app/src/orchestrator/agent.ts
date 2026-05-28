@@ -63,6 +63,18 @@ import {
   type ChatMessage,
   type ToolCall,
   type IDriveSource,
+  LongTaskEngine,
+  type TaskCheckpoint,
+  type TimeBudget,
+  UNLIMITED_BUDGET,
+  IterativeRefiner,
+  type QualityMetric,
+  type EvaluationResult,
+  ErrorRecoveryManager,
+  type ErrorRecoveryConfig,
+  SelfMonitor,
+  type HealthReport,
+  type StagnationReport,
 } from '@odysseus/core';
 import { ShellExecutor } from './shell-executor.js';
 import { SensoryRouter, CLIChannel, OutputManager } from '../sensory/index.js';
@@ -153,6 +165,10 @@ export class OdysseusAgent implements IDriveSource {
   essenceForge!: EssenceForge;
   evolutionEngine!: SelfEvolutionEngine;
   cerebellum!: Cerebellum;
+  longTaskEngine!: LongTaskEngine;
+  iterativeRefiner!: IterativeRefiner;
+  errorRecovery!: ErrorRecoveryManager;
+  selfMonitor!: SelfMonitor;
   readonly hooks: LifecycleHooks = new LifecycleHooks();
   readonly middleware: MiddlewarePipeline = new MiddlewarePipeline();
   readonly contextWindow: ContextWindowManager = new ContextWindowManager();
@@ -457,6 +473,11 @@ export class OdysseusAgent implements IDriveSource {
     // 停止后台定时器（auto-dream, auto-evolve, emotion decay）
     this.stopBackgroundTimers();
 
+    // 停止自我监控和长程任务引擎
+    this.selfMonitor?.stop();
+    this.longTaskEngine?.destroy();
+    this.logger.info('SelfMonitor and LongTaskEngine stopped');
+
     // 停止 hippocampus 定时器（dream/decay intervals）
     try {
       this.hippocampus.stop();
@@ -666,6 +687,15 @@ export class OdysseusAgent implements IDriveSource {
 
       const plan = await this.planExecutor.submitGoal(goal);
       this.updatePrefrontalStatus();
+
+      // 注册长程任务追踪
+      this.longTaskEngine.registerTask(
+        `task_${goal.id}`,
+        goal.description,
+        plan,
+        { goalId: goal.id, priority },
+      );
+      this.logger.info(`LongTaskEngine: registered task for goal "${goal.description.slice(0, 50)}"`);
 
       // 评估计划质量
       const quality = this.planExecutor.scorePlan(plan.id);
@@ -1342,6 +1372,55 @@ Examples:
         this.hooks.emit('goal:created', { goal, missionId });
       },
     }));
+
+    // Long Task Engine — 长程任务执行引擎
+    this.longTaskEngine = new LongTaskEngine({
+      timeBudget: UNLIMITED_BUDGET,
+      logger: {
+        info: (msg: string) => this.logger.info(msg),
+        warn: (msg: string) => this.logger.warn(msg),
+        error: (msg: string) => this.logger.error(msg),
+        debug: (msg: string) => this.logger.debug(msg),
+      },
+      persistCheckpoint: async (checkpoint: TaskCheckpoint) => {
+        const checkpointDir = path.join(this.sessionDir, 'checkpoints');
+        await fs.promises.mkdir(checkpointDir, { recursive: true });
+        const filePath = path.join(checkpointDir, `${checkpoint.taskId}.json`);
+        await fs.promises.writeFile(filePath, JSON.stringify(checkpoint, null, 2));
+      },
+      loadCheckpoint: async (taskId: string) => {
+        const filePath = path.join(this.sessionDir, 'checkpoints', `${taskId}.json`);
+        try {
+          const data = await fs.promises.readFile(filePath, 'utf8');
+          return JSON.parse(data) as TaskCheckpoint;
+        } catch { return null; }
+      },
+    });
+
+    // Iterative Refiner — 迭代优化循环
+    this.iterativeRefiner = new IterativeRefiner();
+
+    // Error Recovery Manager — 错误恢复管理器
+    this.errorRecovery = new ErrorRecoveryManager(
+      undefined,
+      {
+        info: (msg: string) => this.logger.info(msg),
+        warn: (msg: string) => this.logger.warn(msg),
+        error: (msg: string) => this.logger.error(msg),
+        debug: (msg: string) => this.logger.debug(msg),
+      },
+    );
+
+    // Self Monitor — 自我监控系统
+    this.selfMonitor = new SelfMonitor(
+      undefined,
+      {
+        info: (msg: string) => this.logger.info(msg),
+        warn: (msg: string) => this.logger.warn(msg),
+        error: (msg: string) => this.logger.error(msg),
+        debug: (msg: string) => this.logger.debug(msg),
+      },
+    );
   }
 
   /**
@@ -1519,7 +1598,7 @@ Examples:
 
   /** 自主执行连续计数器 */
   private autoContinueCount = 0;
-  private static readonly MAX_AUTO_CONTINUES = 20;
+  private maxAutoContinues = 200; // 可配置，默认 200（原 20）
 
   // ─── IDriveSource — BrainstemLoop 自主驱动接口 ───
 
@@ -1562,8 +1641,20 @@ Examples:
     onToken?: (token: string) => void,
     onStatus?: (status: string) => void,
   ): void {
-    if (this.autoContinueCount >= OdysseusAgent.MAX_AUTO_CONTINUES) return;
-    if (this.inputQueue.length > 0) return; // 已有排队输入，不自动插入
+    if (this.autoContinueCount >= this.maxAutoContinues) return;
+    if (this.inputQueue.length > 0) return;
+
+    // 停滞检测 — 如果 SelfMonitor 报告停滞，降低自动继续频率
+    const stagnation = this.selfMonitor?.detectStagnation();
+    if (stagnation?.isStagnant) {
+      this.logger.warn(`SelfMonitor: stagnation detected — ${stagnation.suggestedAction}`);
+      this.consciousness.emit({
+        type: 'execution.log',
+        source: 'prefrontal',
+        data: { phase: 'stagnation', type: stagnation.stagnationType, action: stagnation.suggestedAction },
+      });
+      // 停滞时仍然继续，但记录状态
+    }
 
     const activePlans = this.planExecutor.getActivePlans();
     if (activePlans.length === 0) return;
@@ -1603,6 +1694,9 @@ Examples:
   ): Promise<{ content: string }> {
     this.lastActivityAt = Date.now();
     onStatus?.('Auto-executing...');
+
+    // SelfMonitor 记录循环开始
+    const cycleStart = Date.now();
 
     // 解析 plan ID 和 step 信息
     const planMatch = content.match(/Plan "([^"]+)" step (\d+)\/(\d+): (.+)/);
@@ -1644,9 +1738,26 @@ Examples:
 
     this.logger.info(`Auto-continue completed: "${stepDesc.slice(0, 50)}" → ${response.length} chars`);
 
+    // SelfMonitor 记录循环耗时和行动结果
+    const cycleDuration = Date.now() - cycleStart;
+    this.selfMonitor?.recordCycleTime(cycleDuration);
+    this.selfMonitor?.recordAction('auto-continue', stepDesc, cycleDuration, response.length > 10);
+
+    // LongTaskEngine 更新进度
+    const verification = this.verifyStepResult(stepDesc, response);
+    if (goalId) {
+      const taskId = `task_${goalId}`;
+      this.longTaskEngine?.recordStepCompletion(taskId, `step_${stepNum}`, {
+        success: verification.valid,
+        output: response.slice(0, 200),
+        error: verification.valid ? undefined : verification.reason,
+        completedAt: Date.now(),
+      });
+    }
+
     // 递归检查是否还有下一步要执行
     const nextStep = this.getNextPlanStep();
-    if (nextStep && this.autoContinueCount < OdysseusAgent.MAX_AUTO_CONTINUES) {
+    if (nextStep && this.autoContinueCount < this.maxAutoContinues) {
       this.autoContinueCount++;
       this.logger.info(`Auto-drive recursion: continuing to next step "${nextStep.step.description.slice(0, 50)}"`);
       // 直接入队下一步，而不是等 checkAndAutoContinue
@@ -1658,8 +1769,7 @@ Examples:
       });
     }
 
-    // 验证执行结果
-    const verification = this.verifyStepResult(stepDesc, response);
+    // 发射验证事件
     if (!verification.valid) {
       this.logger.warn(`Step result verification failed: ${verification.reason}`);
       this.consciousness.emit({
@@ -2001,7 +2111,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         const d = perception.data as Record<string, unknown>;
         if (d.type === 'goal_drive' && typeof d.description === 'string') {
           const taskDesc = d.description as string;
-          if (!this.processing && this.autoContinueCount < OdysseusAgent.MAX_AUTO_CONTINUES) {
+          if (!this.processing && this.autoContinueCount < this.maxAutoContinues) {
             this.autoContinueCount++;
             this.logger.info(`Goal drive → processInput: "${taskDesc.slice(0, 60)}"`);
             this.processInput(taskDesc, 'internal').catch((err) => {
@@ -2037,6 +2147,10 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     this.brainstem.start().catch((err) => {
       this.logger.error(`Brainstem loop error`, err);
     });
+
+    // 启动自我监控
+    this.selfMonitor?.start();
+    this.logger.info('SelfMonitor started');
 
     // 订阅主循环事件以更新状态
     this.brainstem.on('phaseChange', (state) => {

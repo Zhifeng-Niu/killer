@@ -147,3 +147,37 @@ export {
 export type {
   AutoMissionDeps,
 } from './auto-mission-tool.js';
+
+// Long Task Engine — persistent long-running task execution
+export {
+  LongTaskEngine,
+  DEFAULT_TIME_BUDGET,
+  UNLIMITED_BUDGET,
+} from './long-task-engine.js';
+export type {
+  TaskCheckpoint,
+  TaskStatus,
+  TimeBudget,
+  ProgressSnapshot,
+  LongTaskEngineConfig,
+} from './long-task-engine.js';
+
+// Error Recovery — circuit breaker, backoff, fallback
+export {
+  CircuitBreaker,
+  ExponentialBackoff,
+  FallbackExecutor,
+  ErrorRecoveryManager,
+  CircuitOpenError,
+  DEFAULT_CIRCUIT_CONFIG,
+  DEFAULT_BACKOFF_CONFIG,
+  DEFAULT_ERROR_RECOVERY_CONFIG,
+} from './error-recovery.js';
+export type {
+  CircuitState,
+  CircuitBreakerConfig,
+  CircuitSnapshot,
+  BackoffConfig,
+  FallbackFn,
+  ErrorRecoveryConfig,
+} from './error-recovery.js';

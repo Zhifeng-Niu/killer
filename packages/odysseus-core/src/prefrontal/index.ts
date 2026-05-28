@@ -31,3 +31,16 @@ export { Planner } from './planner.js';
 export { PlanExecutor } from './executor.js';
 export { RiskAssessor } from './risk.js';
 export { DecisionEngine } from './decision.js';
+
+// Iterative Refiner — execute → evaluate → adjust loop
+export {
+  IterativeRefiner,
+  DEFAULT_REFINER_CONFIG,
+} from './iterative-refiner.js';
+export type {
+  QualityMetric,
+  RefinementStrategy,
+  EvaluationResult,
+  RefinementRound,
+  IterativeRefinerConfig,
+} from './iterative-refiner.js';
