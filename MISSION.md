@@ -1,11 +1,11 @@
 ---
 orientation: engineer
-status: active
+status: complete
 started_at: 2026-05-29T08:00:00Z
 expedition_branch: odyssey/20260529-long-running-autonomous
 baseline_metric: 0
 best_metric: 0
-total_waypoints: 0
+total_waypoints: 5
 consecutive_discards: 0
 ---
 
@@ -70,7 +70,12 @@ pnpm build
 ## What's Been Tried
 
 ### Wins
-{None yet for this mission.}
+- WP1: LongRangeContext — 去掉 maxConversationTurns 硬上限，改为 trimHistory() 智能裁剪 + 中间摘要（每 20 轮 LLM 摘要 + facts 提取）
+- WP2: StepVerifier — 5 维度验证（completeness/error_signals/goal_alignment/tool_success/code_quality）+ 策略建议（retry/replan/decompose/escalate）+ IterativeRefiner 集成
+- WP3: ErrorRecovery 集成 — per-tool circuit breaker + exponential backoff + fallback，3 处工具调用点接入 executeToolWithRecovery
+- WP4: AutonomousLoop 强化 — 质量门控（5 连续失败暂停）+ 停滞恢复（自动 replan/decompose）+ 用户输入重置计数器
+- WP5: DeliveryReport — 结构化交付报告（步骤状态/质量评分/关键决策/代码变更）+ consciousness 事件流输出
+- 总计：861 行新增/修改，0 构建错误
 
 ### Dead Ends
 {None yet.}
