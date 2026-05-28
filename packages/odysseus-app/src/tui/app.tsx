@@ -1,14 +1,14 @@
 /**
- * Killer TUI — Main App Component
+ * Odysseus TUI — 线性三区架构
  *
- * 分屏布局：左侧聊天区 + 右侧状态面板 + 底部输入框。
- * 接收 OdysseusAgent 实例，处理消息流和命令。
+ * 终端是从上到下的线性字符流。
+ * 渲染树：消息区（flexGrow）→ 上下文条 → 输入框（最后子元素，自然沉底）。
+ * 没有 header/sidebar —— 模型名启动时一行带过，/status 按需查看。
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { ChatPanel, type ChatMessage } from './chat-panel.js';
-import { Sidebar, type SidebarData } from './sidebar.js';
 import { InputArea } from './input-area.js';
 import { colors, box } from './theme.js';
 import type { OdysseusAgent } from '../orchestrator/index.js';
@@ -44,18 +44,10 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
 
   const abortRef = useRef<AbortController | null>(null);
   const lastUserInputRef = useRef<string | null>(null);
-  // 去重：记录已渲染的消息 ID，防止 streaming 刷新时重复渲染
   const renderedIdsRef = useRef<Set<string>>(new Set());
-  // 消息池：用 ref 持有真实数据，只 setState 时真正变更
   const messagesRef = useRef<ChatMessage[]>([]);
 
-  // Header 不使用动画 spinner — 避免全屏重绘导致消息滚动
-  // 动画仅在 InputArea 和 ThinkingIndicator 内部（组件级隔离）
-
-  // 采集 sidebar 数据
-  const sidebarData = useSidebarData(agent, agentStatus, messages.length);
-
-  // Boot greeting — 首条系统消息
+  // ── Boot greeting — 模型名一行带过 ──
   useEffect(() => {
     const greeting = generateBootGreeting({
       persona: agent.persona,
@@ -64,15 +56,17 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
       isSessionRestored: agent.persona.getLastSeenAt() !== null,
       lastTopic: agent.getLastTopic(),
     });
-    // 去除 ANSI 颜色码（ink 用自己的颜色系统）
     const clean = greeting.replace(/\x1b\[[0-9;]*m/g, '').trim();
-    if (clean) {
-      const msg = createMessage('agent', clean);
+    // 模型名一行带过
+    const model = agent.getModel?.() ?? '';
+    const bootLine = clean + (model ? `\nmodel: ${model}` : '');
+    if (bootLine.trim()) {
+      const msg = createMessage('agent', bootLine);
       replaceMessages([msg]);
     }
   }, [agent]);
 
-  // Consciousness stream — 主动建议
+  // ── Consciousness stream — 主动建议 ──
   useEffect(() => {
     const unsubscribe = agent.consciousness.on('action', (event: unknown) => {
       try {
@@ -81,25 +75,24 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
           const prefix = ev.data.type === 'suggestion' ? '💡' : ev.data.type === 'insight' ? '🔮' : '📌';
           appendMessage(createMessage('system', `${prefix} ${ev.data!.content}`));
         }
-      } catch { /* 静默忽略事件处理错误 */ }
+      } catch { /* 静默 */ }
     });
     return unsubscribe;
   }, [agent]);
 
-  // 安全更新消息：只对实际变化的数据触发 setState（避免 Ink 全量重绘）
+  // ── 消息管理 ──
+
   const updateMessage = useCallback((id: string, updater: (msg: ChatMessage) => ChatMessage) => {
     const pool = messagesRef.current;
     const idx = pool.findIndex(m => m.id === id);
     if (idx === -1) return;
     const updated = updater(pool[idx]);
-    // 如果内容没变，跳过 setState
     if (updated.content === pool[idx].content && updated.streaming === pool[idx].streaming) return;
     pool[idx] = updated;
     setMessages([...pool]);
   }, []);
 
   const appendMessage = useCallback((msg: ChatMessage) => {
-    // 已经渲染过则跳过
     if (renderedIdsRef.current.has(msg.id)) return;
     renderedIdsRef.current.add(msg.id);
     const pool = messagesRef.current;
@@ -113,7 +106,14 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
     setMessages(msgs);
   }, []);
 
-  // Esc 取消流式输出，Ctrl+C 优雅退出
+  // ── 上下文用量估算 ──
+  const contextEstimate = React.useMemo(() => {
+    // 粗估：每条消息 ~500 tokens
+    const used = Math.min(messages.length * 500, 128000);
+    return { used, total: 128000 };
+  }, [messages.length]);
+
+  // ── 键盘 ──
   const shutdownRef = useRef(false);
   useInput((_input, key) => {
     if (key.ctrl && _input === 'c') {
@@ -135,21 +135,21 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
           updateMessage(last.id, (m) => ({
             ...m,
             streaming: false,
-            content: m.content + '\n\n[已取消]'
+            content: m.content + '\n\n[已取消]',
           }));
         }
       }
     }
   });
 
+  // ── 提交处理 ──
+
   const handleSubmit = useCallback(async (rawInput: string) => {
-    // /clear 清空聊天显示
     if (rawInput === '/clear') {
       replaceMessages([]);
       return;
     }
 
-    // /retry 重发上一条用户消息
     let input = rawInput;
     if (rawInput === '/retry') {
       if (!lastUserInputRef.current) {
@@ -159,7 +159,6 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
       input = lastUserInputRef.current;
     }
 
-    // /find 搜索历史消息（需要 messages 状态）
     if (input.startsWith('/find ') || input === '/find') {
       const keyword = input.slice(6).trim().toLowerCase();
       if (!keyword) {
@@ -172,17 +171,15 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
         appendMessage(createMessage('system', `未找到包含 "${keyword}" 的消息`));
       } else {
         const lines = results.slice(0, 10).map(m => {
-          const role = m.role === 'user' ? '你' : m.role === 'agent' ? 'Killer' : m.role === 'error' ? '错误' : '系统';
+          const role = m.role === 'user' ? '你' : m.role === 'agent' ? 'Odysseus' : m.role === 'error' ? '错误' : '系统';
           const preview = m.content.split('\n')[0].slice(0, 60);
           return `  ${role}: ${preview}${m.content.length > 60 ? '...' : ''}`;
         });
-        const header = `找到 ${results.length} 条匹配 "${keyword}" 的消息:`;
-        appendMessage(createMessage('system', [header, ...lines].join('\n')));
+        appendMessage(createMessage('system', [`找到 ${results.length} 条匹配 "${keyword}" 的消息:`, ...lines].join('\n')));
       }
       return;
     }
 
-    // 命令处理 — 只匹配已知命令（文件路径如 /Users/... 不拦截）
     if (input.startsWith('/')) {
       const cmd = input.slice(1).split(/\s/)[0].toLowerCase();
       if (KNOWN_TUI_COMMANDS.has(cmd)) {
@@ -200,7 +197,6 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
       }
     }
 
-    // API Key 智能检测 — 用户直接粘贴 Key
     if (looksLikeApiKey(input)) {
       appendMessage(createMessage('system', '检测到 API Key。请使用 /key 命令配置：/key ' + input.slice(0, 8) + '...'));
       return;
@@ -230,6 +226,7 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
       let lastFlush = 0;
       let statusSet = false;
       const FLUSH_MS = 400;
+
       const result = await agent.processInput(input, 'cli', (token) => {
         if (ac.signal.aborted) return;
         fullResponse += token;
@@ -242,16 +239,13 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
         if (now - lastFlush >= FLUSH_MS) {
           lastFlush = now;
           const snapshot = fullResponse;
-          // 只更新 content，不改变其他消息引用
           updateMessage(agentMsgId, (m) => ({ ...m, content: snapshot }));
         }
       }, (status) => {
         if (ac.signal.aborted) return;
         setAgentStatus('thinking');
         setStatusDetail(status);
-        // 工具执行状态 — 替换前一条工具状态消息（避免刷屏）
         if (status.includes('(') && !status.startsWith('Thinking') && !status.startsWith('Reasoning') && !status.startsWith('Summarizing') && !status.startsWith('Converging')) {
-          // 工具状态去重：替换前一条工具状态消息（避免刷屏）
           const pool = messagesRef.current;
           const last = pool[pool.length - 1];
           if (last?.role === 'system' && last.content.startsWith('  ◉ ') && !last.content.includes('\n')) {
@@ -264,8 +258,6 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
 
       if (!ac.signal.aborted) {
         const elapsed = Date.now() - startTime;
-        // 使用 processInput 返回值作为最终内容（包含工具链循环的最终结果）
-        // 如果返回值非空就用它，否则 fallback 到流式累积的内容
         const finalContent = result?.content?.trim() || fullResponse;
         updateMessage(agentMsgId, (m) => ({ ...m, content: finalContent, streaming: false, duration: elapsed }));
       }
@@ -274,185 +266,43 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
         const msg = error instanceof Error ? error.message : String(error);
         appendMessage(createMessage('error', msg));
         setAgentStatus('error');
+        // 错误闪光 800ms 后回到 idle
+        setTimeout(() => {
+          setAgentStatus('idle');
+          setIsThinking(false);
+        }, 800);
+        abortRef.current = null;
+        setStatusDetail('');
+        return;
       }
     } finally {
       abortRef.current = null;
-      setIsThinking(false);
-      setAgentStatus('idle');
+      if (agentStatus !== 'error') {
+        setIsThinking(false);
+        setAgentStatus('idle');
+      }
       setStatusDetail('');
     }
   }, [agent]);
 
-  const termCols = stdout?.columns ?? 80;
-  const showSidebar = termCols >= 80;
-  // Key validation warning from boot
-  const [keyWarning, setKeyWarning] = useState<string | null>(null);
-  useEffect(() => {
-    try {
-      const diag = agent.getLLMDiagnostics() as Record<string, unknown> | null;
-      const err = diag?.lastError;
-      if (typeof err === 'string' && err.includes('401')) {
-        setKeyWarning('API key 无效或已过期');
-      }
-    } catch { /* diagnostics not available yet */ }
-    if (keyWarning) {
-      const timer = setTimeout(() => setKeyWarning(null), 15000);
-      return () => clearTimeout(timer);
-    }
-  }, [agent, keyWarning]);
+  // ── 渲染 — 线性布局 ──
 
   return (
     <Box flexDirection="column" height="100%">
-      {/* Key validation warning bar */}
-      {keyWarning && (
-        <Box paddingX={1}>
-          <Text color={colors.warning} bold>! </Text>
-          <Text color={colors.warning}>{keyWarning}</Text>
-          <Text color={colors.dimmed}> (/key &lt;new-key&gt;)</Text>
-        </Box>
-      )}
-
-      {/* Circuit breaker warning */}
-      {sidebarData.circuitState === 'open' && (
-        <Box paddingX={1}>
-          <Text color={colors.error} bold>● </Text>
-          <Text color={colors.error}>AI 服务离线 — 自动重试中</Text>
-          <Text color={colors.dimmed}> /health 查看详情</Text>
-        </Box>
-      )}
-      {sidebarData.circuitState === 'half-open' && (
-        <Box paddingX={1}>
-          <Text color={colors.warning}>◐ </Text>
-          <Text color={colors.warning}>重新连接中...</Text>
-        </Box>
-      )}
-
-      {/* Header — branded status bar */}
-      <Box flexDirection="column">
-        <Box paddingX={1}>
-          <Text color={colors.primary} bold>◈ Killer</Text>
-          {sidebarData.model.startsWith('mock') && (
-            <Text color={colors.warning}> demo</Text>
-          )}
-          <Text color={colors.dimmed}> · </Text>
-          <Text color={colors.muted}>{sidebarData.model.length > 20 ? sidebarData.model.slice(0, 18) + '…' : sidebarData.model}</Text>
-          <Text color={colors.dimmed}> · </Text>
-          <Text color={colors.muted}>{sidebarData.uptime}</Text>
-          <Text color={colors.dimmed}> · </Text>
-          <Text color={colors.muted}>{messages.length} msgs</Text>
-          {!showSidebar && (
-            <>
-              <Text color={colors.dimmed}> · </Text>
-              <Text color={colors.dimmed} italic>⌥ sidebar</Text>
-            </>
-          )}
-          {statusDetail && (
-            <>
-              <Text color={colors.dimmed}> · </Text>
-              <Text color={colors.primary}>◉ {statusDetail.length > 30 ? statusDetail.slice(0, 28) + '…' : statusDetail}</Text>
-            </>
-          )}
-        </Box>
-        <Box>
-          <Text color={colors.primary}>{box.hBold.repeat(3)}</Text>
-          <Text color={colors.primaryDim}>{box.hBold.repeat(3)}</Text>
-          <Text color={colors.dimmed}>{box.h.repeat(termCols - 6)}</Text>
-        </Box>
-      </Box>
-
-      {/* Main body: Chat + Sidebar */}
-      <Box flexGrow={1}>
-        <Box flexDirection="column" flexGrow={1} paddingX={1}>
-          <ChatPanel messages={messages} isThinking={isThinking} />
-        </Box>
-        {showSidebar && <Sidebar data={sidebarData} />}
-      </Box>
-
-      {/* Input */}
+      <ChatPanel messages={messages} isThinking={isThinking} />
       <InputArea
         onSubmit={handleSubmit}
-        isProcessing={isThinking}
-        placeholder={statusDetail ? (statusDetail.length > 40 ? statusDetail.slice(0, 38) + '…' : statusDetail) : agentStatus === 'thinking' ? '思考中...' : agentStatus === 'streaming' ? '输出中...' : undefined}
+        agentStatus={agentStatus}
+        statusDetail={statusDetail}
+        contextUsed={contextEstimate.used}
+        contextTotal={contextEstimate.total}
       />
     </Box>
   );
 }
 
-/** 采集 sidebar 数据的 hook — idle 时低频轮询减少重绘 */
-function useSidebarData(agent: OdysseusAgent, status: SidebarData['status'], messagesCount: number): SidebarData {
-  const [data, setData] = useState<SidebarData>(() => collectSidebarData(agent, status, messagesCount));
-  const isActive = status === 'thinking' || status === 'streaming';
+// ── 命令处理 ──
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setData(collectSidebarData(agent, status, messagesCount));
-    }, isActive ? 2000 : 10000);
-    return () => clearInterval(interval);
-  }, [agent, status, messagesCount, isActive]);
-
-  return data;
-}
-
-function collectSidebarData(agent: OdysseusAgent, status: SidebarData['status'], messagesCount: number): SidebarData {
-  const agentStatus = agent.getStatus();
-  const emotionalState = agent.persona.emotionalState.getState();
-  const memStats = agent.getMemoryStats();
-  const goals = agent.getGoals();
-  const cells = agent.synapse.getAllColumns();
-  const llmDiag = agent.getLLMDiagnostics();
-
-  const uptime = agentStatus.uptime;
-  const uptimeStr = uptime < 60000 ? `${Math.floor(uptime / 1000)}s`
-    : uptime < 3600000 ? `${Math.floor(uptime / 60000)}m`
-    : `${Math.floor(uptime / 3600000)}h${Math.floor((uptime % 3600000) / 60000)}m`;
-
-  // Goal progress — extract from plan executor if available
-  const goalProgress = goals.slice(0, 5).map(g => {
-    const plan = agent.planExecutor?.getPlanByGoal(g.id);
-    if (plan) {
-      const completed = plan.steps.filter(s => s.status === 'completed' || s.status === 'skipped').length;
-      return { description: g.description, completed, total: plan.steps.length };
-    }
-    return { description: g.description, completed: 0, total: 0 };
-  });
-
-  // Circuit breaker state
-  const rawCircuit = llmDiag?.circuitState;
-  const circuitState: 'closed' | 'open' | 'half-open' =
-    rawCircuit === 'open' ? 'open' :
-    rawCircuit === 'half-open' ? 'half-open' : 'closed';
-
-  return {
-    emotion: emotionalState.primaryEmotion,
-    emotionEmoji: emotionToEmoji(emotionalState.primaryEmotion),
-    cellCount: cells.length,
-    cellTypes: [...new Set(cells.map(c => c.config.type))],
-    goalCount: goals.length,
-    goals: goals.map(g => g.description),
-    goalProgress,
-    episodeCount: memStats.totalEpisodes,
-    shortTermMemory: memStats.shortTermCount,
-    longTermMemory: memStats.longTermCount,
-    uptime: uptimeStr,
-    model: typeof llmDiag?.model === 'string' ? llmDiag.model : 'unknown',
-    status,
-    circuitState,
-    messagesCount,
-  };
-}
-
-function emotionToEmoji(emotion: string): string {
-  const map: Record<string, string> = {
-    neutral: '😐', happy: '😊', sad: '😢', angry: '😠',
-    fear: '😨', fearful: '😨', surprised: '😮', disgusted: '🤢',
-    curious: '🤔', excited: '🤩', calm: '😌',
-    joy: '😊', contentment: '😌', anxiety: '😰',
-    sadness: '😢', surprise: '😮', anticipation: '🤔',
-  };
-  return map[emotion.toLowerCase()] || '🎭';
-}
-
-/** 命令处理 */
 async function handleCommand(input: string, agent: OdysseusAgent): Promise<string> {
   const parts = input.slice(1).split(' ');
   const cmd = parts[0].toLowerCase();
@@ -507,7 +357,8 @@ async function handleCommand(input: string, agent: OdysseusAgent): Promise<strin
     }
     case 'status': {
       const s = agent.getStatus();
-      return `运行: ${s.running ? '✓' : '✗'} | 运行时间: ${Math.floor(s.uptime / 1000)}s`;
+      const model = agent.getModel?.() ?? 'unknown';
+      return `运行: ${s.running ? '✓' : '✗'} | 模型: ${model} | 运行时间: ${Math.floor(s.uptime / 1000)}s`;
     }
     case 'columns': {
       const cells = agent.synapse.getAllColumns();
@@ -740,7 +591,17 @@ async function handleCommand(input: string, agent: OdysseusAgent): Promise<strin
   }
 }
 
-/** 检测字符串是否像 API Key */
+function emotionToEmoji(emotion: string): string {
+  const map: Record<string, string> = {
+    neutral: '😐', happy: '😊', sad: '😢', angry: '😠',
+    fear: '😨', fearful: '😨', surprised: '😮', disgusted: '🤢',
+    curious: '🤔', excited: '🤩', calm: '😌',
+    joy: '😊', contentment: '😌', anxiety: '😰',
+    sadness: '😢', surprise: '😮', anticipation: '🤔',
+  };
+  return map[emotion.toLowerCase()] || '🎭';
+}
+
 function looksLikeApiKey(s: string): boolean {
   if (s.startsWith('/') || s.length < 20 || s.length > 500) return false;
   if (s.startsWith('sk-') || s.startsWith('sk-ant-') || s.startsWith('sk-or-')) return true;

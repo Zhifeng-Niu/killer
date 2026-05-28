@@ -1,19 +1,36 @@
 /**
- * Input Area — 用户输入区域
+ * Input Area — 四态输入框 + 上下文进度条
  *
- * 底部输入框，支持输入历史（↑↓）、命令补全和提交。
- * 处理中状态显示脉冲指示。
- * 输入 / 时显示命令面板。
+ * 渲染树最后一个子元素，自然沉在终端底部。
+ * 状态表达全在组件内部——不是独立层，是对话流的终点。
+ *
+ * 空闲态：深灰边框 #45475A，左侧 ●
+ * 思考态：边框呼吸灰→紫 800ms，左侧月相 ◐◓◑◒ 150ms
+ * 流式态：左侧波形 ▊▋▊▌ 100ms，placeholder 显示工具名
+ * 错误态：边框红闪 #FC5C7C 然后 800ms 渐暗
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Box, Text, useInput, useStdout } from 'ink';
 import TextInput from 'ink-text-input';
-import { colors, box, statusDot, statusColor, spinners } from './theme.js';
+import {
+  colors, breathFrames, moonFrames, waveFrames, contextBar, formatTokens, lerpColor,
+} from './theme.js';
 
 const MAX_HISTORY = 200;
 
-/** 命令分类 */
+// ── 错误渐隐帧 — 红→灰 800ms ──
+
+const errorFadeFrames = [
+  colors.error,
+  lerpColor(colors.error, colors.border, 0.25),
+  lerpColor(colors.error, colors.border, 0.5),
+  lerpColor(colors.error, colors.border, 0.75),
+  colors.border,
+] as const;
+
+// ── 命令面板 ──
+
 interface CommandEntry {
   name: string;
   description: string;
@@ -21,19 +38,16 @@ interface CommandEntry {
 }
 
 const COMMANDS: CommandEntry[] = [
-  // Core
   { name: '/help', description: 'Show all commands', category: 'core' },
   { name: '/status', description: 'Agent status', category: 'core' },
   { name: '/clear', description: 'Clear chat', category: 'core' },
   { name: '/retry', description: 'Resend last message', category: 'core' },
   { name: '/find', description: 'Search messages', category: 'core' },
-  // Memory
   { name: '/memory', description: 'Memory stats', category: 'memory' },
   { name: '/dream', description: 'Trigger dream cycle', category: 'memory' },
   { name: '/save', description: 'Save session', category: 'memory' },
   { name: '/load', description: 'Load session', category: 'memory' },
   { name: '/sessions', description: 'List sessions', category: 'memory' },
-  // Cognitive
   { name: '/think', description: 'Deep reasoning', category: 'cognitive' },
   { name: '/evolve', description: 'Darwinian evolution', category: 'cognitive' },
   { name: '/goals', description: 'Active goals', category: 'cognitive' },
@@ -41,7 +55,6 @@ const COMMANDS: CommandEntry[] = [
   { name: '/delegate', description: 'Multi-cell delegation', category: 'cognitive' },
   { name: '/cells', description: 'Active cells', category: 'cognitive' },
   { name: '/spawn', description: 'Spawn new column', category: 'cognitive' },
-  // Config
   { name: '/key', description: 'Update API key', category: 'config' },
   { name: '/model', description: 'Switch model', category: 'config' },
   { name: '/mode', description: 'Permission policy', category: 'config' },
@@ -50,7 +63,6 @@ const COMMANDS: CommandEntry[] = [
   { name: '/learn', description: 'Tool creation', category: 'config' },
   { name: '/unlearn', description: 'Remove tool', category: 'config' },
   { name: '/inspect', description: 'List all tools', category: 'config' },
-  // System
   { name: '/health', description: 'Health report', category: 'system' },
   { name: '/diagnostics', description: 'System diagnostics', category: 'system' },
   { name: '/metrics', description: 'Performance stats', category: 'system' },
@@ -63,21 +75,34 @@ const COMMANDS: CommandEntry[] = [
 ];
 
 const COMMAND_NAMES = COMMANDS.map(c => c.name);
+
 const CATEGORY_COLORS: Record<string, string> = {
-  core: colors.primary,
-  memory: colors.accent,
-  cognitive: colors.warning,
-  config: colors.info,
-  system: colors.muted,
+  core: colors.purple,
+  memory: colors.cyan,
+  cognitive: colors.amber,
+  config: colors.secondary,
+  system: colors.separator,
 };
+
+// ── Props ──
 
 interface InputAreaProps {
   onSubmit: (value: string) => void;
-  isProcessing: boolean;
-  placeholder?: string;
+  agentStatus: 'idle' | 'thinking' | 'streaming' | 'error';
+  statusDetail?: string;
+  contextUsed?: number;
+  contextTotal?: number;
 }
 
-export const InputArea = React.memo(function InputArea({ onSubmit, isProcessing, placeholder }: InputAreaProps) {
+// ── 组件 ──
+
+export const InputArea = React.memo(function InputArea({
+  onSubmit,
+  agentStatus,
+  statusDetail,
+  contextUsed = 0,
+  contextTotal = 128000,
+}: InputAreaProps) {
   const { stdout } = useStdout();
   const termCols = stdout?.columns ?? 80;
   const [value, setValue] = useState('');
@@ -85,31 +110,90 @@ export const InputArea = React.memo(function InputArea({ onSubmit, isProcessing,
   const historyIdxRef = useRef(-1);
   const draftRef = useRef('');
 
-  // Command palette state
+  // 命令面板
   const [showPalette, setShowPalette] = useState(false);
   const [paletteFilter, setPaletteFilter] = useState('');
 
-  // Update palette visibility when value changes
   useEffect(() => {
-    const shouldShow = value.startsWith('/') && !value.includes(' ') && !isProcessing;
+    const shouldShow = value.startsWith('/') && !value.includes(' ') && agentStatus === 'idle';
     setShowPalette(shouldShow);
     setPaletteFilter(shouldShow ? value.toLowerCase() : '');
-  }, [value, isProcessing]);
+  }, [value, agentStatus]);
 
+  // ── 动画帧 ──
+  const [borderFrame, setBorderFrame] = useState(0);
+  const [indicatorFrame, setIndicatorFrame] = useState(0);
+  const [errorFrame, setErrorFrame] = useState(0);
+  const [isFlashingError, setIsFlashingError] = useState(false);
+  const prevStatusRef = useRef(agentStatus);
+
+  useEffect(() => {
+    // 检测错误状态进入
+    if (agentStatus === 'error' && prevStatusRef.current !== 'error') {
+      setIsFlashingError(true);
+      setErrorFrame(0);
+    }
+    prevStatusRef.current = agentStatus;
+  }, [agentStatus]);
+
+  useEffect(() => {
+    const timers: ReturnType<typeof setInterval>[] = [];
+
+    if (agentStatus === 'thinking') {
+      timers.push(setInterval(() => setBorderFrame(f => (f + 1) % breathFrames.length), 200));
+      timers.push(setInterval(() => setIndicatorFrame(f => (f + 1) % moonFrames.length), 150));
+    } else if (agentStatus === 'streaming') {
+      timers.push(setInterval(() => setIndicatorFrame(f => (f + 1) % waveFrames.length), 100));
+    }
+
+    if (isFlashingError) {
+      timers.push(setInterval(() => {
+        setErrorFrame(f => {
+          if (f >= errorFadeFrames.length - 1) {
+            setIsFlashingError(false);
+            return 0;
+          }
+          return f + 1;
+        });
+      }, 200));
+    }
+
+    return () => timers.forEach(clearInterval);
+  }, [agentStatus, isFlashingError]);
+
+  // 边框颜色
+  const borderColor = isFlashingError
+    ? errorFadeFrames[errorFrame]
+    : agentStatus === 'thinking'
+      ? breathFrames[borderFrame]
+      : colors.border;
+
+  // 左侧指示器
+  const indicator = agentStatus === 'thinking'
+    ? moonFrames[indicatorFrame]
+    : agentStatus === 'streaming'
+      ? waveFrames[indicatorFrame]
+      : '●';
+
+  const indicatorColor = (agentStatus === 'thinking' || agentStatus === 'streaming')
+    ? colors.purple
+    : colors.secondary;
+
+  // ── 提交 ──
   const handleSubmit = useCallback((val: string) => {
     const trimmed = val.trim();
-    if (!trimmed || isProcessing) return;
+    if (!trimmed || agentStatus !== 'idle') return;
     onSubmit(trimmed);
     historyRef.current = [trimmed, ...historyRef.current.slice(0, MAX_HISTORY - 1)];
     historyIdxRef.current = -1;
     draftRef.current = '';
     setValue('');
     setShowPalette(false);
-  }, [onSubmit, isProcessing]);
+  }, [onSubmit, agentStatus]);
 
-  // ↑↓ 输入历史 + Tab 命令补全
+  // ── ↑↓ 历史 + Tab 补全 ──
   useInput((_input, key) => {
-    if (isProcessing) return;
+    if (agentStatus !== 'idle') return;
     if (key.tab && value.startsWith('/') && !value.includes(' ')) {
       const prefix = value.toLowerCase();
       const matches = COMMAND_NAMES.filter(c => c.startsWith(prefix));
@@ -123,18 +207,14 @@ export const InputArea = React.memo(function InputArea({ onSubmit, isProcessing,
           while (i < a.length && i < b.length && a[i] === b[i]) i++;
           return a.slice(0, i);
         });
-        if (common.length > prefix.length) {
-          setValue(common);
-        }
+        if (common.length > prefix.length) setValue(common);
       }
       return;
     }
-    const history = historyRef.current;
     if (key.upArrow) {
+      const history = historyRef.current;
       if (history.length === 0) return;
-      if (historyIdxRef.current === -1) {
-        draftRef.current = value;
-      }
+      if (historyIdxRef.current === -1) draftRef.current = value;
       const next = Math.min(historyIdxRef.current + 1, history.length - 1);
       historyIdxRef.current = next;
       setValue(history[next]);
@@ -146,67 +226,70 @@ export const InputArea = React.memo(function InputArea({ onSubmit, isProcessing,
         setValue(draftRef.current);
       } else {
         historyIdxRef.current = cur - 1;
-        setValue(history[cur - 1]);
+        setValue(historyRef.current[cur - 1]);
       }
     }
   });
 
-  // Processing spinner animation + border pulse
-  const [spinnerFrame, setSpinnerFrame] = useState(0);
-  const [borderFrame, setBorderFrame] = useState(0);
-  useEffect(() => {
-    if (!isProcessing) return;
-    const spinner = setInterval(() => setSpinnerFrame(f => (f + 1) % spinners.typing.length), 120);
-    const pulse = setInterval(() => setBorderFrame(f => (f + 1) % 2), 800);
-    return () => { clearInterval(spinner); clearInterval(pulse); };
-  }, [isProcessing]);
+  // ── 上下文进度条 ──
+  const ctxRatio = contextTotal > 0 ? contextUsed / contextTotal : 0;
+  const barWidth = Math.max(termCols - 24, 10);
+  const ctxSegments = contextBar(contextUsed, contextTotal, barWidth);
+  const ctxColor = ctxRatio > 0.8 ? colors.pink
+    : ctxRatio > 0.5 ? colors.amber
+    : colors.secondary;
 
-  const borderColor = isProcessing
-    ? (borderFrame === 0 ? colors.primary : colors.primaryDim)
-    : colors.faint;
-
-  // Filtered commands for palette
+  // ── 命令面板过滤 ──
   const filteredCommands = showPalette
     ? COMMANDS.filter(c => c.name.toLowerCase().startsWith(paletteFilter))
     : [];
 
+  // placeholder
+  const placeholderText = agentStatus === 'streaming' && statusDetail
+    ? statusDetail.length > 40 ? statusDetail.slice(0, 38) + '…' : statusDetail
+    : agentStatus === 'thinking'
+      ? 'thinking...'
+      : 'ask me anything...';
+
   return (
     <Box flexDirection="column">
-      {/* Top separator */}
-      <Box>
-        <Text color={colors.dimmed}>{box.h.repeat(termCols)}</Text>
+      {/* 上下文进度条 — 输入栏上方一行 */}
+      <Box marginLeft={1}>
+        <Text color={colors.separator}>ctx </Text>
+        {ctxSegments.map((seg, i) => (
+          <Text key={i} color={seg.color}>{seg.char}</Text>
+        ))}
+        <Text color={ctxColor}> {formatTokens(contextUsed)}/{formatTokens(contextTotal)}</Text>
       </Box>
 
-      {/* Command palette */}
+      {/* 命令面板 */}
       {showPalette && filteredCommands.length > 0 && (
-        <Box flexDirection="column" marginBottom={0}>
+        <Box flexDirection="column">
           {filteredCommands.slice(0, 7).map((cmd, i) => {
-            const catColor = CATEGORY_COLORS[cmd.category] || colors.dimmed;
+            const catColor = CATEGORY_COLORS[cmd.category] || colors.separator;
             const isFirst = i === 0;
             return (
               <Box key={cmd.name}>
-                {isFirst && <Text color={colors.primary} bold>{'› '}</Text>}
-                {!isFirst && <Text color={colors.faint}>{'  '}</Text>}
-                <Text color={isFirst ? colors.text : colors.dimmed} bold={isFirst}>
+                {isFirst && <Text color={colors.purple}>{'› '}</Text>}
+                {!isFirst && <Text color={colors.bg}>{'  '}</Text>}
+                <Text color={isFirst ? colors.text : colors.secondary} bold={isFirst}>
                   {cmd.name.padEnd(14)}
                 </Text>
-                <Text color={isFirst ? catColor : colors.faint}> {cmd.description}</Text>
+                <Text color={isFirst ? catColor : colors.bg}> {cmd.description}</Text>
               </Box>
             );
           })}
           {filteredCommands.length > 7 && (
-            <Text color={colors.faint}>  … +{filteredCommands.length - 7}</Text>
+            <Text color={colors.bg}>  … +{filteredCommands.length - 7}</Text>
           )}
         </Box>
       )}
 
-      {/* Input box */}
+      {/* 输入框 */}
       <Box borderStyle="round" borderColor={borderColor} paddingX={1}>
-        <Text color={isProcessing ? statusColor.thinking : statusColor.idle}>
-          {isProcessing ? spinners.typing[spinnerFrame] : statusDot.idle}{' '}
-        </Text>
-        {isProcessing ? (
-          <Text color={colors.dimmed}>{placeholder || 'thinking...'}</Text>
+        <Text color={indicatorColor}>{indicator} </Text>
+        {agentStatus !== 'idle' ? (
+          <Text color={colors.secondary}>{placeholderText}</Text>
         ) : (
           <TextInput
             value={value}
@@ -217,8 +300,10 @@ export const InputArea = React.memo(function InputArea({ onSubmit, isProcessing,
           />
         )}
       </Box>
+
+      {/* 键盘提示 — 深灰，几乎看不见但存在 */}
       <Box marginLeft={1}>
-        <Text color={colors.faint}>  ↑↓ history · Tab complete · Esc cancel · /help</Text>
+        <Text color={colors.bg}>  ↑↓ history · Tab complete · Esc cancel · /help</Text>
       </Box>
     </Box>
   );

@@ -1,117 +1,156 @@
 /**
- * TUI Theme — Tokyo Night × 极简设计系统
+ * TUI Theme — 真黑底 + 紫色系 + 暖冷灰温度差
  *
- * 颜色: 深色背景 + 高对比度前景
- * 图标: Unicode symbols 优先，emoji 仅用于核心语义
- * 结构: Box-drawing 字符构建视觉层次
+ * 色彩约束：一行屏幕最多三种彩色。
+ * 紫 #7C5CFC 常驻，电子青 #22D3EE 和热能粉 #F43F5E 交替出现不同时。
+ * 动效帧率上限 150ms（~7fps），用 Unicode 半填充字符替代 braille dots。
  */
 
-// ── 颜色系统 ──
+// ── 色彩系统 ──
 
 export const colors = {
-  // 品牌色
-  primary: '#7C5CFC',
-  primaryDim: '#5A3ED8',
+  // 品牌 — 紫色系
+  purple: '#7C5CFC',
+  purpleDim: '#5A3ED8',
+  purpleBright: '#9D8AFF',
 
-  // 语义色
-  accent: '#5CFCA1',
-  warning: '#FCBA5C',
+  // 强调 — 电子青 / 热能粉，从不同时出现
+  cyan: '#22D3EE',
+  pink: '#F43F5E',
+
+  // 警告
+  amber: '#F59E0B',
+
+  // 错误闪光
   error: '#FC5C7C',
-  info: '#89B4FA',
 
-  // 灰度
-  text: '#CDD6F4',
-  muted: '#6C7086',
-  dimmed: '#45475A',
-  faint: '#313244',
+  // 灰度 — 暖冷温度差
+  text: '#A8A29E',        // 暖灰 — 正文
+  secondary: '#78716C',   // 冷灰 — 辅助信息
+  separator: '#292524',   // 深灰 — 分隔线
+  border: '#45475A',      // 输入框边框默认色
 
   // 背景
-  bg: '#1A1B26',
-  surface: '#24283B',
-  overlay: '#1F2335',
+  bg: '#0D0D0D',          // 真黑
+  surface: '#1A1A1A',     // 微抬层
 
   // 角色色
-  user: '#89B4FA',
-  agent: '#A6E3A1',
-  system: '#6C7086',
+  user: '#A8A29E',        // 暖灰 — 用户消息
+  agent: '#7C5CFC',       // 紫 — agent 消息
 } as const;
 
-// ── 状态指示灯 ──
+// ── Unicode 方块 — 半填充字符替代 braille dots ──
 
-export const statusDot = {
-  idle: '●',
-  thinking: '◉',
-  streaming: '◎',
-  error: '✕',
-} as const;
+export const BLOCKS_8 = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'] as const;
+export const SHADE_4 = ['█', '▓', '▒', '░'] as const;
 
-export const statusColor = {
-  idle: colors.accent,
-  thinking: colors.warning,
-  streaming: colors.primary,
-  error: colors.error,
-} as const;
+// ── 上下文进度条 — 8 分块 ──
 
-// ── 极简图标 (Unicode 优先) ──
+export function contextBar(
+  used: number,
+  total: number,
+  width: number,
+): Array<{ char: string; color: string }> {
+  const ratio = Math.max(0, Math.min(1, total > 0 ? used / total : 0));
+  const filled = ratio * width;
+  const whole = Math.floor(filled);
+  const frac = filled - whole;
 
-export const icons = {
-  // 核心角色 — 仅这些用 emoji
-  agent: '◈',
-  user: '▸',
+  // 颜色阈值：正常灰 → 过半琥珀 → 过八成热能粉
+  const barColor = ratio > 0.8 ? colors.pink
+    : ratio > 0.5 ? colors.amber
+    : colors.secondary;
 
-  // 状态
-  success: '✓',
-  error: '✕',
-  warn: '!',
+  const segs: Array<{ char: string; color: string }> = [];
 
-  // 功能
-  cell: '◆',
-  goal: '○',
-  emotion: '○',
-  memory: '○',
-  dream: '○',
-  evolve: '○',
-} as const;
+  for (let i = 0; i < whole && i < width; i++) {
+    segs.push({ char: '█', color: barColor });
+  }
 
-// ── Box-drawing 字符 ──
+  if (frac > 0 && whole < width) {
+    const idx = Math.min(Math.floor(frac * BLOCKS_8.length), BLOCKS_8.length - 1);
+    segs.push({ char: BLOCKS_8[idx], color: barColor });
+  }
+
+  while (segs.length < width) {
+    segs.push({ char: '░', color: colors.separator });
+  }
+
+  return segs;
+}
+
+// ── 月相帧 — 思考态 150ms/帧 ──
+
+export const moonFrames = ['◐', '◓', '◑', '◒'] as const;
+
+// ── 波形光标帧 — 流式态 100ms/帧 ──
+
+export const waveFrames = ['▊', '▋', '▊', '▌'] as const;
+
+// ── 呼吸灯边框帧 — 800ms 周期 ──
+
+export const breathFrames = [
+  colors.border,
+  '#4D4870',
+  colors.purple,
+  '#4D4870',
+] as const;
+
+// ── 错误闪光帧 — 闪一次然后渐暗 ──
+
+export const errorFlashFrames = [
+  colors.error,
+  '#D04A68',
+  '#A63E55',
+  colors.border,
+] as const;
+
+// ── 思考动画帧 — 颜色渐变 ──
+
+export const thinkFrames = [
+  { ch: '◐', col: colors.purple },
+  { ch: '◓', col: colors.purpleBright },
+  { ch: '◑', col: colors.purple },
+  { ch: '◒', col: colors.purpleDim },
+] as const;
+
+// ── 结构字符 ──
 
 export const box = {
   tl: '╭', tr: '╮', bl: '╰', br: '╯',
   h: '─', v: '│',
-  hBold: '━', vBold: '┃',
-  hDot: '╌', vDot: '╎',
-  teeL: '├', teeR: '┤',
-  teeUp: '┬', teeDown: '┴',
+  hBold: '━',
+  hDot: '╌',
 } as const;
 
-// ── 分隔线 ──
+export const icons = {
+  agent: '◈',
+  user: '▸',
+  success: '✓',
+  error: '✕',
+  warn: '!',
+  cell: '◆',
+  tool: '⟐',
+} as const;
 
-/** 生成水平分隔线 */
-export function divider(width: number, char = box.h, color = colors.dimmed): { text: string; color: string } {
-  return { text: char.repeat(Math.max(width, 1)), color };
+// ── 颜色插值工具 — 状态过渡 ──
+
+export function lerpColor(a: string, b: string, t: number): string {
+  const parse = (hex: string) => {
+    const h = hex.replace('#', '');
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  };
+  const [ar, ag, ab] = parse(a);
+  const [br, bg, bb] = parse(b);
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const b2 = Math.round(ab + (bb - ab) * t);
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b2.toString(16).padStart(2, '0')}`;
 }
 
-// ── Spinner 帧 ──
-
-export const spinners = {
-  /** 思考中 — 月相旋转 */
-  thinking: ['◐', '◓', '◑', '◒'],
-  /** 等待中 — braille 旋转 */
-  pulse: ['⠁', '⠃', '⠇', '⡇', '⣇', '⣧', '⣷', '⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣟', '⡿'],
-  /** 流式输出 — 光标闪烁 */
-  streaming: ['▊', '▋', '▊', ' '],
-  /** 打字中 — 波浪点 */
-  typing: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
-  /** 加载中 — 轨道 */
-  loading: ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈'],
-} as const;
-
-// ── 消息气泡前缀 ──（保留供外部使用）
-
-export const bubble = {
-  user: '╭─',
-  userEnd: '╰─',
-  agent: '┄┄',
-  system: ' ·',
-  error: '✕ ',
-} as const;
+/** 格式化 token 数量 */
+export function formatTokens(n: number): string {
+  if (n < 1000) return `${n}`;
+  if (n < 1000000) return `${Math.round(n / 1000)}K`;
+  return `${(n / 1000000).toFixed(1)}M`;
+}
