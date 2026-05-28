@@ -1,43 +1,50 @@
 ---
 orientation: [engineer]
 status: active
-started_at: 2026-05-27T14:24:55Z
-expedition_branch: odyssey/20260527-222455
-baseline_metric: 747
-best_metric: 2440
-total_waypoints: 99
+started_at: 2026-05-28T03:28:59Z
+expedition_branch: odyssey/20260528-112859
+baseline_metric: 0
+best_metric: 0
+total_waypoints: 0
 consecutive_discards: 0
 ---
 
-# Mission: 以终极AGI为目标推进，继续推进智能化编排
+# Mission: 智能连续执行引擎 — 让 Agent 自主完成多步骤任务
 
 ## Goal
-以终极AGI为目标推进，继续推进智能化编排
+以终极AGI为目标推进，继续推进智能的连续执行，帮助用户在更多场景下完成任务。Odyssey-engine 的初衷就是为了完成已知和未知的任务，辅助人类达到更高的文明水平。
 
 ## Context
 Project type: typescript. Auto-detected guard: npm test 2>&1.
 
+基于之前 99 个 waypoint 的认知管线基础（142 个导出函数、49 个 prompt section、512 个测试），以及 WP100 的自主执行循环核心（checkAndAutoContinue），继续完善多步骤自主执行能力。
+
 ## Scope
 
 ### Modifiable
-- (auto — all files not in Read-Only)
+- packages/killer-app/src/orchestrator/ (agent, prompt-builder, background-tasks, response-processor)
+- packages/killer-core/src/prefrontal/ (plan executor, planner)
+- packages/killer-core/src/brainstem/ (tool executor)
+- packages/killer-app/src/__tests__/
 
 ### Read-Only (PROTECTED)
-- (none specified)
+- packages/killer-app/src/tui/ (TUI 组件不改动)
+- packages/killer-app/src/api/ (API 端点不改动)
 
 ## Metrics
 
 | Name | Unit | Measure Command | Direction |
 |------|------|----------------|-----------|
-| type_error_count | - | (auto-detected) | lower |
+| type_error_count | - | cd packages/killer-app && npx tsc --noEmit 2>&1 | wc -l | lower |
+| test_count | - | npx vitest run packages/killer-app/src/__tests__/ 2>&1 | grep "Tests" | higher |
 
 ## Guard
 ```bash
-npm test 2>&1
+cd packages/killer-app && npx tsc --noEmit
 ```
 
 ## Termination
-- Task complete (all checks pass AND metric improved)
+- Task complete (autonomous execution loop fully functional end-to-end)
 - OR stuck (10 consecutive discards)
 - OR user interrupt (/odyssey-cancel)
 - No iteration limit — runs until done
@@ -45,106 +52,7 @@ npm test 2>&1
 ## What's Been Tried
 
 ### Wins
-1. **Plan-Action Bridge** (waypoint 1): Connected Prefrontal planning to Brainstem execution — plans now decompose into real tool calls
-2. **LLM-Powered Planner** (waypoint 2): Intelligent goal decomposition via LLM with rule-based fallback, async propagation
-3. **Autonomous Goal + Experiment Loop** (waypoint 3): LLM-powered input analysis for goal extraction, Cerebellum mission auto-trigger on plan failure
-4. **Learning Task Delegation** (waypoint 4): Cell profiling with success rate tracking, LLM prompt injection of historical performance data
-5. **Cortex-Cerebellum Feedback Loop** (waypoint 5): Experiment results auto-feed Cortex skills, emotional arousal modulates risk tolerance, skill.learned consciousness event
-6. **Predictive Behavior Adaptation** (waypoint 6): User model drives output format, decision style, risk tolerance blending, predicted needs proactive context injection
-7. **Dream-to-Waking Feedback** (waypoint 7): Dream insights captured and injected into system prompt, dream cycle results stored as behavioral context
-8. **Meta-Cognitive Self-Reflection** (waypoint 8): Conversation meta-awareness, repetition detection, self-correction prompts
-9. **Autonomous Tool Creation** (waypoint 9): ToolForge auto-creates missing tools via LLM code generation, plan steps self-heal
-10. **Consciousness Priority System** (waypoint 10): Event priority scoring with freshness decay, attention state computed every 2 min, injected into system prompt as ATTENTION STATE section
-11. **Cross-Session Learning Persistence** (waypoint 11): Skills + delegate profiles survive restarts via session V3, SkillEcosystem.restore()/exportAll(), TaskDelegate.exportProfiles()/importProfiles()
-12. **Experiment-Driven Prompt Evolution** (waypoint 12): Successful experiment patterns captured as behavioral insights, injected into system prompt as LEARNED BEHAVIORS section, persisted across sessions
-13. **Adaptive Response Strategy** (waypoint 13): StrategyScores tracks detail/concise, analytical/intuitive, proactive/reactive effectiveness via EMA, biases system prompt after 3+ interactions, persists via persona genome
-14. **Goal Auto-Generation** (waypoint 14, verified existing): handleGoalInInput + analyzeInputForGoal already auto-detect multi-step tasks from conversation via LLM and create tracked goals with plans
-15. **Tool Success Rate Tracking** (waypoint 15): Track tool execution outcomes per tool, inject TOOL PERFORMANCE into system prompt (✓/~ rating), persist across sessions, LLM adapts tool selection based on historical reliability
-16. **Predictive Context Preloading** (waypoint 16): High-confidence (>70%) predicted needs trigger proactive episodic memory retrieval, injected as PRELOADED CONTEXT — agent anticipates needs before user mentions them
-17. **Smart Prompt Section Pruning** (waypoints 17-18): Prefix-based section removal when prompt exceeds 24000 chars budget — drops low-priority sections (memory stats, meta-cognition, dream insights) while preserving identity and tools. Fixed critical bug where sections[] was never merged to parts[]
-18. **Hierarchical Goal Decomposition** (waypoint 19): LLM-powered decomposition of complex goals into 2-5 sub-goals with dependency relationships — parallel sub-goals auto-start, dependent ones wait. Dependency tree injected into system prompt for execution ordering
-19. **Conversational Phase Tracking** (waypoint 20): 6-phase conversation detection (idle/greeting/exploration/deep-work/review/wrap-up) based on message patterns, technical content, topic continuity, and time gaps — phase-aware guidance injected into system prompt
-20. **Phase-Strategy Feedback Loop** (waypoint 21): Conversational phase overrides learned strategy scores when confidence > 0.7 — deep-work biases concise/analytical, exploration biases detailed/intuitive, creating context-aware response adaptation
-21. **Semantic Memory Auto-Extraction** (waypoint 22): Rule-based extraction of preferences, skills, project names, deadlines, and user names from conversation without LLM calls — facts auto-stored in hippocampus semantic memory with deduplication
-22. **Cross-Goal Conflict Detection** (waypoint 23): Jaccard similarity + keyword contradiction patterns detect duplicate/overlapping/contradictory goals — conflicts injected into system prompt for LLM to coordinate or merge
-23. **Tool Chain Templates** (waypoint 24): Predefined multi-step tool call sequences for debug/feature/refactor/research cycles — LLM executes proven workflows instead of improvising each step
-24. **Idle-Time Memory Consolidation** (waypoint 25): Rule-based consolidation scans recent episodic memories for recurring tags (3+ occurrences) and high-emotion patterns, stores condensed insights as semantic nodes with deduplication — runs during idle checkin timer
-25. **Adaptive Context Budget Allocation** (waypoint 26): Context window parameters dynamically adjust per conversational phase — deep-work gets 16 turns + 3000 chars for code detail, exploration gets broader summaries (2000 chars), wrap-up prioritizes facts (maxFacts=40), greeting uses compact window
-26. **Self-Healing Tool Execution** (waypoint 27): Failure classification (7 types: timeout/auth/rate_limit/invalid_args/not_found/network/resource_exhausted) with automatic recovery strategy selection — patterns tracked and injected into system prompt as TOOL FAILURE PATTERNS for LLM to learn from
-27. **Multi-Intent Detection** (waypoint 28): Rule-based detection of multiple intents in user input — supports numbered lists, semicolons, and multiple question marks. Returns structured DetectedIntent array for parallel task decomposition
-28. **Conversation Turn Importance Scoring** (waypoint 29): Multi-dimensional importance scoring for each turn — fact density (metrics/versions), decision markers, action verbs, emotional intensity, message role weighting. Returns 0-1 score with reason tags for context prioritization
-29. **Importance-Weighted Context Retention** (waypoint 30): Context window overflow now preserves high-importance older turns (score > 0.6) as "Important earlier context" instead of summarizing them. Low-importance turns go to summary. Connects turn scoring to context management
-30. **Topic Transition Detection** (waypoint 31): Extract conversation topics from messages using 9 keyword domain patterns (debugging, testing, deployment, performance, security, architecture, database, API, infrastructure). Track topic history, detect transitions, and identify returns to previous topics
-31. **Input Ambiguity Detection** (waypoint 32): Detect vague verbs (fix/optimize without target), missing targets (the thing, it), underspecified scope (everything), and pronoun references. Returns clarification suggestions so agent asks instead of guessing
-32. **Cross-Goal Dependency Graph** (waypoint 33): Build dependency graph between active goals by extracting shared resources (database, API, auth, tests, deployment, config, frontend, architecture) and detecting resource conflicts, prerequisites (refactor before optimize), and shared components
-33. **Dynamic Prompt Section Priority** (waypoint 34): Prompt pruning now adjusts section priority based on conversational phase — deep-work preserves plans/tools, exploration preserves behaviors/facts, wrap-up preserves goals/metrics, review preserves tool performance
-34. **Execution Progress Reporter** (waypoint 35): Generate structured progress reports for multi-step plan execution with ASCII progress bar, completion percentage, current step status, and remaining step count
-35. **Temporal Context Injection** (waypoint 36): Time-of-day detection (6 periods), time-since-last-interaction formatting, deadline extraction from semantic memory with urgency assessment (low/normal/high), timezone-safe local date comparison
-36. **Temporal Context in System Prompt** (waypoint 37): Wired generateTemporalContext() into prompt builder — time-of-day, interaction gap, and deadline urgency now injected as TEMPORAL CONTEXT section in system prompt, using hippocampus event nodes for deadline detection
-37. **Conversation Flow Prediction** (waypoint 38): Rule-based flow pattern matching from recent user message sequence — identifies 7 patterns (question-answer, debug-diagnose-fix, explore-deepen-implement, etc.) with predicted next steps and suggested tools
-38. **Flow Prediction in System Prompt** (waypoint 39): predictConversationFlow() wired into prompt builder as CONVERSATION FLOW section — LLM now sees current pattern, confidence, predicted next steps, and suggested tools for proactive response preparation
-39. **Response Quality Self-Evaluation** (waypoint 40): evaluateResponseQuality() scores responses on 4 dimensions (relevance, completeness, conciseness, actionability) with keyword overlap, multi-intent coverage, length appropriateness, and code/step/link detection
-40. **Quality Feedback Loop** (waypoint 41): evaluateAndAdjustQuality() runs after each response — verbose/over-explained tags push strategy towards concise, high actionability reinforces current direction, low relevance nudges towards intuitive mode. Slow alpha=0.1 prevents over-correction
-41. **Response Deduplication** (waypoint 42): detectResponseRepetition() uses trigram Jaccard similarity to compare new responses against recent history. Threshold 0.35 catches semantically similar responses, flagging them to avoid repetitive advice loops
-42. **Dedup in Meta-Cognition** (waypoint 43): Replaced naive "starts with same 50 chars" repetition detection with trigram Jaccard similarity check against last 5 assistant messages. Meta-cognition prompt now triggers on semantic-level repetition, not just string matching
-43. **Adaptive Response Length** (waypoint 44): detectLengthSignal() captures explicit ("tell me more"/"tldr") and implicit (short reply after long response) length preference signals. updateLengthPreference() tracks rolling score (0-1) with suggested max length (300-1500 chars) and injects into recommendation
-44. **Length Preference in System Prompt** (waypoint 45): Wired length signal detection into processInputCore, tracks preference state across interactions, injects LENGTH PREFERENCE section into system prompt when score deviates from default by ±0.15
-45. **Context-Aware Tool Prioritization** (waypoint 46): suggestToolPriority() combines flow prediction + conversational phase + urgency level to recommend preferred tools. Injected as TOOL PRIORITY section — debug flow prefers code_search/shell_exec, question flow prefers web_search/memory_recall, high urgency bumps exec tools to front
-46. **Conversation Health Monitoring** (waypoint 47): monitorConversationHealth() detects stuck conversations (same topic 5+ turns), engagement trends (message length change), and frustration signals (keyword matching). Returns 0-1 health score with issues and recommendations, injected into system prompt when score < 0.8
-47. **Cognitive Loop Closure** (waypoint 48): Wired 4 orphaned cognitive functions into agent's buildSystemPrompt — detectMultiIntent (MULTI-INTENT section), detectAmbiguity (INPUT AMBIGUITY section), buildGoalDependencyGraph (GOAL DEPENDENCIES section), detectTopicTransition (TOPIC TRANSITION section). All gated by relevance conditions, zero overhead when inactive
-48. **Autonomous Action Decider** (waypoint 49): decideAutonomousActions() integrates flow/phase/health/intents/ambiguity signals to suggest proactive actions — memory search, web search, goal check, clarification ask, summary offer, topic switch. Injected as SUGGESTED ACTIONS section, sorted by urgency, capped at 3. Bridges perception-to-action gap for autonomous agent behavior
-49. **Interaction Outcome Tracking** (waypoint 50): classifyInteractionOutcome() analyzes user's next message to judge previous response effectiveness (success/clarification_needed/repeated_question/topic_abandoned/frustration). suggestStrategyAdjustment() maps outcomes to strategy dimension changes (frustration→more detail, repeated→more analytical). Wired into processInputCore before command handling — creates perception-to-self-correction feedback loop
-50. **Dynamic Prompt Section Scoring** (waypoint 51): scoreSectionRelevance() replaces static phase-based pruning with per-section relevance scoring. Each section gets base score + context-dependent adjustments (deep-work boosts tools, idle boosts dreams, low-health boosts meta-cognition). Pruning now removes lowest-scoring sections first regardless of phase — smarter context budget utilization
-51. **Topic Context Snapshots** (waypoint 52): extractTopicSnapshot() captures key decisions, active tools, and unresolved questions from conversation segments when topic shifts occur. formatTopicSnapshot() converts snapshots to injectable prompt text for context restoration when user returns to a previous topic
-52. **buildSystemPrompt Refactor** (waypoint 53): Extracted 10 IIFE blocks from buildSystemPrompt into named private methods (computeTemporalContext, computeFlowPrediction, computeToolPriority, computeConversationHealth, computeMultiIntents, computeAmbiguityWarnings, computeGoalDependencies, computeTopicTransition, computeAutonomousActions, computeConversationalPhaseForPrompt). Zero behavior change, pure readability improvement
-53. **Flow-Based Intent Preloading** (waypoint 54): generateIntentPreloads() maps conversation flow patterns to preload suggestions — debug flow preloads error patterns and memory, explore flow preloads architecture context, planning flow preloads goal review. Integrated into computeAutonomousActions as low-urgency preload hints
-54. **Topic Snapshot Restoration** (waypoint 55): computeRestoredTopicContext() detects when user returns to a previous topic, retrieves the saved TopicContextSnapshot, and injects RESTORED CONTEXT into system prompt via formatTopicSnapshot(). Combined with waypoint 52's snapshot saving, creates a full save-restore cycle for topic context
-55. **Conversation Rhythm Perception** (waypoint 56): analyzeConversationRhythm() detects 5 interaction patterns (rapid_fire/thoughtful/mixed/idle/initial) from message length + time interval analysis. Injected as CONVERSATION RHYTHM section — agent adapts response brevity to match user's interaction pace
-56. **User Expertise Profiling** (waypoint 57): buildUserExpertiseProfile() analyzes user messages across 8 technical domains (frontend/backend/devops/systems/datascience/security/mobile/testing) using keyword density. Injected as USER EXPERTISE section — agent adjusts terminology depth and explanation level based on detected user knowledge
-57. **Emotion-Response Strategy Mapping** (waypoint 58): mapEmotionToResponseStrategy() maps valence/arousal/intensity to tone, length, and empathy guidance. Injected as EMOTIONAL RESPONSE STRATEGY section — frustrated users get patient step-by-step, excited users get concise action-oriented responses
-58. **Perception Signal Fusion** (waypoint 59): fusePerceptionSignals() combines 7 perception dimensions (flow/phase/rhythm/emotion/health/expertise) into a single PerceptionVector with overallAttention score and behaviorMode (focused/exploratory/supportive/urgent/balanced). Injected as PERCEPTION FUSION section — replaces scattered individual signals with unified behavioral guidance
-59. **Behavior-Mode-Aware Section Scoring** (waypoint 60): scoreSectionRelevance() now accepts behaviorMode from perception fusion — urgent mode boosts crisis signals (emotion/health) and penalizes distractions, focused mode boosts precision sections (tools/expertise), supportive mode boosts empathy sections, exploratory mode boosts discovery sections. Also added 5 new section prefixes (CONVERSATION RHYTHM, USER EXPERTISE, EMOTIONAL RESPONSE STRATEGY, PERCEPTION FUSION, RESTORED CONTEXT)
-60. **Strategy Coherence Verification** (waypoint 61): verifyStrategyCoherence() detects conflicts between rhythm/expertise/emotion/perception strategies (length_vs_empathy, speed_vs_precision, expertise_vs_empathy) and provides resolution guidance. Injected as STRATEGY COHERENCE section — prevents contradictory advice from multiple cognitive modules
-61. **Cognitive Parameter Self-Tuning** (waypoint 62): adaptCognitiveParams() adjusts module sensitivity thresholds based on trigger frequency and conflict rate — high conflict → raise threshold (less sensitive), low conflict → lower threshold (more sensitive). Agent now uses tunable thresholds instead of hardcoded values for emotion (0.2), rhythm (0.4), and fusion attention (0.3). Foundation for self-optimizing cognitive system
-62. **Prompt Section Deduplication** (waypoint 63): deduplicateSections() uses trigram Jaccard similarity (threshold 0.3) to detect and merge overlapping prompt sections before pruning. Integrated into prompt-builder pipeline — reduces token waste when multiple cognitive modules emit similar advice
-63. **Multi-Dimensional Tool Prioritization** (waypoint 64): suggestToolPriority() now leverages expertise domains and behaviorMode — expert users get code tools prioritized, supportive/urgent modes prefer reliable tools (file_read, shell_exec), exploratory mode prefers search tools. Tool selection now adapts to 5 dimensions: flow, phase, urgency, expertise, behavior
-64. **Cognitive State Summary** (waypoint 65): generateCognitiveStateSummary() produces unified overview of all active cognitive modules (flow, phase, rhythm, emotion, health, expertise, perception fusion). Injected as COGNITIVE STATE section in system prompt with base priority 0.7 — gives LLM a single-point view of its own cognitive state for self-aware response adaptation
-65. **Cognitive Parameter Self-Tuning Closed Loop** (waypoint 66): computeStrategyCoherence() now tracks per-module trigger/conflict counts via moduleStats, feeds them to adaptCognitiveParams() every 20 interactions to auto-adjust emotionThreshold/rhythmThreshold/fusionAttentionThreshold. Cognitive state summary includes current tuning values — the agent can now see and self-adjust its own perception sensitivity
-66. **ConversationHistory Timestamp** (waypoint 67): Added `timestamp: number` to conversationHistory type, all 7 push points now use `Date.now()`, session restore maps legacy data with fallback. Fixed all 8 type errors (`phase.confidence`→`0.7`, `phase.phase`→`phase`). Rhythm/temporal/topic modules now have real message timestamps instead of proxies
-67. **Response Quality Self-Assessment Feedback** (waypoint 68): evaluateAndAdjustQuality() now saves lastQualityOverall and lastQualityTags to agent state. generateCognitiveStateSummary() includes quality score and tags in COGNITIVE STATE summary. Also fixed computePerceptionFusion/computeCognitiveState to use computeConversationalPhase() for real phase confidence instead of hardcoded 0.7
-68. **Perception Cache Deduplication** (waypoint 69): buildSystemPrompt() pre-computes flow/phase/health/rhythm/expertise once in a perception cache object. All 8 compute methods now accept optional cached params — eliminates 4-5x redundant calls to predictConversationFlow, analyzeConversationRhythm, buildUserExpertiseProfile, monitorConversationHealth per prompt build
-69. **Composite Response Strategy Guidance** (waypoint 70): generateResponseStrategyGuidance() synthesizes all perception signals (mode/flow/emotion/quality/expertise/health) into concrete response guidance (tone/structure/detail/priority). Injected as COMPOSITE RESPONSE STRATEGY section — LLM now gets a unified "how to respond" directive instead of scattered individual hints
-70. **Interaction Gap Adaptive Response** (waypoint 71): generateResponseStrategyGuidance() adapts to time between interactions — rapid-fire (<30s) triggers minimal detail mode, return-after-gap (>300s) triggers context recap. Agent matches response brevity to user's interaction pace and provides context restoration after absences
-71. **Adaptive Section Weight Learning** (waypoint 72): SectionWeights tracks EMA-adjusted offsets per prompt section based on response quality feedback — high quality boosts active section weights, low quality reduces them. Weights clamp at ±0.15, persist via session, and feed into scoreSectionRelevance() as learnedOffset. Prompt pruning now adapts to which sections actually help responses
-72. **Intent Evolution Tracker** (waypoint 73): Cross-turn intent tracking with category classification (question/debug/feature/refactor/learn/config/review/deploy/general). Detects gradual shifts, sudden pivots, and intent returns. Active intent chains and dominant category injected as INTENT EVOLUTION section — LLM sees the user's evolving goals across the conversation
-73. **Prompt Signal Utilization Tracking** (waypoint 74): evaluateSignalUtilization() checks if injected cognitive signals are reflected in agent responses via keyword detectors per section. UtilizationStats tracks EMA ratios per section — underutilized sections (<0.3 ratio) are auto-downweighted and flagged in COGNITIVE STATE summary. Creates a closed-loop: inject → detect usage → adjust priority
-74. **Response Style Self-Evolution** (waypoint 75): StyleEvolutionModel tracks 6 response features (codeBlocks, explanationRatio, listItems, length, questionsAsked, technical) against user satisfaction inferred from next reply. EMA-weighted feature preferences generate STYLE GUIDANCE section — agent learns whether the user prefers code-heavy vs prose, structured lists vs narrative, and adapts response style over time
-75. **Importance-Aware History Compression** (waypoint 76): compressHistory() uses scoreTurnImportance ratings to preserve high-importance turns (decisions, code, actions, strong emotions >0.6) while merging low-importance turns into topic summaries. Recent 3 turns always preserved. Long messages truncated as last resort. Smart context budget management instead of naive truncation
-76. **Tool Usage Pattern Mining** (waypoint 77): mineToolPatterns() discovers successful tool pair sequences (A→B) from usage history within 5-minute windows. Filters by minimum occurrences and success rate. suggestNextTool() recommends the most likely successful next tool based on the last tool used. Patterns sorted by successRate × occurrences for relevance
-77. **Conversation Knowledge Graph** (waypoint 78): Extract entities (file/module/concept/tool/person/technology/error) and relations (imports/uses/error-in/fixed-in) from conversation messages. KnowledgeEntity tracks mention count for importance ranking. KnowledgeRelation captures typed connections between entities. Foundation for context-aware entity linking and cross-reference resolution
-78. **Knowledge Graph Agent Integration** (waypoint 79): Wire ConversationKnowledgeGraph into the agent's processInputCore — entities and relations extracted from every user message, accumulated across turns. Knowledge summary injected into system prompt via KNOWLEDGE GRAPH section. Added to SECTION_PREFIXES and baseScores for adaptive pruning. Fixed normalizeFeature type narrowing bug. Tests: 2290 (337 background-tasks + 1543 killer-app + 747 killer-core)
-79. **Cognitive Fatigue Detection** (waypoint 80): computeRepetitionScore() tracks Jaccard overlap between recent responses. computeToolEfficiency() measures success rate × speed decay. assessCognitiveFatigue() combines 4 indicators (repetition/efficiency/emotion/strategy) into fatigue level 0-1 with 3-tier recommendations (lighten/refocus/suggest-break). Fatigue guidance injected via COGNITIVE FATIGUE prompt section. Agent tracks recentResponses and recentToolResults for continuous assessment. Tests: 349 background-tasks + 12 fatigue tests
-80. **Gap Recovery Strategy** (waypoint 81): 4-tier gap classification (brief/moderate/extended/long-absence) based on time since last user message. extractLastTopic() retrieves last topic from conversation history. extractPendingCommitments() finds I'll/TODO/need-to patterns. generateGapRecoveryStrategy() selects resume style (pickup/summary/fresh-context/check-in) with context points and suggested directions. GAP RECOVERY prompt section injected for gaps > 5 minutes. Agent tracks lastUserMessageTimestamp. Tests: 2313 total (94 files, 0 failures)
-81. **Active Learning Loop** (waypoint 82): LearnedLesson system with 5 categories (tool-choice/strategy/response-quality/context-loss/user-preference). extractLessonFromQuality() generates lessons from low-quality responses (score < 0.5). extractLessonFromToolFailure() captures tool-specific failure patterns. recordLesson() deduplicates and boosts confidence on repeated lessons. getRelevantLessons() matches context to find applicable lessons. formatLessonsPrompt() structures as "when X → avoid Y → prefer Z". LEARNED LESSONS prompt section injected. Agent records lessons on low quality evaluation and tool execution failure. Tests: 2323 total (10 learning loop tests)
-82. **Conversation Rhythm Adaptation** (waypoint 83): inferCadence() classifies user input pattern as rapid-fire/measured/deliberate/burst-pause based on interval and message length. RhythmProfile tracks avg interval, avg length, cadence, suggested response style (brief/balanced/detailed), and wait strategy (respond-immediately/pause-for-continuation/wait-for-completion). RHYTHM ADAPTATION prompt section injected. Agent tracks RhythmSample on each user message. Tests: 2332 total (9 rhythm tests)
-83. **Cognitive State Cross-Session Persistence** (waypoint 84): Extended SessionSnapshot with cognitiveState field containing sectionWeights, knowledgeGraph, rhythmProfile, and turnCounter. saveSession() serializes cognitive module state to disk. loadIdentityFromSession() restores section weights, knowledge graph entities/relations, rhythm profile, and turn counter on boot. Enables continuous intelligence growth across sessions — learned patterns and accumulated knowledge survive restarts. Tests: 2332 passing
-84. **Multi-Granularity Intent Decomposition** (waypoint 85): decomposeIntent() splits complex multi-intent inputs into structured SubIntent array with type classification (question/action/exploration/decision/verification), complexity estimation, and dependency detection. computeExecutionOrder() performs topological sort on dependency graph. formatIntentDecomposition() structures execution plan with step numbers. INTENT DECOMPOSITION prompt section injected when >1 sub-intent detected. Agent's computeIntentDecomposition() gates on sub-intent count >1 to avoid noise on simple inputs. Tests: 2341 total (10 intent decomposition tests)
-85. **Semantic Memory Network** (waypoint 86): SemanticMemoryNetwork with typed concept nodes (technology/pattern/problem/solution/domain) and 8 relation types (is-a/part-of/depends-on/causes/solves/related-to/alternative-to/produces). extractConceptsFromMessage() and extractSemanticRelations() build the network from conversation. detectIsolatedConcepts() finds unconnected high-mention concepts and generates clarification questions. inferImplicitRelations() discovers hidden links via co-occurrence and type-based rules. SEMANTIC NETWORK prompt section injected. Cross-session persistence via cognitiveState. Tests: 2351 total (10 semantic network tests)
-86. **Adaptive Response Timing** (waypoint 87): assessResponseTiming() evaluates input complexity via keyword signals (high/medium/low), generates 4-tier strategy (immediate/thoughtful/deep-research/proactive), suggests response structure and max length. generatePrefetchHints() recommends context preloading based on topic keywords (performance→metrics, errors→failure patterns, architecture→decisions). Fatigue-adjusted complexity ensures fatigued agents respond more concisely. RESPONSE TIMING prompt section injected with strategy, complexity score, suggested structure, and prefetch hints. Tests: 2361 total (10 timing tests)
-87. **Conversation Summary Compression** (waypoint 88): extractSummaryItems() extracts 7 item types (decision/error/solution/code-change/requirement/fact/action) from messages via pattern matching. deduplicateSummaryItems() merges similar items preserving highest importance. extractTopicsFromMessages() tags conversations with 8 domain labels (database/api/deployment/testing/performance/security/architecture/debugging). generateConversationSummary() caps at 15 items sorted by importance. CONVERSATION SUMMARY prompt section injected for conversations >10 turns, compressing early turns while preserving recent detail. Tests: 2371 total (10 summary tests)
-88. **Response Self-Correction Validator** (waypoint 89): validateResponse() runs 4 detectors after each response: detectMissedIntents (multi-question coverage), detectConstraintViolations (user constraints like "don't use X"), detectMissingAnswers (unanswered questions via keyword check), detectInconsistencies (self-contradictory statements). CorrectionResult scored 0-1 with severity-weighted penalties. SELF-CORRECTION prompt section injected when issues found, enabling automatic repair in next turn. Tests: 437 background-tasks (9 correction tests)
-89. **Context Window Budget Optimizer** (waypoint 90): allocateBudget() distributes fixed 24000-char prompt budget across ~40 section prefixes using configurable weights with learned offset adjustment. pruneByBudget() applies keep/truncate/drop actions — low-weight oversized sections get dropped, over-budget sections get truncated with '...' marker. Integrated as second-pass optimization in prompt-builder after existing scoreSectionRelevance pruning, triggered when utilization > 80%. Tests: 437 background-tasks (10 budget optimizer tests)
-90. **Next-Turn Intent Prediction** (waypoint 91): predictNextIntent() combines 4 signals — intent transition priors (9x9 matrix), observed transition history, knowledge graph entity influence, and flow pattern — to predict user's next intent category with confidence score. formatNextTurnPrediction() generates preparation suggestions (preload docs, prepare diagnostics, load architecture). NEXT-TURN PREDICTION prompt section injected for conversations with intent history. Tests: 445 background-tasks (8 prediction tests)
-91. **Cross-Module Cognitive Feedback Analyzer** (waypoint 92): analyzeCrossModuleFeedback() tracks 13 known module interaction rules (fatigue→suppress prediction, rhythm→amplify style, flow→amplify prediction, etc.). Detects synergies, conflicts, and generates optimization recommendations. Cognitive health score (0-1) based on synergy/conflict ratios and module count. META-FEEDBACK prompt section gives LLM self-awareness of its own cognitive architecture state. Tests: 454 background-tasks (9 feedback tests)
-92. **Adaptive Tool Chain Orchestration** (waypoint 93): generateToolChainSuggestion() maps predicted intent to multi-step tool chain templates (debug→memory_recall+code_search+shell_exec, feature→memory_recall+code_search+test, etc.). Adjusts chains based on learned patterns from mineToolPatterns(), skips completed steps when lastToolUsed matches, extends with suggestNextTool() recommendations. TOOL CHAIN prompt section injected when next-turn prediction confidence > 30%. Tests: 462 background-tasks (8 tool chain tests)
-93. **Conversation Momentum Tracker** (waypoint 94): analyzeConversationMomentum() tracks 5 dimensions across message history: topic depth delta (tech keyword density trend), info density (message length trend), engagement (question ratio + code blocks), goal progress (status-based), and composite momentum score (-1 to 1). Direction classification: accelerating/steady/decelerating/stalled with pace advice. MOMENTUM prompt section enables LLM self-regulation of response pacing. Tests: 469 background-tasks (7 momentum tests)
-94. **Adaptive Persona Calibration** (waypoint 95): calibratePersona() adjusts 5 expression dimensions (formality, verbosity, empathy, technicalDepth, proactivity) based on 6 input signals: expertise level, rhythm cadence, emotional valence, momentum direction, fatigue level, and correction score. Each signal independently adjusts relevant dimensions with clear reasoning. PERSONA CALIBRATION prompt section enables LLM to adapt its communication style to match user context. Tests: 479 background-tasks (10 calibration tests)
-
-103. **Intent Chain Health Assessor** (WP97): 4-state chain health (healthy/fragmented/stalled/deep_rabbit_hole) with coherence from pivot/gradual/return analysis. Recovery hints guide summarization or redirect. Wired as INTENT CHAIN HEALTH section.
-
-104. **Conversation Energy Model** (WP98): Engagement prediction from message length trend, response time trend, emotional valence. Detects rising/stable/declining/crashing with dropoff risk and recovery actions. Wired as CONVERSATION ENERGY section.
-
-105. **Adaptive Response Structure Optimizer** (WP99): Combines energy/momentum/chainHealth/expertise to recommend format (prose/bullets/numbered/concise), max paragraphs, code blocks, lead-with-conclusion. Wired as RESPONSE STRUCTURE section.
+{Auto-updated by engine.}
 
 ### Dead Ends
 {Auto-updated by engine.}
@@ -153,8 +61,14 @@ npm test 2>&1
 {Unexpected findings. Auto-updated in creative mode.}
 
 ## Current Best
-- metric: (baseline not yet measured)
-- Baseline: (pending)
+- metric: 0 type errors, 512 tests (baseline from previous session)
+- Baseline: WP100 checkAndAutoContinue committed but untested end-to-end
 
 ## Ideas Backlog
-{Auto-populated. Can be manually edited.}
+1. **AUTO-CONTINUE 输入处理优化** — 自动输入不应触发情感分析、承诺检测等用户专用逻辑
+2. **执行进度可视化** — 在 TUI/API 中显示自主执行进度（step N/M, 当前状态）
+3. **Plan-step-to-tool 映射** — 将 plan step description 转化为具体的工具调用指令
+4. **失败恢复策略** — step 失败后自动重试/降级/跳过
+5. **执行结果校验** — 每步执行后自动验证结果是否正确
+6. **跨会话执行恢复** — 中断后可以恢复未完成的 plan 执行
+7. **执行日志流** — 实时输出自主执行的思考过程和决策
