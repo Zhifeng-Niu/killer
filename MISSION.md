@@ -4,8 +4,8 @@ status: active
 started_at: 2026-05-28T03:28:59Z
 expedition_branch: odyssey/20260528-112859
 baseline_metric: 0
-best_metric: 0
-total_waypoints: 0
+best_metric: 2465
+total_waypoints: 7
 consecutive_discards: 0
 ---
 
@@ -52,23 +52,35 @@ cd packages/killer-app && npx tsc --noEmit
 ## What's Been Tried
 
 ### Wins
-{Auto-updated by engine.}
+1. **WP100 — Autonomous execution loop**: Inspects active plans, enqueues [AUTO-CONTINUE] via inputQueue, max 20 continues
+2. **WP1 — AUTO-CONTINUE fast path**: Bypasses ~20 user-centric processing steps
+3. **WP2 — Plan step context enrichment**: Injects goal, completed/remaining steps, tools into LLM prompt; uses runNativeToolLoop
+4. **WP3 — Failure recovery with retry and auto-skip**: Reset to ready for 2 retries, then skip + replan; downstream steps proceed on skipped deps
+5. **WP4 — Post-execution verification**: Checks output emptiness, brevity, error signals
+6. **WP5 — Execution progress events**: execution.progress consciousness event for SSE consumers
+7. **WP6 — Cross-session plan recovery**: loadSession detects active plans, auto-continue resumes naturally
+8. **WP7 — Execution log stream**: execution.log events at execute, verify-passed, verify-failed phases
 
 ### Dead Ends
-{Auto-updated by engine.}
+1. **WP100 — Autonomous execution loop**: Inspects active plans, enqueues [AUTO-CONTINUE] via inputQueue, max 20 continues
+2. **WP1 — AUTO-CONTINUE fast path**: Bypasses ~20 user-centric processing steps
+3. **WP2 — Plan step context enrichment**: Injects goal, completed/remaining steps, tools into LLM prompt; uses runNativeToolLoop
+4. **WP3 — Failure recovery with retry and auto-skip**: Reset to ready for 2 retries, then skip + replan; downstream steps proceed on skipped deps
+5. **WP4 — Post-execution verification**: Checks output emptiness, brevity, error signals
+6. **WP5 — Execution progress events**: execution.progress consciousness event for SSE consumers
+7. **WP6 — Cross-session plan recovery**: loadSession detects active plans, auto-continue resumes naturally
+8. **WP7 — Execution log stream**: execution.log events at execute, verify-passed, verify-failed phases
 
 ### Surprises
 {Unexpected findings. Auto-updated in creative mode.}
 
 ## Current Best
-- metric: 0 type errors, 512 tests (baseline from previous session)
-- Baseline: WP100 checkAndAutoContinue committed but untested end-to-end
+- metric: 0 type errors, 2465 tests (747 core + 1718 app)
+- 7 waypoints: autonomous execution loop fully functional end-to-end
+- Retry-before-skip failure recovery, step verification, progress events, cross-session recovery
 
 ## Ideas Backlog
-1. **AUTO-CONTINUE 输入处理优化** — 自动输入不应触发情感分析、承诺检测等用户专用逻辑
-2. **执行进度可视化** — 在 TUI/API 中显示自主执行进度（step N/M, 当前状态）
-3. **Plan-step-to-tool 映射** — 将 plan step description 转化为具体的工具调用指令
-4. **失败恢复策略** — step 失败后自动重试/降级/跳过
-5. **执行结果校验** — 每步执行后自动验证结果是否正确
-6. **跨会话执行恢复** — 中断后可以恢复未完成的 plan 执行
-7. **执行日志流** — 实时输出自主执行的思考过程和决策
+All 7 ideas completed. Future directions:
+1. **Parallel plan step execution** — Independent steps run concurrently
+2. **LLM-based result verification** — LLM judges if output meets step goal
+3. **Dynamic plan adjustment** — Add/remove/reorder steps based on execution results
