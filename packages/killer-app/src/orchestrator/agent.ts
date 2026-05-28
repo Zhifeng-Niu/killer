@@ -2663,6 +2663,15 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       this.persona.markSessionStart();
       // Note: userModel and mirrorNeuronData are restored via personaGenome
       // which contains the full genome including userModel and mirrorNeuron
+
+      // Detect unfinished plans for potential auto-resume
+      const activePlans = this.planExecutor.getActivePlans();
+      if (activePlans.length > 0) {
+        const totalSteps = activePlans.reduce((sum, p) => sum + p.steps.length, 0);
+        const doneSteps = activePlans.reduce((sum, p) => sum + p.steps.filter(s => s.status === 'completed').length, 0);
+        this.logger.info(`Resumed ${activePlans.length} active plan(s): ${doneSteps}/${totalSteps} steps done`);
+      }
+
       return true;
     } catch {
       return false;
