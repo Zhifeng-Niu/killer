@@ -141,6 +141,8 @@ import {
   formatCorrectionResult,
   allocateBudget,
   pruneByBudget,
+  predictNextIntent,
+  formatNextTurnPrediction,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -4254,6 +4256,90 @@ describe('background-tasks', () => {
       const allocation = allocateBudget('no sections here', 4000);
       const pruned = pruneByBudget('no sections here', allocation);
       expect(pruned).toBe('no sections here');
+    });
+  });
+
+  describe('predictNextIntent', () => {
+    it('should return low confidence for empty history', () => {
+      const result = predictNextIntent([], []);
+      expect(result.confidence).toBeLessThan(0.2);
+      expect(result.predictedCategory).toBe('general');
+    });
+
+    it('should predict based on transition priors', () => {
+      const history: IntentNode[] = [
+        { category: 'question', summary: 'how to test', timestamp: Date.now() - 1000 },
+      ];
+      const result = predictNextIntent(history, []);
+      expect(result.confidence).toBeGreaterThan(0);
+      expect(result.predictedCategory).toBeDefined();
+    });
+
+    it('should use observed transitions over priors', () => {
+      const history: IntentNode[] = [
+        { category: 'debug', summary: 'fix error', timestamp: Date.now() - 5000 },
+        { category: 'debug', summary: 'another error', timestamp: Date.now() - 4000 },
+        { category: 'debug', summary: 'still debugging', timestamp: Date.now() - 3000 },
+        { category: 'debug', summary: 'more bugs', timestamp: Date.now() - 2000 },
+      ];
+      const result = predictNextIntent(history, []);
+      expect(result.predictedCategory).toBe('debug');
+      expect(result.reasoning).toContain('延续当前意图链');
+    });
+
+    it('should incorporate knowledge graph entities', () => {
+      const history: IntentNode[] = [
+        { category: 'question', summary: 'how to deploy', timestamp: Date.now() - 1000 },
+      ];
+      const entities = [
+        { type: 'error', name: 'NullPointer', mentionCount: 5 },
+      ];
+      const withoutEntities = predictNextIntent(history, []);
+      const withEntities = predictNextIntent(history, entities);
+      // Error entities should boost debug prediction
+      expect(withEntities.predictedCategory).toBe('debug');
+      expect(withEntities.confidence).toBeGreaterThanOrEqual(withoutEntities.confidence);
+    });
+
+    it('should incorporate flow pattern', () => {
+      const history: IntentNode[] = [
+        { category: 'question', summary: 'how to test', timestamp: Date.now() - 1000 },
+      ];
+      const result = predictNextIntent(history, [], 'debug-diagnose-fix');
+      expect(result.predictedCategory).toBe('debug');
+    });
+
+    it('should return preparations for predicted category', () => {
+      const history: IntentNode[] = [
+        { category: 'feature', summary: 'add auth', timestamp: Date.now() - 1000 },
+      ];
+      const result = predictNextIntent(history, []);
+      expect(result.preparations.length).toBeGreaterThanOrEqual(0);
+      expect(result.reasoning).toContain('当前意图');
+    });
+  });
+
+  describe('formatNextTurnPrediction', () => {
+    it('should return empty for low confidence', () => {
+      const result = formatNextTurnPrediction({
+        predictedCategory: 'general',
+        confidence: 0.1,
+        preparations: [],
+        reasoning: 'test',
+      });
+      expect(result).toBe('');
+    });
+
+    it('should format prediction with preparations', () => {
+      const result = formatNextTurnPrediction({
+        predictedCategory: 'debug',
+        confidence: 0.7,
+        preparations: ['预加载错误模式', '准备诊断步骤'],
+        reasoning: '当前意图: debug | 预测意图: debug',
+      });
+      expect(result).toContain('debug');
+      expect(result).toContain('70%');
+      expect(result).toContain('预加载错误模式');
     });
   });
 });

@@ -137,6 +137,8 @@ export interface PromptBuilderDeps {
   correctionGuidance?: string;
   /** 预算优化后的裁剪 prompt（由 agent 计算） */
   prunedPrompt?: string;
+  /** 下一轮意图预测 */
+  nextTurnPrediction?: string;
 }
 
 /**
@@ -446,6 +448,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 自校正 ===
   if (deps.correctionGuidance) {
     parts.push(`\nSELF-CORRECTION — Issues detected in previous response:\n${deps.correctionGuidance}`);
+  }
+
+  // === 下一轮意图预测 ===
+  if (deps.nextTurnPrediction) {
+    parts.push(`\nNEXT-TURN PREDICTION — Anticipate user's next move:\n${deps.nextTurnPrediction}`);
   }
 
   // === 自主行动建议 ===

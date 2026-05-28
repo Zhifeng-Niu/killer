@@ -6720,6 +6720,7 @@ const SECTION_BUDGET_WEIGHTS: Record<string, number> = {
   'RESPONSE TIMING': 0.03,
   'CONVERSATION SUMMARY': 0.05,
   'SELF-CORRECTION': 0.04,
+  'NEXT-TURN PREDICTION': 0.03,
 };
 
 /** 最小保留预算（字符） */
@@ -6860,4 +6861,184 @@ export function pruneByBudget(prompt: string, allocation: BudgetAllocation): str
   }
 
   return result;
+}
+
+/**
+ * 下一轮意图预测
+ */
+
+/** 意图转换概率矩阵 — 统计 A→B 的转换频率 */
+type IntentTransitionMatrix = Record<string, Record<string, number>>;
+
+/** 预测结果 */
+export interface NextTurnPrediction {
+  /** 预测的意图类别 */
+  predictedCategory: IntentCategory;
+  /** 置信度 0-1 */
+  confidence: number;
+  /** 推荐的响应准备动作 */
+  preparations: string[];
+  /** 依据 */
+  reasoning: string;
+}
+
+// 意图转换先验 — 基于常见开发对话模式
+const INTENT_TRANSITION_PRIORS: IntentTransitionMatrix = {
+  question: { debug: 0.25, feature: 0.15, learn: 0.20, config: 0.10, review: 0.10, general: 0.20 },
+  debug: { debug: 0.30, question: 0.15, feature: 0.10, config: 0.15, review: 0.10, refactor: 0.10, deploy: 0.10 },
+  feature: { feature: 0.25, question: 0.15, debug: 0.15, config: 0.10, review: 0.15, refactor: 0.10, deploy: 0.10 },
+  refactor: { review: 0.25, debug: 0.15, feature: 0.15, question: 0.15, deploy: 0.15, config: 0.15 },
+  learn: { question: 0.25, feature: 0.20, config: 0.15, debug: 0.10, review: 0.15, general: 0.15 },
+  config: { config: 0.20, feature: 0.15, debug: 0.20, question: 0.15, deploy: 0.15, review: 0.15 },
+  review: { deploy: 0.20, debug: 0.15, refactor: 0.15, feature: 0.15, question: 0.15, review: 0.20 },
+  deploy: { debug: 0.25, config: 0.15, review: 0.20, feature: 0.10, question: 0.15, deploy: 0.15 },
+  general: { question: 0.25, feature: 0.20, debug: 0.15, config: 0.10, learn: 0.15, general: 0.15 },
+};
+
+// 类别对应的准备动作
+const CATEGORY_PREPARATIONS: Record<IntentCategory, string[]> = {
+  question: ['预加载相关文档', '准备解释性示例'],
+  debug: ['预加载错误模式', '准备诊断步骤', '加载最近代码变更'],
+  feature: ['预加载相关架构', '准备实现模板', '加载依赖关系'],
+  refactor: ['预加载代码结构', '准备重构模式'],
+  learn: ['预加载概念定义', '准备渐进式解释'],
+  config: ['预加载配置模板', '准备环境检查'],
+  review: ['预加载代码规范', '准备检查清单'],
+  deploy: ['预加载部署配置', '准备健康检查脚本'],
+  general: [],
+};
+
+// 知识图谱实体类别与意图的关联
+const ENTITY_INTENT_MAP: Record<string, IntentCategory> = {
+  error: 'debug',
+  file: 'feature',
+  module: 'refactor',
+  concept: 'learn',
+  tool: 'config',
+};
+
+/**
+ * 从 intent evolution 和 knowledge graph 预测下一轮意图
+ */
+export function predictNextIntent(
+  intentHistory: IntentNode[],
+  knowledgeEntities: Array<{ type: string; name: string; mentionCount: number }>,
+  flowPattern?: string,
+): NextTurnPrediction {
+  if (intentHistory.length === 0) {
+    return {
+      predictedCategory: 'general',
+      confidence: 0.1,
+      preparations: [],
+      reasoning: '无意图历史，无法预测',
+    };
+  }
+
+  const lastIntent = intentHistory[intentHistory.length - 1];
+  const lastCategory = lastIntent.category;
+
+  // === 信号 1: 转移概率 ===
+  const priors = INTENT_TRANSITION_PRIORS[lastCategory] ?? INTENT_TRANSITION_PRIORS.general;
+  const transitionScores: Record<string, number> = { ...priors };
+
+  // === 信号 2: 实际历史转换频率 ===
+  if (intentHistory.length >= 3) {
+    const recentTransitions: Record<string, Record<string, number>> = {};
+    for (let i = 1; i < intentHistory.length; i++) {
+      const from = intentHistory[i - 1].category;
+      const to = intentHistory[i].category;
+      if (!recentTransitions[from]) recentTransitions[from] = {};
+      recentTransitions[from][to] = (recentTransitions[from][to] ?? 0) + 1;
+    }
+
+    const observedFromLast = recentTransitions[lastCategory];
+    if (observedFromLast) {
+      const total = Object.values(observedFromLast).reduce((a, b) => a + b, 0);
+      for (const [to, count] of Object.entries(observedFromLast)) {
+        transitionScores[to] = (transitionScores[to] ?? 0) * 0.6 + (count / total) * 0.4;
+      }
+    }
+  }
+
+  // === 信号 3: 知识图谱实体影响 ===
+  if (knowledgeEntities.length > 0) {
+    const topEntities = knowledgeEntities
+      .filter(e => e.mentionCount >= 2)
+      .slice(0, 5);
+
+    for (const entity of topEntities) {
+      const mapped = ENTITY_INTENT_MAP[entity.type];
+      if (mapped) {
+        transitionScores[mapped] = (transitionScores[mapped] ?? 0) + 0.05 * entity.mentionCount;
+      }
+    }
+  }
+
+  // === 信号 4: Flow pattern 影响 ===
+  if (flowPattern) {
+    if (flowPattern.includes('debug')) {
+      transitionScores.debug = (transitionScores.debug ?? 0) + 0.1;
+      transitionScores.question = (transitionScores.question ?? 0) + 0.05;
+    } else if (flowPattern.includes('explore')) {
+      transitionScores.learn = (transitionScores.learn ?? 0) + 0.1;
+      transitionScores.question = (transitionScores.question ?? 0) + 0.05;
+    } else if (flowPattern.includes('implement')) {
+      transitionScores.feature = (transitionScores.feature ?? 0) + 0.1;
+      transitionScores.review = (transitionScores.review ?? 0) + 0.05;
+    }
+  }
+
+  // 归一化并选出最佳
+  const totalScore = Object.values(transitionScores).reduce((a, b) => a + b, 0);
+  let bestCategory: IntentCategory = 'general';
+  let bestScore = 0;
+
+  for (const [cat, score] of Object.entries(transitionScores)) {
+    const normalized = totalScore > 0 ? score / totalScore : 0;
+    if (normalized > bestScore) {
+      bestScore = normalized;
+      bestCategory = cat as IntentCategory;
+    }
+  }
+
+  const confidence = Math.min(0.9, bestScore * 2);
+  const preparations = CATEGORY_PREPARATIONS[bestCategory] ?? [];
+  const reasoning = buildPredictionReasoning(lastCategory, bestCategory, confidence, flowPattern);
+
+  return {
+    predictedCategory: bestCategory,
+    confidence,
+    preparations,
+    reasoning,
+  };
+}
+
+function buildPredictionReasoning(
+  lastCategory: IntentCategory,
+  predicted: IntentCategory,
+  confidence: number,
+  flowPattern?: string,
+): string {
+  const parts: string[] = [];
+  parts.push(`当前意图: ${lastCategory}`);
+  parts.push(`预测意图: ${predicted}`);
+  parts.push(`置信度: ${(confidence * 100).toFixed(0)}%`);
+  if (flowPattern) parts.push(`对话模式: ${flowPattern}`);
+  if (lastCategory === predicted) parts.push('延续当前意图链');
+  return parts.join(' | ');
+}
+
+/**
+ * 格式化预测结果为 prompt section
+ */
+export function formatNextTurnPrediction(prediction: NextTurnPrediction): string {
+  if (prediction.confidence < 0.3) return '';
+
+  const lines: string[] = [];
+  lines.push(`预测用户下一轮意图: ${prediction.predictedCategory} (${(prediction.confidence * 100).toFixed(0)}%)`);
+  if (prediction.preparations.length > 0) {
+    lines.push(`建议准备: ${prediction.preparations.join('、')}`);
+  }
+  lines.push(`依据: ${prediction.reasoning}`);
+  return lines.join('\n');
 }

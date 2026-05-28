@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL, createDefaultSectionWeights, recordActiveSections, updateSectionWeights, getSectionWeightOffset, exportSectionWeights, importSectionWeights, type SectionWeights, classifyIntent, extractIntentSummary, trackIntentEvolution, formatIntentEvolution, type IntentNode, type IntentEvolution, evaluateSignalUtilization, updateUtilizationStats, getUnderutilizedSections, createDefaultUtilizationStats, type UtilizationStats, createDefaultStyleEvolution, extractResponseFeatures, inferSatisfactionFromReply, updateStyleEvolution, generateStyleGuidance, type StyleEvolutionModel, type ResponseStyleFeatures, createEmptyKnowledgeGraph, extractEntitiesFromMessage, extractRelationsFromMessage, getTopEntities, formatKnowledgeSummary, type ConversationKnowledgeGraph, computeRepetitionScore, computeToolEfficiency, assessCognitiveFatigue, formatFatigueGuidance, type FatigueIndicators, type CognitiveFatigueState, classifyGapSeverity, extractLastTopic, extractPendingCommitments, generateGapRecoveryStrategy, formatGapRecoveryGuidance, type GapContext, extractLessonFromQuality, extractLessonFromToolFailure, recordLesson, getRelevantLessons, formatLessonsPrompt, updateRhythmProfile, createDefaultRhythmProfile, formatRhythmGuidance, type RhythmSample, type RhythmProfile, decomposeIntent, formatIntentDecomposition, type IntentDecomposition, createEmptySemanticNetwork, extractConceptsFromMessage, extractSemanticRelations, detectIsolatedConcepts, inferImplicitRelations, formatSemanticNetworkSummary, type SemanticMemoryNetwork, assessResponseTiming, formatTimingGuidance, type ResponseTimingAssessment, generateConversationSummary, formatConversationSummary, validateResponse, formatCorrectionResult, type CorrectionResult, allocateBudget, pruneByBudget } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL, createDefaultSectionWeights, recordActiveSections, updateSectionWeights, getSectionWeightOffset, exportSectionWeights, importSectionWeights, type SectionWeights, classifyIntent, extractIntentSummary, trackIntentEvolution, formatIntentEvolution, type IntentNode, type IntentEvolution, evaluateSignalUtilization, updateUtilizationStats, getUnderutilizedSections, createDefaultUtilizationStats, type UtilizationStats, createDefaultStyleEvolution, extractResponseFeatures, inferSatisfactionFromReply, updateStyleEvolution, generateStyleGuidance, type StyleEvolutionModel, type ResponseStyleFeatures, createEmptyKnowledgeGraph, extractEntitiesFromMessage, extractRelationsFromMessage, getTopEntities, formatKnowledgeSummary, type ConversationKnowledgeGraph, computeRepetitionScore, computeToolEfficiency, assessCognitiveFatigue, formatFatigueGuidance, type FatigueIndicators, type CognitiveFatigueState, classifyGapSeverity, extractLastTopic, extractPendingCommitments, generateGapRecoveryStrategy, formatGapRecoveryGuidance, type GapContext, extractLessonFromQuality, extractLessonFromToolFailure, recordLesson, getRelevantLessons, formatLessonsPrompt, updateRhythmProfile, createDefaultRhythmProfile, formatRhythmGuidance, type RhythmSample, type RhythmProfile, decomposeIntent, formatIntentDecomposition, type IntentDecomposition, createEmptySemanticNetwork, extractConceptsFromMessage, extractSemanticRelations, detectIsolatedConcepts, inferImplicitRelations, formatSemanticNetworkSummary, type SemanticMemoryNetwork, assessResponseTiming, formatTimingGuidance, type ResponseTimingAssessment, generateConversationSummary, formatConversationSummary, validateResponse, formatCorrectionResult, type CorrectionResult, allocateBudget, pruneByBudget, predictNextIntent, formatNextTurnPrediction, type NextTurnPrediction } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -3613,6 +3613,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       'COGNITIVE STATE', 'COMPOSITE RESPONSE STRATEGY', 'INTENT EVOLUTION',
       'STYLE GUIDANCE', 'KNOWLEDGE GRAPH', 'COGNITIVE FATIGUE', 'GAP RECOVERY', 'LEARNED LESSONS',
       'RHYTHM ADAPTATION', 'INTENT DECOMPOSITION', 'SEMANTIC NETWORK', 'RESPONSE TIMING', 'CONVERSATION SUMMARY', 'SELF-CORRECTION',
+      'NEXT-TURN PREDICTION',
     ];
 
     const memoryStats = this.hippocampus.getStats();
@@ -3698,6 +3699,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       responseTimingGuidance: this.computeResponseTimingGuidance(currentInput ?? ''),
       conversationSummary: this.computeConversationSummary(),
       correctionGuidance: this.computeCorrectionGuidance(),
+      nextTurnPrediction: this.computeNextTurnPrediction(),
       sectionWeightOffsets: exportSectionWeights(this.sectionWeights),
     });
 
@@ -3800,10 +3802,27 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
   }
 
   private lastCorrectionResult: CorrectionResult | undefined;
+  private lastNextTurnPrediction: NextTurnPrediction | undefined;
 
   private computeCorrectionGuidance(): string | undefined {
     if (!this.lastCorrectionResult || this.lastCorrectionResult.items.length === 0) return undefined;
     return formatCorrectionResult(this.lastCorrectionResult);
+  }
+
+  private computeNextTurnPrediction(): string | undefined {
+    if (this.intentHistory.length < 1) return undefined;
+    const entities = getTopEntities(this.knowledgeGraph.entities, 5)
+      .map(e => ({ type: e.type, name: e.name, mentionCount: e.mentions }));
+    const flow = this.conversationHistory.length >= 3
+      ? predictConversationFlow(this.conversationHistory)
+      : undefined;
+    const prediction = predictNextIntent(
+      this.intentHistory,
+      entities,
+      flow?.currentPattern,
+    );
+    this.lastNextTurnPrediction = prediction;
+    return formatNextTurnPrediction(prediction) || undefined;
   }
 
   private computeAmbiguityWarnings(): string[] | undefined {
