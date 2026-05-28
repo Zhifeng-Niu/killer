@@ -1,0 +1,72 @@
+{
+  "name": "@odysseus/app",
+  "version": "0.1.0",
+  "description": "Odysseus Agent Application — orchestrator, persona engine (mirror neurons, emotional state, predictive model), LLM providers, CLI, HTTP/WS/SSE API, and session persistence",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "odysseus": "dist/cli.js",
+    "odysseus-agent": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && node -e \"const f='dist/main.js',fs=require('fs'),c=fs.readFileSync(f,'utf8');fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c)\"",
+    "bundle": "node ../../scripts/bundle.mjs",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "start": "tsc && node dist/main.js",
+    "start:dev": "npx tsx src/main.ts",
+    "quickstart": "node dist/cli.js",
+    "init": "node dist/cli.js --init",
+    "prepublishOnly": "node ../../scripts/bundle.mjs"
+  },
+  "keywords": [
+    "agent",
+    "ai",
+    "api",
+    "cli",
+    "emotional-intelligence",
+    "llm",
+    "orchestrator",
+    "persona",
+    "session-persistence"
+  ],
+  "author": "Zhifeng Niu",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zhifeng-Niu/odysseus.git",
+    "directory": "packages/odysseus-app"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "dependencies": {
+    "ink": "^7.0.4",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.2.6"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.9.0"
+  },
+  "devDependencies": {
+    "@odysseus/core": "workspace:*",
+    "@types/react": "^19.2.15",
+    "vitest": "^1.0.0"
+  }
+}

@@ -1,21 +1,21 @@
 ---
-title: Odyssey Engine × Killer Agent Framework 架构融合提案
+title: Odyssey Engine × Odysseus Agent Framework 架构融合提案
 status: draft
 created: 2026-05-26
 orientation: creative
 ---
 
-# Odyssey Engine × Killer Agent Framework 架构融合提案
+# Odyssey Engine × Odysseus Agent Framework 架构融合提案
 
 ## 1. 执行摘要
 
-将 odyssey-engine 的**自主迭代编排能力**从外部 Claude Code 插件内化为 Killer Agent Framework 的**一等大脑区域**，使 Odysseus Agent 具备结构化实验、策略性探索和自适应演化的原生能力。
+将 odyssey-engine 的**自主迭代编排能力**从外部 Claude Code 插件内化为 Odysseus Agent Framework 的**一等大脑区域**，使 Odysseus Agent 具备结构化实验、策略性探索和自适应演化的原生能力。
 
 ### 核心洞察
 
 Odyssey Engine 本质上是一个**元认知系统** — 它不直接解决问题，而是编排"如何解决问题"的策略。这与 Killer 的 brain+cell 架构天然互补：
 
-| 维度 | Odyssey Engine | Killer Agent Framework | 融合方向 |
+| 维度 | Odyssey Engine | Odysseus Agent Framework | 融合方向 |
 |------|---------------|----------------------|---------|
 | 循环模式 | checkpoint→compass→act→verify→decide | perceive→reason→act→reflect→evolve | 将 compass/verify/decide 注入 reason/reflect |
 | 策略选择 | 3种 orientation (engineer/creative/production) | 无显式策略 | 新增 cerebellum 脑区管理策略 |
@@ -50,7 +50,7 @@ Odyssey Engine 本质上是一个**元认知系统** — 它不直接解决问�
 └─────────────────────────────────────────────────┘
 ```
 
-### 2.2 Killer Agent Framework 核心抽象
+### 2.2 Odysseus Agent Framework 核心抽象
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -96,7 +96,7 @@ Odyssey Engine 本质上是一个**元认知系统** — 它不直接解决问�
 新增大脑区域，负责实验策略的编排和协调。
 
 ```
-packages/killer-core/src/
+packages/odysseus-core/src/
 ├── cerebellum/                    # 新脑区：实验策略编排
 │   ├── cerebellum.ts              # 主类：实验编排器
 │   ├── compass.ts                 # 策略指南针 (orientation 逻辑)
@@ -342,7 +342,7 @@ interface ExplorerCell {
 
 ### Phase 1: 基础设施 (1-2天)
 
-1. 创建 `packages/killer-core/src/cerebellum/` 目录结构
+1. 创建 `packages/odysseus-core/src/cerebellum/` 目录结构
 2. 实现 `types.ts` — 所有实验相关类型定义
 3. 实现 `experiment-tracker.ts` — 内存中的 JSONL 替代
 4. 扩展 `consciousness/types.ts` — 添加实验事件类型

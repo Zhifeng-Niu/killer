@@ -1,16 +1,16 @@
 {
-  "name": "killer-monorepo",
+  "name": "odysseus-monorepo",
   "version": "0.1.0",
   "private": true,
-  "description": "Killer Agent Framework — A Samantha-level autonomous AI agent with brain-inspired architecture, emotional intelligence, and persistent memory",
+  "description": "Odysseus Agent Framework — A Samantha-level autonomous AI agent with brain-inspired architecture, emotional intelligence, and persistent memory",
   "scripts": {
     "build": "node build.mjs",
     "bundle": "node scripts/bundle.mjs",
     "prepare": "pnpm run build",
-    "start": "node killer.mjs",
-    "killer": "node killer.mjs",
-    "init": "node killer.mjs --init",
-    "demo": "node killer.mjs --demo",
+    "start": "node odysseus.mjs",
+    "odysseus": "node odysseus.mjs",
+    "init": "node odysseus.mjs --init",
+    "demo": "node odysseus.mjs --demo",
     "dev": "pnpm -r --parallel run dev",
     "test": "pnpm -r run test",
     "test:coverage": "pnpm -r run test:coverage",
@@ -33,20 +33,20 @@
     "typescript"
   ],
   "bin": {
-    "killer": "./killer.mjs",
-    "killer-agent": "./killer.mjs"
+    "odysseus": "./odysseus.mjs",
+    "odysseus-agent": "./odysseus.mjs"
   },
   "preferGlobal": true,
   "author": "Zhifeng Niu",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Zhifeng-Niu/killer.git"
+    "url": "https://github.com/Zhifeng-Niu/odysseus.git"
   },
   "bugs": {
-    "url": "https://github.com/Zhifeng-Niu/killer/issues"
+    "url": "https://github.com/Zhifeng-Niu/odysseus/issues"
   },
-  "homepage": "https://github.com/Zhifeng-Niu/killer#readme",
+  "homepage": "https://github.com/Zhifeng-Niu/odysseus#readme",
   "devDependencies": {
     "@types/node": "^20.10.0",
     "@typescript-eslint/eslint-plugin": "^6.13.0",

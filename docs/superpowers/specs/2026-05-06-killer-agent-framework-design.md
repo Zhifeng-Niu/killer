@@ -1,4 +1,4 @@
-# Killer Agent Framework — Design Spec
+# Odysseus Agent Framework — Design Spec
 
 > "The Brain That Never Stops" — 一个 AGI 级别的自主 Agent 框架
 
@@ -27,7 +27,7 @@
 ### Layer 1: Rust Kernel (脑干 + 海马体 + 前额叶 + 皮层)
 
 ```
-killer-core/ (Rust crate)
+odysseus-core/ (Rust crate)
 ├── brainstem/           # 主循环：感知→推理→行动→反思→演化 (NEVER STOP)
 │   ├── loop.rs          # 永不停止的决策主循环
 │   ├── perceive.rs      # 感知：环境变化、消息、文件、突触信号
@@ -79,7 +79,7 @@ killer-core/ (Rust crate)
 ### Layer 2: TypeScript Application Layer
 
 ```
-killer-app/ (TypeScript)
+odysseus-app/ (TypeScript)
 ├── sensory/             # 感官层：多渠道感知
 │   ├── cli/             # CLI 交互
 │   ├── telegram/        # Telegram 信道

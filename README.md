@@ -1,11 +1,11 @@
-# Killer Agent Framework
+# Odysseus Agent Framework
 
 A Samantha-level autonomous AI agent framework with Brain+Cell fusion architecture. The system is modeled as a brain made of neuron cells — each cell is an autonomous agent with its own DNA.
 
 ## Architecture
 
 ```
-@killer/core (kernel)            @killer/app (application)
+@odysseus/core (kernel)            @odysseus/app (application)
 ├── brainstem/                   ├── orchestrator/
 │   ├── Never-stop loop          │   ├── agent.ts         — Central orchestrator
 │   │  perceive→reason→act       │   ├── cells.ts         — Cell lifecycle
@@ -36,26 +36,26 @@ A Samantha-level autonomous AI agent framework with Brain+Cell fusion architectu
 ### 一行安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Zhifeng-Niu/killer/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Zhifeng-Niu/odysseus/main/install.sh | bash
 ```
 
-安装后直接运行 `killer` 即可。无 API key 时自动进入体验模式。
+安装后直接运行 `odysseus` 即可。无 API key 时自动进入体验模式。
 
 ### 零配置体验
 
 ```bash
 # 无需 API key，直接体验
-node killer.mjs
+node odysseus.mjs
 ```
 
 ### 30 秒连接真实 AI
 
 ```bash
 # 1. 克隆（需要 Node.js >= 20）
-git clone <repo-url> killer && cd killer
+git clone <repo-url> odysseus && cd odysseus
 
 # 2. 一行启动（自动安装依赖 + 构建）
-node killer.mjs
+node odysseus.mjs
 ```
 
 首次运行无 API key 时，直接粘贴 Key 即可——系统自动识别服务商：
@@ -83,10 +83,10 @@ node killer.mjs
 
 ```bash
 # 交互式配置向导（选服务商 + 粘贴 Key）
-node killer.mjs --init
+node odysseus.mjs --init
 
 # 启动 HTTP API 服务
-node killer.mjs --api --port 3000
+node odysseus.mjs --api --port 3000
 ```
 
 ## Configuration
@@ -109,32 +109,32 @@ node killer.mjs --api --port 3000
 | OpenRouter | `OPENROUTER_API_KEY` | 多模型 |
 | Google Gemini | `GOOGLE_API_KEY` | gemini-2.5-pro |
 
-只需设置一个 API key 环境变量，系统自动识别对应服务商。也可通过 `KILLER_LLM_PROVIDER=xxx` 显式指定。
+只需设置一个 API key 环境变量，系统自动识别对应服务商。也可通过 `ODYSSEUS_LLM_PROVIDER=xxx` 显式指定。
 
 **高级用法**：接入任意 OpenAI 兼容服务商（如 Groq、Together AI 等）：
 ```bash
-KILLER_LLM_PROVIDER=openai-compatible \
-KILLER_BASE_URL=https://your-provider.com/v1/chat/completions \
-KILLER_API_KEY=your-key \
-KILLER_MODEL=model-name \
+ODYSSEUS_LLM_PROVIDER=openai-compatible \
+ODYSSEUS_BASE_URL=https://your-provider.com/v1/chat/completions \
+ODYSSEUS_API_KEY=your-key \
+ODYSSEUS_MODEL=model-name \
 pnpm start
 ```
 
 **GLM Coding Plan** 支持通过 Anthropic 兼容协议接入（推荐用于 prompt cache）：
 ```bash
-KILLER_LLM_PROVIDER=anthropic \
-KILLER_BASE_URL=https://open.bigmodel.cn/api/anthropic \
-KILLER_API_KEY=your-glm-key \
-KILLER_MODEL=GLM-4.7 \
+ODYSSEUS_LLM_PROVIDER=anthropic \
+ODYSSEUS_BASE_URL=https://open.bigmodel.cn/api/anthropic \
+ODYSSEUS_API_KEY=your-glm-key \
+ODYSSEUS_MODEL=GLM-4.7 \
 pnpm start
 ```
 
 **MiniMax** 同样支持 Anthropic 兼容协议（推荐，支持 prompt cache）：
 ```bash
-KILLER_LLM_PROVIDER=anthropic \
-KILLER_BASE_URL=https://api.minimaxi.com/anthropic \
-KILLER_API_KEY=your-minimax-key \
-KILLER_MODEL=MiniMax-M2.7 \
+ODYSSEUS_LLM_PROVIDER=anthropic \
+ODYSSEUS_BASE_URL=https://api.minimaxi.com/anthropic \
+ODYSSEUS_API_KEY=your-minimax-key \
+ODYSSEUS_MODEL=MiniMax-M2.7 \
 pnpm start
 ```
 
@@ -142,17 +142,17 @@ pnpm start
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `KILLER_LLM_PROVIDER` | 服务商名称（或自动检测） | 自动检测 |
-| `KILLER_API_KEY` | 通用 API key | provider 特定变量 |
-| `KILLER_MODEL` | 模型名称覆盖 | 服务商默认 |
-| `KILLER_BASE_URL` | 自定义 API 端点 | 服务商默认 |
-| `KILLER_API_TOKEN` | API 服务器 Bearer token | 无（不鉴权） |
-| `KILLER_LOG_LEVEL` | 日志级别: debug, info, warn, error, silent | `info` |
-| `KILLER_DEBUG` | 启用调试日志 | `false` |
+| `ODYSSEUS_LLM_PROVIDER` | 服务商名称（或自动检测） | 自动检测 |
+| `ODYSSEUS_API_KEY` | 通用 API key | provider 特定变量 |
+| `ODYSSEUS_MODEL` | 模型名称覆盖 | 服务商默认 |
+| `ODYSSEUS_BASE_URL` | 自定义 API 端点 | 服务商默认 |
+| `ODYSSEUS_API_TOKEN` | API 服务器 Bearer token | 无（不鉴权） |
+| `ODYSSEUS_LOG_LEVEL` | 日志级别: debug, info, warn, error, silent | `info` |
+| `ODYSSEUS_DEBUG` | 启用调试日志 | `false` |
 
 ### 配置层级
 
-CLI 参数 > 环境变量 > `.killer/config.json` > `~/.killer/config.json` > 默认值
+CLI 参数 > 环境变量 > `.odysseus/config.json` > `~/.odysseus/config.json` > 默认值
 
 ## CLI Commands
 
@@ -182,7 +182,7 @@ CLI 参数 > 环境变量 > `.killer/config.json` > `~/.killer/config.json` > �
 /deny        Block a tool
 /confirm     Require confirmation for a tool
 /plugins     Plugin management
-/init        Initialize .killer/ directory
+/init        Initialize .odysseus/ directory
 /save        Save current session
 /load        Load a saved session
 /sessions    List saved sessions
@@ -196,10 +196,10 @@ CLI 参数 > 环境变量 > `.killer/config.json` > `~/.killer/config.json` > �
 
 ```bash
 # Start API server
-node killer.mjs --api --port 3000
+node odysseus.mjs --api --port 3000
 
 # With authentication
-KILLER_API_TOKEN=secret node killer.mjs --api --port 3000
+ODYSSEUS_API_TOKEN=secret node odysseus.mjs --api --port 3000
 ```
 
 ### Endpoints
@@ -254,10 +254,10 @@ docker compose up -d
 DEEPSEEK_API_KEY=sk-xxx docker compose up -d
 
 # 查看日志
-docker compose logs -f killer
+docker compose logs -f odysseus
 ```
 
-Data persists in the `killer-data` Docker volume.
+Data persists in the `odysseus-data` Docker volume.
 
 ## Development
 
@@ -266,7 +266,7 @@ Data persists in the `killer-data` Docker volume.
 pnpm build
 
 # Type-check
-cd packages/killer-app && npx tsc --noEmit
+cd packages/odysseus-app && npx tsc --noEmit
 
 # Run tests
 pnpm test
@@ -275,8 +275,8 @@ pnpm test
 pnpm test:coverage
 
 # Watch mode
-cd packages/killer-app && npx vitest
-cd packages/killer-app && npx tsc --watch
+cd packages/odysseus-app && npx vitest
+cd packages/odysseus-app && npx tsc --watch
 
 # Run with mock provider (no API key needed)
 pnpm run demo
@@ -284,12 +284,12 @@ pnpm run demo
 
 ## Key Design Decisions
 
-1. **Monorepo**: `killer-core` (kernel, no dependencies) + `killer-app` (application layer)
+1. **Monorepo**: `odysseus-core` (kernel, no dependencies) + `odysseus-app` (application layer)
 2. **CellId is an object**: `{ id, type, instance }` — not a plain string
 3. **LLMProvider interface**: `complete()`, `stream()`, `getModel()` — all providers implement this
 4. **ResilientLLMProvider**: Circuit breaker (closed/open/half-open) + exponential backoff retry
 5. **6-layer memory**: Working, Episodic, Semantic, Procedural, Prospective, Dream — with real Ebbinghaus forgetting curve
-6. **Plugin system**: Auto-load from `.killer/plugins/`, register tools and commands
+6. **Plugin system**: Auto-load from `.odysseus/plugins/`, register tools and commands
 7. **Middleware pipeline**: Onion model — input sanitization, PII filtering, logging, metrics
 8. **Emotional engine**: Russell circumplex model (valence/arousal/dominance) with decay and resonance
 9. **Sensory channels**: CLI, Webhook, Telegram, Code (file watcher), Discord (stub) — extensible via `BaseSensoryChannel`

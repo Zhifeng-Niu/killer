@@ -33,7 +33,7 @@ importers:
         specifier: ^1.0.0
         version: 1.6.1(@types/node@20.19.39)
 
-  packages/killer-app:
+  packages/odysseus-app:
     dependencies:
       ink:
         specifier: ^7.0.4
@@ -52,9 +52,9 @@ importers:
         specifier: ^12.9.0
         version: 12.9.0
     devDependencies:
-      '@killer/core':
+      '@odysseus/core':
         specifier: workspace:*
-        version: link:../killer-core
+        version: link:../odysseus-core
       '@types/react':
         specifier: ^19.2.15
         version: 19.2.15
@@ -62,7 +62,7 @@ importers:
         specifier: ^1.0.0
         version: 1.6.1(@types/node@20.19.39)
 
-  packages/killer-core:
+  packages/odysseus-core:
     dependencies:
       better-sqlite3:
         specifier: ^12.9.0

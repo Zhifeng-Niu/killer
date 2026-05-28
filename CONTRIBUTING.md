@@ -1,4 +1,4 @@
-# Contributing to Killer Agent
+# Contributing to Odysseus Agent
 
 Thank you for your interest in contributing! Here's how to get started.
 
@@ -8,8 +8,8 @@ Thank you for your interest in contributing! Here's how to get started.
 
 ```bash
 # Clone and install
-git clone https://github.com/Zhifeng-Niu/killer.git
-cd killer
+git clone https://github.com/Zhifeng-Niu/odysseus.git
+cd odysseus
 pnpm install
 
 # Build
@@ -23,23 +23,23 @@ pnpm test
 
 ```bash
 # Watch mode (TypeScript)
-cd packages/killer-app && npx tsc --watch
+cd packages/odysseus-app && npx tsc --watch
 
 # Watch mode (tests)
-cd packages/killer-app && npx vitest
+cd packages/odysseus-app && npx vitest
 
 # Type-check only
-cd packages/killer-app && npx tsc --noEmit
-cd packages/killer-core && npx tsc --noEmit
+cd packages/odysseus-app && npx tsc --noEmit
+cd packages/odysseus-core && npx tsc --noEmit
 ```
 
 ## Project Structure
 
 ```
-killer/
-├── packages/killer-core/   # Kernel: brainstem, hippocampus, cortex, synapse
-├── packages/killer-app/    # Application: orchestrator, LLM, CLI, API, persona
-├── killer.mjs              # Zero-config entry point
+odysseus/
+├── packages/odysseus-core/   # Kernel: brainstem, hippocampus, cortex, synapse
+├── packages/odysseus-app/    # Application: orchestrator, LLM, CLI, API, persona
+├── odysseus.mjs              # Zero-config entry point
 ├── install.sh              # One-line installer
 └── start.sh                # Docker launcher
 ```

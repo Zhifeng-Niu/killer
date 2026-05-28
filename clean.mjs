@@ -13,10 +13,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const dirs = [
   'node_modules',
-  'packages/killer-core/node_modules',
-  'packages/killer-core/dist',
-  'packages/killer-app/node_modules',
-  'packages/killer-app/dist',
+  'packages/odysseus-core/node_modules',
+  'packages/odysseus-core/dist',
+  'packages/odysseus-app/node_modules',
+  'packages/odysseus-app/dist',
 ];
 
 for (const dir of dirs) {

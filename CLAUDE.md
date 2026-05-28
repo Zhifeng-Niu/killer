@@ -1,11 +1,11 @@
-# Killer Agent Framework
+# Odysseus Agent Framework
 
 An AGI-level autonomous agent framework inspired by Samantha from "Her", built with a Brain+Cell fusion architecture. The system is modeled as a brain made of neuron cells — each cell is an autonomous Agent with its own DNA.
 
 ## Architecture
 
 ```
-@killer/core (kernel)          @killer/app (application)
+@odysseus/core (kernel)          @odysseus/app (application)
 ├── brainstem/loop             ├── orchestrator/
 │   └── Never-stop loop          ├── agent.ts        — Central orchestrator
 │     perceive→reason→act         ├── cells.ts        — Cell lifecycle
@@ -38,11 +38,11 @@ An AGI-level autonomous agent framework inspired by Samantha from "Her", built w
 # Build both packages (cross-platform)
 pnpm build
 
-# Bundle into self-contained CLI (esbuild — inlines @killer/core)
+# Bundle into self-contained CLI (esbuild — inlines @odysseus/core)
 pnpm bundle
 
 # Type-check only
-cd packages/killer-app && npx tsc --noEmit
+cd packages/odysseus-app && npx tsc --noEmit
 
 # Run tests
 pnpm test
@@ -51,17 +51,17 @@ pnpm test
 pnpm run demo           # Demo mode (no API key)
 pnpm start              # Start with TUI (default) + configured provider
 pnpm start -- --cli     # Classic readline mode
-node killer.mjs --init  # Interactive setup wizard
-node packages/killer-app/dist/main.js --api --port 3000
+node odysseus.mjs --init  # Interactive setup wizard
+node packages/odysseus-app/dist/main.js --api --port 3000
 
 # Watch mode
-cd packages/killer-app && npx vitest
-cd packages/killer-app && npx tsc --watch
+cd packages/odysseus-app && npx vitest
+cd packages/odysseus-app && npx tsc --watch
 ```
 
 ## Key Design Decisions
 
-1. **Monorepo**: `killer-core` is the kernel (no dependencies), `killer-app` is the application layer. killer-app imports from `@killer/core` via workspace symlink. No `paths` in tsconfig.
+1. **Monorepo**: `odysseus-core` is the kernel (no dependencies), `odysseus-app` is the application layer. odysseus-app imports from `@odysseus/core` via workspace symlink. No `paths` in tsconfig.
 
 2. **CellId is an object**: `{ id: string; type: CellType; instance: number }` — not a plain string. All cell references use this shape.
 
@@ -69,9 +69,9 @@ cd packages/killer-app && npx tsc --watch
 
 4. **ResilientLLMProvider**: Wraps all non-mock providers in factory.ts with circuit breaker (closed/open/half-open) + exponential backoff retry.
 
-5. **Configuration layering**: CLI args > env vars > project `.killer/config.json` > `~/.killer/config.json` > defaults.
+5. **Configuration layering**: CLI args > env vars > project `.odysseus/config.json` > `~/.odysseus/config.json` > defaults.
 
-6. **Plugin system**: Plugins auto-load from `.killer/plugins/` and `~/.killer/plugins/` during agent boot. They register tools and commands into the agent's execution pipeline.
+6. **Plugin system**: Plugins auto-load from `.odysseus/plugins/` and `~/.odysseus/plugins/` during agent boot. They register tools and commands into the agent's execution pipeline.
 
 7. **Middleware pipeline**: Onion model wrapping `processInput`. Built-in: input sanitization, structured logging, metrics, auth (Bearer token), rate limiting. Extensible: custom middleware.
 
@@ -87,7 +87,7 @@ cd packages/killer-app && npx tsc --watch
 
 13. **Concurrency protection**: `processInput` uses a processing lock + FIFO queue. Concurrent calls are queued, not rejected — no user input is ever lost.
 
-14. **Structured errors**: Custom error hierarchy (`KillerError` → `ValidationError`, `LLMError`, `APIError`, `ToolError`) with `code`, `recoverable`, and `timestamp` fields. Used in resilience layer and API validation responses.
+14. **Structured errors**: Custom error hierarchy (`OdysseusError` → `ValidationError`, `LLMError`, `APIError`, `ToolError`) with `code`, `recoverable`, and `timestamp` fields. Used in resilience layer and API validation responses.
 
 15. **API rate limiting**: Per-IP sliding window (100 req/min). Applied to all endpoints except `/health`. Returns 429 with `retryAfter` when exceeded.
 
@@ -103,13 +103,13 @@ cd packages/killer-app && npx tsc --watch
 
 21. **WebSocket structured commands**: WS connections support `type: 'command'` messages for programmatic agent control. Commands: status, health, goals, memory, persona, emotions, narrative, predictions, skills, cells, metrics, dream, think, evolve. Query commands return synchronously; action commands (dream, think, evolve) execute asynchronously.
 
-22. **Consciousness event type safety**: All event types and sources are declared in `EventType` and `EventSource` unions in `killer-core/src/consciousness/types.ts`. Production code never uses `as never` for event emissions — only for JSON deserialization of hippocampus data. New cognitive events (emotion.update, prediction.update, proactive.suggestion, narrative.update, etc.) are first-class members of the type system.
+22. **Consciousness event type safety**: All event types and sources are declared in `EventType` and `EventSource` unions in `odysseus-core/src/consciousness/types.ts`. Production code never uses `as never` for event emissions — only for JSON deserialization of hippocampus data. New cognitive events (emotion.update, prediction.update, proactive.suggestion, narrative.update, etc.) are first-class members of the type system.
 
 23. **Proactive suggestion humanization**: Background task `generateProactiveSuggestions` uses natural first-person language, not algorithmic patterns. Suggestion templates are randomized, emotional care is warm but non-intrusive, and relationship milestones use genuine-sounding observations. Rate-limited to one suggestion per cycle to avoid spam.
 
 24. **Zero `as any` in production**: Production code has no `as any` type casts. Readline internal history access uses `ReadlineWithHistory` interface. Cell topology uses typed `CellId.id` access. Only `as never` remains for hippocampus JSON deserialization (3 instances).
 
-25. **Dual-protocol provider support**: MiniMax and GLM expose both OpenAI-compatible (`/v1/chat/completions`) and Anthropic-compatible (`/anthropic/v1/messages`) endpoints on the same API key. The factory routes to `AnthropicProvider` or `OpenAICompatibleProvider` based on `config.protocol` (explicit), URL pattern detection (`/anthropic/` → anthropic), or default OpenAI. Set via `KILLER_PROTOCOL` env var. Init wizard offers protocol selection for dual-protocol providers.
+25. **Dual-protocol provider support**: MiniMax and GLM expose both OpenAI-compatible (`/v1/chat/completions`) and Anthropic-compatible (`/anthropic/v1/messages`) endpoints on the same API key. The factory routes to `AnthropicProvider` or `OpenAICompatibleProvider` based on `config.protocol` (explicit), URL pattern detection (`/anthropic/` → anthropic), or default OpenAI. Set via `ODYSSEUS_PROTOCOL` env var. Init wizard offers protocol selection for dual-protocol providers.
 
 26. **Consumer-grade first-run**: When no API key or config exists, `validateConfig()` auto-triggers the init wizard instead of silently falling back to mock mode. After wizard saves config, the system re-loads and connects to the real provider seamlessly.
 
@@ -119,9 +119,9 @@ cd packages/killer-app && npx tsc --watch
 
 29. **TUI viewport awareness**: ChatPanel uses `useStdout()` to get terminal dimensions, estimates message height, trims old messages to keep input area visible. Shows "↑ 还有 N 条更早的消息" truncation indicator.
 
-30. **Self-contained CLI bundle**: `pnpm bundle` uses esbuild to inline `@killer/core` into a single `dist/cli.js` (682KB). External deps: `react`, `ink`, `ink-spinner`, `ink-text-input` (runtime deps), `better-sqlite3` (optional native addon). `@killer/app`'s bin points to `dist/cli.js`. Root `killer.mjs` auto-detects and prefers the bundle. After `npm link`, `killer` command works globally from any directory.
+30. **Self-contained CLI bundle**: `pnpm bundle` uses esbuild to inline `@odysseus/core` into a single `dist/cli.js` (682KB). External deps: `react`, `ink`, `ink-spinner`, `ink-text-input` (runtime deps), `better-sqlite3` (optional native addon). `@odysseus/app`'s bin points to `dist/cli.js`. Root `odysseus.mjs` auto-detects and prefers the bundle. After `npm link`, `odysseus` command works globally from any directory.
 
-31. **npm publishing**: `@killer/app` is the publishable package. `prepublishOnly` runs esbuild bundle. `@killer/core` is a devDependency (only needed for types/tests during development). Users install via `npm i -g @killer/app` or run ad-hoc via `npx @killer/app`. `publishConfig.access: "public"` for scoped package.
+31. **npm publishing**: `@odysseus/app` is the publishable package. `prepublishOnly` runs esbuild bundle. `@odysseus/core` is a devDependency (only needed for types/tests during development). Users install via `npm i -g @odysseus/app` or run ad-hoc via `npx @odysseus/app`. `publishConfig.access: "public"` for scoped package.
 
 ## Code Conventions
 
@@ -137,14 +137,14 @@ cd packages/killer-app && npx tsc --watch
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `KILLER_LLM_PROVIDER` | LLM provider (anthropic/openai/openrouter/gemini/mock + 9 Chinese providers) | anthropic |
-| `KILLER_API_KEY` | API key (or provider-specific env var) | required |
-| `KILLER_MODEL` | Model name override | provider default |
-| `KILLER_BASE_URL` | Custom API endpoint (for openai-compatible) | provider default |
-| `KILLER_PROTOCOL` | Communication protocol: openai \| anthropic (dual-protocol providers) | openai |
-| `KILLER_DEBUG` | Debug logging | false |
-| `KILLER_API_TOKEN` | Bearer token for API auth | none (no auth) |
-| `KILLER_LOG_LEVEL` | Log level (debug/info/warn/error/silent) | info |
+| `ODYSSEUS_LLM_PROVIDER` | LLM provider (anthropic/openai/openrouter/gemini/mock + 9 Chinese providers) | anthropic |
+| `ODYSSEUS_API_KEY` | API key (or provider-specific env var) | required |
+| `ODYSSEUS_MODEL` | Model name override | provider default |
+| `ODYSSEUS_BASE_URL` | Custom API endpoint (for openai-compatible) | provider default |
+| `ODYSSEUS_PROTOCOL` | Communication protocol: openai \| anthropic (dual-protocol providers) | openai |
+| `ODYSSEUS_DEBUG` | Debug logging | false |
+| `ODYSSEUS_API_TOKEN` | Bearer token for API auth | none (no auth) |
+| `ODYSSEUS_LOG_LEVEL` | Log level (debug/info/warn/error/silent) | info |
 
 ## CLI Commands
 
