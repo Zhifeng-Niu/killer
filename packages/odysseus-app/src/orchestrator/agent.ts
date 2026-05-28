@@ -51,6 +51,10 @@ import {
   SelfListTool,
   Cerebellum,
   AutoMissionTool,
+  SelfEvolutionEngine,
+  EvolveAuditTool,
+  EvolveSelfTool,
+  EvolveStatusTool,
   type Experiment,
   type ExperimentDecision,
   type ToolDefinition,
@@ -145,6 +149,7 @@ export class OdysseusAgent implements IDriveSource {
   pluginManager!: PluginManager;
   toolForge!: ToolForge;
   essenceForge!: EssenceForge;
+  evolutionEngine!: SelfEvolutionEngine;
   cerebellum!: Cerebellum;
   readonly hooks: LifecycleHooks = new LifecycleHooks();
   readonly middleware: MiddlewarePipeline = new MiddlewarePipeline();
@@ -1283,6 +1288,21 @@ Examples:
       },
     }));
     this.tools.register(new SelfListTool(projectRoot));
+
+    // SelfEvolutionEngine — autonomous capability improvement loop
+    this.evolutionEngine = new SelfEvolutionEngine({
+      toolForge: this.toolForge,
+      essenceForge: this.essenceForge,
+      tools: this.tools,
+      llm: {
+        complete: async (prompt: string) => {
+          return this.callLLMWithRetry(prompt, '');
+        },
+      },
+    });
+    this.tools.register(new EvolveAuditTool(this.evolutionEngine));
+    this.tools.register(new EvolveSelfTool(this.evolutionEngine));
+    this.tools.register(new EvolveStatusTool(this.evolutionEngine));
 
     // Cerebellum — 实验编排器（自主迭代引擎）+ ShellExecutor 使验证管线能真正执行命令
     const shellExecutor = new ShellExecutor(projectRoot);

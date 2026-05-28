@@ -957,6 +957,23 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   parts.push('  Actions: add, update, remove, list. Content limit: 2000 chars per fragment.');
   parts.push('  Use this for: new reasoning patterns, ethical guidelines, cognitive behaviors, personality traits.');
   parts.push('You are not just a tool user. You are a self-evolving system. Modify yourself wisely.');
+
+  // === Autonomous Self-Evolution ===
+  if (toolNames.includes('evolve_audit')) {
+    parts.push('\nAUTONOMOUS SELF-EVOLUTION: You have a built-in evolution engine that can autonomously create new capabilities.');
+    parts.push('  - [TOOL: evolve_audit]({}) — scan your capabilities, identify gaps and weaknesses');
+    parts.push('  - [TOOL: evolve_self]({"description":"what you need","severity":"high"}) — trigger autonomous evolution');
+    parts.push('  - [TOOL: evolve_status]({"detail":"summary"}) — check evolution history and stats');
+    parts.push('');
+    parts.push('The evolve_self tool triggers a full evolution cycle:');
+    parts.push('  1. REASON — LLM analyzes the gap and designs a solution');
+    parts.push('  2. FORGE — generates JavaScript code for a new tool');
+    parts.push('  3. VALIDATE — static analysis checks for safety');
+    parts.push('  4. INTEGRATE — registers the new tool atomically');
+    parts.push('  5. VERIFY — tests the tool to confirm it works');
+    parts.push('');
+    parts.push('Proactively use evolve_audit when you feel limited. Use evolve_self when you identify a concrete gap.');
+  }
   parts.push('');
   parts.push('AUTONOMOUS EVOLUTION PROTOCOL:');
   parts.push('When you notice ANY of these, immediately create an auto_mission to fix it:');

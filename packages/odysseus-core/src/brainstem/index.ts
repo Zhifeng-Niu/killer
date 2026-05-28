@@ -112,6 +112,28 @@ export type {
   SelfModifyDeps,
 } from './self-modify-tools.js';
 
+// Evolution tools — agent-facing self-evolution API
+export {
+  EvolveAuditTool,
+  EvolveSelfTool,
+  EvolveStatusTool,
+} from './evolution-tools.js';
+
+// Self-Evolution — autonomous capability improvement loop
+export {
+  SelfEvolutionEngine,
+} from './self-evolution-engine.js';
+export type {
+  EvolutionPhase,
+  EvolutionStatus,
+  EvolutionRecord,
+  EvolutionTrigger,
+  CapabilityGap,
+  SelfEvolutionConfig,
+  EvolutionResult,
+  EvolutionLLM,
+} from './self-evolution-engine.js';
+
 // Auto-mission — agent creates autonomous self-improvement missions
 export {
   AutoMissionTool,

@@ -544,8 +544,40 @@ async function handleCommand(input: string, agent: OdysseusAgent): Promise<strin
       return `🧠 ${r.conclusion} (confidence: ${r.confidence.toFixed(2)})`;
     }
     case 'evolve': {
-      const r = await agent.evolve();
-      return `🧬 进化: ${r.mutations} mutations, ${r.successful} successful`;
+      if (args?.trim() === 'audit' || !args?.trim()) {
+        const gaps = agent.evolutionEngine.auditCapabilities();
+        const status = agent.evolutionEngine.getStatus();
+        const lines = [
+          `Self-Evolution Status:`,
+          `  Total evolutions: ${status.totalEvolutions} (${status.successfulEvolutions} ok, ${status.failedEvolutions} failed)`,
+          `  Dynamic tools: ${status.dynamicToolCount}`,
+          `  Capability gaps: ${gaps.length}`,
+        ];
+        for (const g of gaps.slice(0, 5)) {
+          lines.push(`  [${g.severity}] ${g.description}`);
+        }
+        if (gaps.length === 0) lines.push('  No gaps — operating at full capability');
+        return lines.join('\n');
+      }
+      if (args?.trim() === 'self') {
+        const r = await agent.evolve();
+        return `Evolution: ${r.mutations} mutations, ${r.successful} successful`;
+      }
+      if (args?.trim() === 'status') {
+        const s = agent.evolutionEngine.getStatus();
+        const recent = agent.evolutionEngine.getRecentEvolutions(5);
+        const lines = [
+          `Running: ${s.running}`,
+          `Total: ${s.totalEvolutions} | OK: ${s.successfulEvolutions} | Fail: ${s.failedEvolutions}`,
+          `Dynamic tools: ${s.dynamicToolCount}`,
+          recent.length > 0 ? 'Recent:' : 'No evolution history yet',
+        ];
+        for (const r of recent) {
+          lines.push(`  ${r.phase} ${r.status} ${r.toolName ?? ''} (${r.durationMs}ms)`);
+        }
+        return lines.join('\n');
+      }
+      return 'Usage: /evolve [audit|self|status]';
     }
     case 'metrics': {
       const { MetricsCollector } = await import('../metrics/index.js');
