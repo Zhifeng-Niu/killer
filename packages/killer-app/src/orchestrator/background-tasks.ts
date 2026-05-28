@@ -6724,6 +6724,7 @@ const SECTION_BUDGET_WEIGHTS: Record<string, number> = {
   'META-FEEDBACK': 0.03,
   'TOOL CHAIN': 0.04,
   'MOMENTUM': 0.03,
+  'PERSONA CALIBRATION': 0.04,
 };
 
 /** 最小保留预算（字符） */
@@ -7483,6 +7484,140 @@ export function formatMomentumState(state: MomentumState): string {
     `动量: ${dirLabel} (${(state.momentumScore * 100).toFixed(0)}%)`,
     `深度: ${(state.topicDepthDelta * 100).toFixed(0)}% | 密度: ${(state.infoDensity * 100).toFixed(0)}% | 参与: ${(state.engagementScore * 100).toFixed(0)}%`,
     `建议: ${state.paceAdvice}`,
+  ];
+  return lines.join('\n');
+}
+
+/**
+ * 自适应 Persona 校准
+ */
+
+export interface PersonaCalibration {
+  /** 正式度 0-1 (0=casual, 1=formal) */
+  formality: number;
+  /** 详尽度 0-1 (0=concise, 1=verbose) */
+  verbosity: number;
+  /** 共情度 0-1 (0=neutral, 1=high-empathy) */
+  empathy: number;
+  /** 技术深度 0-1 (0=layman, 1=expert) */
+  technicalDepth: number;
+  /** 主动性 0-1 (0=reactive, 1=proactive) */
+  proactivity: number;
+  /** 校准依据 */
+  reasoning: string;
+}
+
+const CALIBRATION_DEFAULTS: PersonaCalibration = {
+  formality: 0.5,
+  verbosity: 0.5,
+  empathy: 0.5,
+  technicalDepth: 0.5,
+  proactivity: 0.5,
+  reasoning: '默认校准',
+};
+
+/**
+ * 根据多维信号校准 persona 表达风格
+ */
+export function calibratePersona(
+  signals: {
+    expertiseLevel?: 'beginner' | 'intermediate' | 'expert';
+    rhythmCadence?: 'rapid_fire' | 'measured' | 'deliberate' | 'burst_pause';
+    emotionalValence?: number;
+    momentumDirection?: 'accelerating' | 'steady' | 'decelerating' | 'stalled';
+    fatigueLevel?: number;
+    correctionScore?: number;
+  },
+): PersonaCalibration {
+  let { formality, verbosity, empathy, technicalDepth, proactivity } = { ...CALIBRATION_DEFAULTS };
+  const reasons: string[] = [];
+
+  // === 技术深度：基于用户专长 ===
+  if (signals.expertiseLevel === 'expert') {
+    technicalDepth = 0.85;
+    formality = 0.4;
+    reasons.push('专家用户→高技术深度+轻松语气');
+  } else if (signals.expertiseLevel === 'beginner') {
+    technicalDepth = 0.25;
+    verbosity = 0.65;
+    reasons.push('初学者→低技术深度+详细解释');
+  }
+
+  // === 详尽度：基于节奏 ===
+  if (signals.rhythmCadence === 'rapid_fire') {
+    verbosity = 0.25;
+    proactivity = 0.7;
+    reasons.push('快节奏→简洁+主动');
+  } else if (signals.rhythmCadence === 'deliberate') {
+    verbosity = 0.7;
+    reasons.push('深思熟虑→详细');
+  }
+
+  // === 共情度：基于情感 ===
+  if (signals.emotionalValence !== undefined) {
+    if (signals.emotionalValence < -0.3) {
+      empathy = 0.8;
+      formality = Math.max(formality, 0.6);
+      reasons.push('负面情绪→高共情+正式');
+    } else if (signals.emotionalValence > 0.5) {
+      empathy = 0.4;
+      formality = 0.3;
+      reasons.push('积极情绪→轻松+友好');
+    }
+  }
+
+  // === 主动性：基于动量 ===
+  if (signals.momentumDirection === 'stalled') {
+    proactivity = 0.8;
+    reasons.push('对话停滞→高主动性');
+  } else if (signals.momentumDirection === 'accelerating') {
+    proactivity = 0.3;
+    reasons.push('加速中→跟随用户');
+  }
+
+  // === 疲劳调节 ===
+  if (signals.fatigueLevel && signals.fatigueLevel > 0.6) {
+    verbosity = Math.min(verbosity, 0.3);
+    technicalDepth = Math.min(technicalDepth, 0.4);
+    reasons.push('认知疲劳→简化响应');
+  }
+
+  // === 校正反馈 ===
+  if (signals.correctionScore !== undefined && signals.correctionScore < 0.5) {
+    verbosity = Math.min(verbosity + 0.1, 0.8);
+    reasons.push('低校正分→增加解释');
+  }
+
+  return {
+    formality: clamp01(formality),
+    verbosity: clamp01(verbosity),
+    empathy: clamp01(empathy),
+    technicalDepth: clamp01(technicalDepth),
+    proactivity: clamp01(proactivity),
+    reasoning: reasons.length > 0 ? reasons.join('、') : '默认校准',
+  };
+}
+
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v));
+}
+
+/**
+ * 格式化 persona 校准为 prompt section
+ */
+export function formatPersonaCalibration(calibration: PersonaCalibration): string {
+  const isDefault = calibration.reasoning === '默认校准';
+  if (isDefault) return '';
+
+  const formalLabel = calibration.formality > 0.6 ? '正式' : calibration.formality < 0.4 ? '轻松' : '适中';
+  const verbLabel = calibration.verbosity > 0.6 ? '详细' : calibration.verbosity < 0.4 ? '简洁' : '适中';
+  const empathLabel = calibration.empathy > 0.6 ? '高共情' : calibration.empathy < 0.4 ? '客观' : '平衡';
+  const techLabel = calibration.technicalDepth > 0.6 ? '技术' : calibration.technicalDepth < 0.4 ? '通俗' : '适中';
+  const proactLabel = calibration.proactivity > 0.6 ? '主动' : calibration.proactivity < 0.4 ? '跟随' : '平衡';
+
+  const lines: string[] = [
+    `语气: ${formalLabel} | 详尽: ${verbLabel} | 共情: ${empathLabel} | 深度: ${techLabel} | 主动: ${proactLabel}`,
+    `依据: ${calibration.reasoning}`,
   ];
   return lines.join('\n');
 }

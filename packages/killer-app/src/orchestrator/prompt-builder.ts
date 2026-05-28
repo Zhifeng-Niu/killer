@@ -145,6 +145,8 @@ export interface PromptBuilderDeps {
   toolChainGuidance?: string;
   /** 对话动量追踪 */
   momentumGuidance?: string;
+  /** Persona 自适应校准 */
+  personaCalibration?: string;
 }
 
 /**
@@ -474,6 +476,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 对话动量追踪 ===
   if (deps.momentumGuidance) {
     parts.push(`\nMOMENTUM — Conversation pacing self-regulation:\n${deps.momentumGuidance}`);
+  }
+
+  // === Persona 自适应校准 ===
+  if (deps.personaCalibration) {
+    parts.push(`\nPERSONA CALIBRATION — Adapt your communication style:\n${deps.personaCalibration}`);
   }
 
   // === 自主行动建议 ===

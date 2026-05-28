@@ -150,6 +150,8 @@ import {
   type ToolPattern,
   analyzeConversationMomentum,
   formatMomentumState,
+  calibratePersona,
+  formatPersonaCalibration,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -4593,6 +4595,73 @@ describe('background-tasks', () => {
       expect(result).toContain('加速');
       expect(result).toContain('50%');
       expect(result).toContain('保持深度');
+    });
+  });
+
+  describe('calibratePersona', () => {
+    it('should return defaults for no signals', () => {
+      const result = calibratePersona({});
+      expect(result.formality).toBe(0.5);
+      expect(result.reasoning).toBe('默认校准');
+    });
+
+    it('should adjust for expert user', () => {
+      const result = calibratePersona({ expertiseLevel: 'expert' });
+      expect(result.technicalDepth).toBeGreaterThan(0.7);
+      expect(result.formality).toBeLessThan(0.5);
+    });
+
+    it('should adjust for beginner user', () => {
+      const result = calibratePersona({ expertiseLevel: 'beginner' });
+      expect(result.technicalDepth).toBeLessThan(0.4);
+      expect(result.verbosity).toBeGreaterThan(0.5);
+    });
+
+    it('should adjust for rapid fire rhythm', () => {
+      const result = calibratePersona({ rhythmCadence: 'rapid_fire' });
+      expect(result.verbosity).toBeLessThan(0.4);
+      expect(result.proactivity).toBeGreaterThan(0.5);
+    });
+
+    it('should adjust for negative emotion', () => {
+      const result = calibratePersona({ emotionalValence: -0.5 });
+      expect(result.empathy).toBeGreaterThan(0.6);
+      expect(result.formality).toBeGreaterThan(0.5);
+    });
+
+    it('should adjust for stalled momentum', () => {
+      const result = calibratePersona({ momentumDirection: 'stalled' });
+      expect(result.proactivity).toBeGreaterThan(0.6);
+    });
+
+    it('should reduce verbosity under fatigue', () => {
+      const result = calibratePersona({ fatigueLevel: 0.8 });
+      expect(result.verbosity).toBeLessThan(0.4);
+    });
+
+    it('should combine multiple signals', () => {
+      const result = calibratePersona({
+        expertiseLevel: 'expert',
+        rhythmCadence: 'rapid_fire',
+        emotionalValence: 0.8,
+      });
+      expect(result.technicalDepth).toBeGreaterThan(0.7);
+      expect(result.verbosity).toBeLessThan(0.5);
+      expect(result.reasoning).toContain('专家');
+    });
+  });
+
+  describe('formatPersonaCalibration', () => {
+    it('should return empty for default calibration', () => {
+      const result = formatPersonaCalibration(calibratePersona({}));
+      expect(result).toBe('');
+    });
+
+    it('should format calibration with labels', () => {
+      const result = formatPersonaCalibration(calibratePersona({ expertiseLevel: 'expert' }));
+      expect(result).toContain('技术');
+      expect(result).toContain('轻松');
+      expect(result).toContain('依据');
     });
   });
 });
