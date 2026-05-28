@@ -6721,6 +6721,7 @@ const SECTION_BUDGET_WEIGHTS: Record<string, number> = {
   'CONVERSATION SUMMARY': 0.05,
   'SELF-CORRECTION': 0.04,
   'NEXT-TURN PREDICTION': 0.03,
+  'META-FEEDBACK': 0.03,
 };
 
 /** 最小保留预算（字符） */
@@ -7040,5 +7041,164 @@ export function formatNextTurnPrediction(prediction: NextTurnPrediction): string
     lines.push(`建议准备: ${prediction.preparations.join('、')}`);
   }
   lines.push(`依据: ${prediction.reasoning}`);
+  return lines.join('\n');
+}
+
+/**
+ * 跨模块认知反馈分析
+ */
+
+/** 模块间交互记录 */
+export interface ModuleInteraction {
+  sourceModule: string;
+  targetModule: string;
+  interactionType: 'amplify' | 'suppress' | 'trigger' | 'conflict';
+  strength: number;
+  timestamp: number;
+}
+
+/** 反馈分析结果 */
+export interface CognitiveFeedbackAnalysis {
+  /** 活跃交互链 */
+  interactionChains: string[];
+  /** 冲突的模块对 */
+  conflicts: string[];
+  /** 协同的模块对 */
+  synergies: string[];
+  /** 优化建议 */
+  recommendations: string[];
+  /** 整体认知健康度 0-1 */
+  cognitiveHealth: number;
+}
+
+// 模块间已知交互规则
+const MODULE_INTERACTIONS: Array<{
+  source: string;
+  target: string;
+  type: 'amplify' | 'suppress' | 'trigger' | 'conflict';
+  condition: string;
+}> = [
+  { source: 'fatigue', target: 'prediction', type: 'suppress', condition: 'high_fatigue' },
+  { source: 'fatigue', target: 'timing', type: 'amplify', condition: 'high_fatigue' },
+  { source: 'rhythm', target: 'style', type: 'amplify', condition: 'rapid_fire' },
+  { source: 'rhythm', target: 'length', type: 'suppress', condition: 'rapid_fire' },
+  { source: 'emotion', target: 'strategy', type: 'amplify', condition: 'high_arousal' },
+  { source: 'expertise', target: 'timing', type: 'amplify', condition: 'expert' },
+  { source: 'expertise', target: 'style', type: 'suppress', condition: 'beginner' },
+  { source: 'health', target: 'prediction', type: 'suppress', condition: 'low_health' },
+  { source: 'flow', target: 'prediction', type: 'amplify', condition: 'strong_pattern' },
+  { source: 'correction', target: 'style', type: 'trigger', condition: 'issues_found' },
+  { source: 'correction', target: 'timing', type: 'suppress', condition: 'low_score' },
+  { source: 'knowledge', target: 'prediction', type: 'amplify', condition: 'rich_graph' },
+  { source: 'budget', target: 'prediction', type: 'suppress', condition: 'tight_budget' },
+];
+
+/**
+ * 分析跨模块认知反馈
+ */
+export function analyzeCrossModuleFeedback(
+  activeModules: Record<string, { active: boolean; state?: string; score?: number }>,
+): CognitiveFeedbackAnalysis {
+  const interactionChains: string[] = [];
+  const conflicts: string[] = [];
+  const synergies: string[] = [];
+  const recommendations: string[] = [];
+
+  // 检测活跃的模块间交互
+  for (const rule of MODULE_INTERACTIONS) {
+    const sourceActive = activeModules[rule.source]?.active;
+    const targetActive = activeModules[rule.target]?.active;
+    if (!sourceActive || !targetActive) continue;
+
+    const sourceState = activeModules[rule.source].state ?? '';
+    const sourceScore = activeModules[rule.source].score ?? 0.5;
+
+    // 检查条件是否满足
+    const conditionMet = checkCondition(rule.condition, sourceState, sourceScore);
+    if (!conditionMet) continue;
+
+    const label = `${rule.source} → ${rule.target} (${rule.type})`;
+
+    if (rule.type === 'conflict') {
+      conflicts.push(label);
+    } else if (rule.type === 'amplify' || rule.type === 'trigger') {
+      synergies.push(label);
+    }
+
+    interactionChains.push(label);
+  }
+
+  // 检测冲突模块对
+  const fatigueHigh = activeModules.fatigue?.score ?? 0 > 0.6;
+  const healthLow = (activeModules.health?.score ?? 1) < 0.5;
+  if (fatigueHigh && healthLow) {
+    conflicts.push('fatigue + health: 双重压力降低响应质量');
+  }
+
+  const rhythmRapid = activeModules.rhythm?.state === 'rapid_fire';
+  const timingDeep = activeModules.timing?.state === 'deep-research';
+  if (rhythmRapid && timingDeep) {
+    conflicts.push('rhythm + timing: 快节奏与深度研究冲突');
+    recommendations.push('快速模式下建议降低研究深度');
+  }
+
+  // 计算认知健康度
+  const activeCount = Object.values(activeModules).filter(m => m.active).length;
+  const conflictRatio = conflicts.length / Math.max(1, interactionChains.length);
+  const synergyRatio = synergies.length / Math.max(1, interactionChains.length);
+  const cognitiveHealth = Math.max(0, Math.min(1,
+    0.5 + synergyRatio * 0.3 - conflictRatio * 0.4 + Math.min(activeCount / 10, 0.2),
+  ));
+
+  // 生成优化建议
+  if (fatigueHigh) recommendations.push('检测到认知疲劳，建议简化响应');
+  if (conflictRatio > 0.3) recommendations.push('模块冲突率过高，建议降低低优先级模块灵敏度');
+  if (activeCount > 15) recommendations.push('活跃模块过多，建议关闭低效用模块');
+
+  return {
+    interactionChains,
+    conflicts,
+    synergies,
+    recommendations,
+    cognitiveHealth,
+  };
+}
+
+function checkCondition(condition: string, state: string, score: number): boolean {
+  switch (condition) {
+    case 'high_fatigue': return score > 0.6;
+    case 'rapid_fire': return state === 'rapid_fire';
+    case 'high_arousal': return score > 0.7;
+    case 'expert': return state === 'expert';
+    case 'beginner': return state === 'beginner';
+    case 'low_health': return score < 0.5;
+    case 'strong_pattern': return score > 0.6;
+    case 'issues_found': return score < 0.7;
+    case 'low_score': return score < 0.5;
+    case 'rich_graph': return score > 0.3;
+    case 'tight_budget': return score > 0.8;
+    default: return false;
+  }
+}
+
+/**
+ * 格式化跨模块反馈分析为 prompt section
+ */
+export function formatCognitiveFeedback(analysis: CognitiveFeedbackAnalysis): string {
+  if (analysis.interactionChains.length === 0) return '';
+
+  const lines: string[] = [];
+  lines.push(`认知健康度: ${(analysis.cognitiveHealth * 100).toFixed(0)}%`);
+
+  if (analysis.synergies.length > 0) {
+    lines.push(`协同: ${analysis.synergies.slice(0, 3).join('、')}`);
+  }
+  if (analysis.conflicts.length > 0) {
+    lines.push(`冲突: ${analysis.conflicts.slice(0, 3).join('、')}`);
+  }
+  if (analysis.recommendations.length > 0) {
+    lines.push(`建议: ${analysis.recommendations.join('、')}`);
+  }
+
   return lines.join('\n');
 }

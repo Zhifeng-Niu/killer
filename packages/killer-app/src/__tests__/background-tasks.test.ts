@@ -143,6 +143,8 @@ import {
   pruneByBudget,
   predictNextIntent,
   formatNextTurnPrediction,
+  analyzeCrossModuleFeedback,
+  formatCognitiveFeedback,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -4340,6 +4342,97 @@ describe('background-tasks', () => {
       expect(result).toContain('debug');
       expect(result).toContain('70%');
       expect(result).toContain('预加载错误模式');
+    });
+  });
+
+  describe('analyzeCrossModuleFeedback', () => {
+    it('should return empty when no modules are active', () => {
+      const result = analyzeCrossModuleFeedback({});
+      expect(result.interactionChains).toHaveLength(0);
+      expect(result.cognitiveHealth).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should detect synergy between active modules', () => {
+      const result = analyzeCrossModuleFeedback({
+        flow: { active: true, state: 'detected', score: 0.8 },
+        prediction: { active: true, score: 0.5 },
+      });
+      expect(result.synergies.length).toBeGreaterThan(0);
+      expect(result.synergies[0]).toContain('flow → prediction');
+    });
+
+    it('should detect fatigue-prediction suppression', () => {
+      const result = analyzeCrossModuleFeedback({
+        fatigue: { active: true, score: 0.8 },
+        prediction: { active: true, score: 0.5 },
+      });
+      expect(result.interactionChains).toContain('fatigue → prediction (suppress)');
+    });
+
+    it('should detect rhythm-style conflicts', () => {
+      const result = analyzeCrossModuleFeedback({
+        rhythm: { active: true, state: 'rapid_fire' },
+        timing: { active: true, state: 'deep-research' },
+      });
+      expect(result.conflicts).toContain('rhythm + timing: 快节奏与深度研究冲突');
+    });
+
+    it('should generate recommendations for high fatigue', () => {
+      const result = analyzeCrossModuleFeedback({
+        fatigue: { active: true, score: 0.8 },
+        prediction: { active: true, score: 0.5 },
+      });
+      expect(result.recommendations.some(r => r.includes('疲劳'))).toBe(true);
+    });
+
+    it('should calculate cognitive health score', () => {
+      const result = analyzeCrossModuleFeedback({
+        flow: { active: true, state: 'detected', score: 0.7 },
+        prediction: { active: true, score: 0.5 },
+        style: { active: true, score: 0.6 },
+      });
+      expect(result.cognitiveHealth).toBeGreaterThanOrEqual(0);
+      expect(result.cognitiveHealth).toBeLessThanOrEqual(1);
+    });
+
+    it('should lower health when many conflicts exist', () => {
+      const highConflict = analyzeCrossModuleFeedback({
+        fatigue: { active: true, score: 0.9 },
+        health: { active: true, score: 0.3 },
+        prediction: { active: true, score: 0.5 },
+      });
+      const noConflict = analyzeCrossModuleFeedback({
+        flow: { active: true, state: 'detected', score: 0.8 },
+        prediction: { active: true, score: 0.5 },
+      });
+      expect(highConflict.cognitiveHealth).toBeLessThan(noConflict.cognitiveHealth);
+    });
+  });
+
+  describe('formatCognitiveFeedback', () => {
+    it('should return empty for no interactions', () => {
+      const result = formatCognitiveFeedback({
+        interactionChains: [],
+        conflicts: [],
+        synergies: [],
+        recommendations: [],
+        cognitiveHealth: 0.8,
+      });
+      expect(result).toBe('');
+    });
+
+    it('should format synergies and conflicts', () => {
+      const result = formatCognitiveFeedback({
+        interactionChains: ['flow → prediction (amplify)'],
+        conflicts: ['fatigue + health: 双重压力'],
+        synergies: ['flow → prediction (amplify)'],
+        recommendations: ['建议简化响应'],
+        cognitiveHealth: 0.65,
+      });
+      expect(result).toContain('65%');
+      expect(result).toContain('协同');
+      expect(result).toContain('冲突');
+      expect(result).toContain('建议');
     });
   });
 });

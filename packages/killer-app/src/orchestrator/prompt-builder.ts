@@ -139,6 +139,8 @@ export interface PromptBuilderDeps {
   prunedPrompt?: string;
   /** 下一轮意图预测 */
   nextTurnPrediction?: string;
+  /** 跨模块认知反馈 */
+  cognitiveFeedback?: string;
 }
 
 /**
@@ -453,6 +455,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 下一轮意图预测 ===
   if (deps.nextTurnPrediction) {
     parts.push(`\nNEXT-TURN PREDICTION — Anticipate user's next move:\n${deps.nextTurnPrediction}`);
+  }
+
+  // === 跨模块认知反馈 ===
+  if (deps.cognitiveFeedback) {
+    parts.push(`\nMETA-FEEDBACK — Cognitive architecture self-awareness:\n${deps.cognitiveFeedback}`);
   }
 
   // === 自主行动建议 ===
