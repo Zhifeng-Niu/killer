@@ -259,6 +259,79 @@ export class Planner {
   }
 
   /**
+   * 评估计划质量 (0-1)
+   */
+  scorePlan(plan: Plan): { score: number; issues: string[] } {
+    const issues: string[] = [];
+    let score = 1.0;
+
+    // 1. 步骤数量（2-8 是理想范围）
+    const stepCount = plan.steps.length;
+    if (stepCount < 2) {
+      issues.push('Only 1 step — plan is trivial');
+      score -= 0.3;
+    } else if (stepCount > 10) {
+      issues.push(`${stepCount} steps — plan may be too granular`);
+      score -= 0.1;
+    }
+
+    // 2. 步骤描述重复检测
+    const descriptions = plan.steps.map(s => s.description.toLowerCase());
+    for (let i = 0; i < descriptions.length; i++) {
+      for (let j = i + 1; j < descriptions.length; j++) {
+        if (descriptions[i] === descriptions[j]) {
+          issues.push(`Duplicate step: "${plan.steps[i].description}"`);
+          score -= 0.2;
+        }
+      }
+    }
+
+    // 3. 依赖无环检测
+    const visited = new Set<string>();
+    const inStack = new Set<string>();
+    const hasCycle = (stepId: string): boolean => {
+      if (inStack.has(stepId)) return true;
+      if (visited.has(stepId)) return false;
+      visited.add(stepId);
+      inStack.add(stepId);
+      const step = plan.steps.find(s => s.id === stepId);
+      if (step) {
+        for (const depId of step.dependencies) {
+          if (hasCycle(depId)) return true;
+        }
+      }
+      inStack.delete(stepId);
+      return false;
+    };
+    for (const step of plan.steps) {
+      if (hasCycle(step.id)) {
+        issues.push('Circular dependency detected');
+        score -= 0.4;
+        break;
+      }
+    }
+
+    // 4. 有无根步骤（无依赖的起始步骤）
+    const rootSteps = plan.steps.filter(s => s.dependencies.length === 0);
+    if (rootSteps.length === 0) {
+      issues.push('No root step (all steps have dependencies)');
+      score -= 0.3;
+    }
+
+    // 5. 步骤描述具体度
+    const vagueSteps = plan.steps.filter(s =>
+      s.description.length < 10 ||
+      /^(step|do|handle|process|work)\b/i.test(s.description)
+    );
+    if (vagueSteps.length > 0) {
+      issues.push(`${vagueSteps.length} vague step(s): "${vagueSteps[0].description.slice(0, 30)}"`);
+      score -= 0.1 * vagueSteps.length;
+    }
+
+    return { score: Math.max(0, Math.min(1, score)), issues };
+  }
+
+  /**
    * 更新步骤状态
    */
   updateStepStatus(

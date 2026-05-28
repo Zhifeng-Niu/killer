@@ -101,7 +101,8 @@ export type EventType =
   | 'goal.created'
   | 'goal.completed'
   | 'execution.progress'
-  | 'execution.log';
+  | 'execution.log'
+  | 'plan.created';
 
 /**
  * 轨迹记录

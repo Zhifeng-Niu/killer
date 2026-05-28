@@ -659,13 +659,26 @@ export class KillerAgent {
       const plan = await this.planExecutor.submitGoal(goal);
       this.updatePrefrontalStatus();
 
+      // 评估计划质量
+      const quality = this.planExecutor.scorePlan(plan.id);
+      if (quality.score < 0.5) {
+        this.logger.warn(`Plan quality low (${quality.score.toFixed(2)}): ${quality.issues.join('; ')}`);
+      }
+
       this.hooks.emit('goal:created', { goalId: goal.id, description }).catch(() => {});
       MetricsCollector.getInstance().goalsCreated.inc();
 
       this.consciousness.emit({
-        type: 'external.user_message',
-        source: 'external',
-        data: { goal, plan },
+        type: 'plan.created',
+        source: 'prefrontal',
+        data: {
+          goalId: goal.id,
+          description,
+          stepCount: plan.steps.length,
+          quality: quality.score,
+          issues: quality.issues,
+          steps: plan.steps.map(s => s.description),
+        },
       });
 
       return goal;

@@ -82,6 +82,17 @@ export class PlanExecutor {
   }
 
   /**
+   * 评估计划质量
+   */
+  scorePlan(planId: string): { score: number; issues: string[] } {
+    const plan = this.plans.get(planId);
+    if (!plan) {
+      return { score: 0, issues: ['Plan not found'] };
+    }
+    return this.planner.scorePlan(plan);
+  }
+
+  /**
    * 获取下一个要执行的行动
    */
   getNextAction(planId: string): PlanStep | null {
