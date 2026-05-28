@@ -2876,6 +2876,7 @@ export function scoreSectionRelevance(
     'LEARNED LESSONS': 0.6,
     'RHYTHM ADAPTATION': 0.55,
     'INTENT DECOMPOSITION': 0.7,
+    'SEMANTIC NETWORK': 0.6,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -5634,6 +5635,327 @@ export function formatIntentDecomposition(decomposition: IntentDecomposition): s
   for (const si of decomposition.subIntents) {
     const deps = si.dependsOn.length > 0 ? ` (after: #${si.dependsOn.join(', #')})` : '';
     parts.push(`#${si.priority} [${si.type}] ${si.description.slice(0, 60)}${deps}`);
+  }
+
+  return parts.join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Waypoint 86: Semantic Memory Network — 主动知识获取与概念网络
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 概念类型层级
+ */
+export type ConceptType = 'technology' | 'pattern' | 'domain' | 'resource' | 'problem' | 'solution' | 'metric';
+
+/**
+ * 语义关系类型
+ */
+export type SemanticRelationType =
+  | 'is-a' | 'part-of' | 'depends-on' | 'causes' | 'solves'
+  | 'related-to' | 'alternative-to' | 'precedes' | 'produces';
+
+/**
+ * 语义概念节点
+ */
+export interface SemanticConcept {
+  name: string;
+  type: ConceptType;
+  /** 概念的简短描述 */
+  definition: string;
+  /** 首次出现的上下文片段 */
+  firstContext: string;
+  /** 出现次数 */
+  mentions: number;
+  /** 首次提及时间 */
+  firstMentioned: number;
+  /** 是否为孤立节点（无关系连接） */
+  isolated: boolean;
+}
+
+/**
+ * 语义关系边
+ */
+export interface SemanticRelation {
+  from: string;
+  to: string;
+  relation: SemanticRelationType;
+  /** 0-1 置信度 */
+  confidence: number;
+  /** 推断来源: 'explicit'(用户说) | 'inferred'(推断) */
+  source: 'explicit' | 'inferred';
+}
+
+/**
+ * 语义记忆网络
+ */
+export interface SemanticMemoryNetwork {
+  concepts: Map<string, SemanticConcept>;
+  relations: SemanticRelation[];
+  /** 待补全的孤立节点（可主动提问） */
+  pendingClarifications: Array<{ concept: string; question: string }>;
+}
+
+/**
+ * 概念提取模式
+ */
+const CONCEPT_PATTERNS: Array<{ pattern: RegExp; type: ConceptType }> = [
+  { pattern: /(?:使用|用的是|基于|用到了?)\s*([A-Z][A-Za-z0-9_.\-]+(?:\.js|\.ts|\.py)?)/g, type: 'technology' },
+  { pattern: /(?:框架|库|工具|引擎|平台)\s*[:：]\s*(\S+)/g, type: 'technology' },
+  { pattern: /(?:设计模式|架构|方案|范式)\s*[:：]\s*(\S+)/g, type: 'pattern' },
+  { pattern: /(?:问题是|导致了|引起了|报错|异常)\s*[:：]?\s*(.{3,40}?)(?:\.|,|，|。|$)/g, type: 'problem' },
+  { pattern: /(?:解决方案|修好了|解决了|用.*解决)\s*[:：]?\s*(.{3,40}?)(?:\.|,|，|。|$)/g, type: 'solution' },
+];
+
+/**
+ * 关系提取模式
+ */
+const SEMANTIC_RELATION_PATTERNS: Array<{ pattern: RegExp; relation: SemanticRelationType }> = [
+  { pattern: /(\S+)\s*(?:是一种|是个|就是)\s*(\S+)/, relation: 'is-a' },
+  { pattern: /(\S+)\s*(?:的一部分|包含在|属于)\s*(\S+)/, relation: 'part-of' },
+  { pattern: /(\S+)\s*(?:依赖|需要|基于)\s*(\S+)/, relation: 'depends-on' },
+  { pattern: /(\S+)\s*(?:导致|引起|触发)\s*(\S+)/, relation: 'causes' },
+  { pattern: /(\S+)\s*(?:解决|修复|处理)\s*(\S+)/, relation: 'solves' },
+  { pattern: /(\S+)\s*(?:替代|取代|代替)\s*(\S+)/, relation: 'alternative-to' },
+  { pattern: /(\S+)\s*(?:先于|在.*之前|之后才是)\s*(\S+)/, relation: 'precedes' },
+  { pattern: /(\S+)\s*(?:产生|生成|输出)\s*(\S+)/, relation: 'produces' },
+];
+
+/**
+ * 创建空的语义记忆网络
+ */
+export function createEmptySemanticNetwork(): SemanticMemoryNetwork {
+  return {
+    concepts: new Map(),
+    relations: [],
+    pendingClarifications: [],
+  };
+}
+
+/**
+ * 从消息中提取语义概念
+ */
+export function extractConceptsFromMessage(
+  message: string,
+  network: SemanticMemoryNetwork,
+): SemanticConcept[] {
+  const extracted: SemanticConcept[] = [];
+  const now = Date.now();
+
+  for (const { pattern, type } of CONCEPT_PATTERNS) {
+    const regex = new RegExp(pattern.source, pattern.flags);
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(message)) !== null) {
+      const name = match[1].trim();
+      if (name.length < 2 || name.length > 60) continue;
+
+      const existing = network.concepts.get(name);
+      if (existing) {
+        existing.mentions++;
+        existing.isolated = false;
+        extracted.push(existing);
+      } else {
+        const concept: SemanticConcept = {
+          name,
+          type,
+          definition: '',
+          firstContext: message.slice(Math.max(0, match.index - 20), match.index + match[0].length + 20),
+          mentions: 1,
+          firstMentioned: now,
+          isolated: true,
+        };
+        network.concepts.set(name, concept);
+        extracted.push(concept);
+      }
+    }
+  }
+
+  return extracted;
+}
+
+/**
+ * 从消息中提取语义关系
+ */
+export function extractSemanticRelations(
+  message: string,
+  network: SemanticMemoryNetwork,
+): SemanticRelation[] {
+  const extracted: SemanticRelation[] = [];
+
+  for (const { pattern, relation } of SEMANTIC_RELATION_PATTERNS) {
+    const match = pattern.exec(message);
+    if (!match) continue;
+
+    const from = match[1].trim();
+    const to = match[2].trim();
+
+    if (from === to || from.length < 2 || to.length < 2) continue;
+
+    const alreadyExists = network.relations.some(
+      r => r.from === from && r.to === to && r.relation === relation,
+    );
+
+    if (!alreadyExists) {
+      if (!network.concepts.has(from)) {
+        network.concepts.set(from, {
+          name: from, type: 'technology', definition: '',
+          firstContext: message.slice(0, 60), mentions: 1, firstMentioned: Date.now(), isolated: false,
+        });
+      }
+      if (!network.concepts.has(to)) {
+        network.concepts.set(to, {
+          name: to, type: 'technology', definition: '',
+          firstContext: message.slice(0, 60), mentions: 1, firstMentioned: Date.now(), isolated: false,
+        });
+      }
+
+      const fromConcept = network.concepts.get(from)!;
+      const toConcept = network.concepts.get(to)!;
+      fromConcept.isolated = false;
+      toConcept.isolated = false;
+
+      const rel: SemanticRelation = {
+        from, to, relation, confidence: 0.8, source: 'explicit',
+      };
+      network.relations.push(rel);
+      extracted.push(rel);
+    }
+  }
+
+  return extracted;
+}
+
+/**
+ * 检测孤立节点并生成补全问题
+ */
+export function detectIsolatedConcepts(
+  network: SemanticMemoryNetwork,
+  maxQuestions: number = 3,
+): Array<{ concept: string; question: string }> {
+  const questions: Array<{ concept: string; question: string }> = [];
+  const connected = new Set<string>();
+
+  for (const rel of network.relations) {
+    connected.add(rel.from);
+    connected.add(rel.to);
+  }
+
+  for (const [name, concept] of network.concepts) {
+    if (connected.has(name)) continue;
+    if (concept.mentions < 2) continue;
+    if (questions.length >= maxQuestions) break;
+
+    const typeLabel: Record<ConceptType, string> = {
+      technology: '技术', pattern: '模式', domain: '领域',
+      resource: '资源', problem: '问题', solution: '方案', metric: '指标',
+    };
+
+    questions.push({
+      concept: name,
+      question: `你提到的${typeLabel[concept.type] ?? '概念'}"${name}"——它和你之前讨论的内容有什么关系？`,
+    });
+  }
+
+  network.pendingClarifications = questions;
+  return questions;
+}
+
+/**
+ * 推断隐式关系（基于共现和类型）
+ */
+export function inferImplicitRelations(network: SemanticMemoryNetwork): SemanticRelation[] {
+  const inferred: SemanticRelation[] = [];
+  const conceptNames = Array.from(network.concepts.keys());
+  const relationMap = new Set(
+    network.relations.map(r => `${r.from}->${r.to}:${r.relation}`),
+  );
+
+  for (let i = 0; i < conceptNames.length; i++) {
+    const a = network.concepts.get(conceptNames[i])!;
+
+    // Technology co-occurrence → related-to
+    if (a.type === 'technology') {
+      for (let j = i + 1; j < conceptNames.length; j++) {
+        const b = network.concepts.get(conceptNames[j])!;
+        if (b.type !== 'technology') continue;
+
+        const key = `${a.name}->${b.name}:related-to`;
+        if (relationMap.has(key)) continue;
+
+        if (a.firstContext.includes(b.name) || b.firstContext.includes(a.name)) {
+          const rel: SemanticRelation = {
+            from: a.name, to: b.name, relation: 'related-to',
+            confidence: 0.5, source: 'inferred',
+          };
+          network.relations.push(rel);
+          inferred.push(rel);
+          relationMap.add(key);
+          a.isolated = false;
+          b.isolated = false;
+        }
+      }
+    }
+
+    // Problem + Solution co-occurrence → solves
+    if (a.type === 'problem') {
+      for (const bName of conceptNames) {
+        const b = network.concepts.get(bName)!;
+        if (b.type !== 'solution') continue;
+        const key = `${b.name}->${a.name}:solves`;
+        if (relationMap.has(key)) continue;
+        if (a.firstContext.includes(b.name) || b.firstContext.includes(a.name)) {
+          const rel: SemanticRelation = {
+            from: b.name, to: a.name, relation: 'solves',
+            confidence: 0.4, source: 'inferred',
+          };
+          network.relations.push(rel);
+          inferred.push(rel);
+          relationMap.add(key);
+          a.isolated = false;
+          b.isolated = false;
+        }
+      }
+    }
+  }
+
+  return inferred;
+}
+
+/**
+ * 格式化语义网络摘要（用于 prompt 注入）
+ */
+export function formatSemanticNetworkSummary(network: SemanticMemoryNetwork): string {
+  if (network.concepts.size === 0) return '';
+
+  const parts: string[] = [];
+
+  const topConcepts = Array.from(network.concepts.values())
+    .sort((a, b) => b.mentions - a.mentions)
+    .slice(0, 10);
+
+  if (topConcepts.length > 0) {
+    parts.push('核心概念:');
+    for (const c of topConcepts) {
+      const marker = c.isolated ? ' [孤立]' : '';
+      parts.push(`  ${c.name} (${c.type}, ${c.mentions}次${marker})`);
+    }
+  }
+
+  const explicitRels = network.relations.filter(r => r.confidence >= 0.6);
+  if (explicitRels.length > 0) {
+    parts.push('概念关系:');
+    for (const r of explicitRels.slice(0, 8)) {
+      const conf = r.source === 'inferred' ? ` (${(r.confidence * 100).toFixed(0)}%推断)` : '';
+      parts.push(`  ${r.from} —[${r.relation}]→ ${r.to}${conf}`);
+    }
+  }
+
+  if (network.pendingClarifications.length > 0) {
+    parts.push('待澄清:');
+    for (const q of network.pendingClarifications) {
+      parts.push(`  ${q.question}`);
+    }
   }
 
   return parts.join('\n');

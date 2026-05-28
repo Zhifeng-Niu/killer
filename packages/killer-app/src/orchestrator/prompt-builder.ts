@@ -127,6 +127,8 @@ export interface PromptBuilderDeps {
   rhythmGuidance?: string;
   /** 意图分解指导 */
   intentDecomposition?: string;
+  /** 语义记忆网络摘要 */
+  semanticNetworkGuidance?: string;
 }
 
 /**
@@ -416,6 +418,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 意图分解 ===
   if (deps.intentDecomposition) {
     parts.push(`\nINTENT DECOMPOSITION — Complex multi-intent detected:\n${deps.intentDecomposition}`);
+  }
+
+  // === 语义记忆网络 ===
+  if (deps.semanticNetworkGuidance) {
+    parts.push(`\nSEMANTIC NETWORK — Knowledge concepts and relations:\n${deps.semanticNetworkGuidance}`);
   }
 
   // === 自主行动建议 ===

@@ -74,6 +74,7 @@ export interface SessionSnapshot {
       sectionWeights?: { offsets: Record<string, number>; lastActiveSections: string[]; updates: number };
       knowledgeGraph?: { entities: Array<[string, { name: string; type: string; mentions: number; firstMentioned: number }]>; relations: Array<{ from: string; to: string; relation: string; confidence: number }> };
       rhythmProfile?: { avgIntervalSec: number; avgMessageLength: number; cadence: string; suggestedResponseStyle: string; suggestedWaitStrategy: string };
+      semanticNetwork?: { concepts: Array<[string, { name: string; type: string; definition: string; firstContext: string; mentions: number; firstMentioned: number; isolated: boolean }]>; relations: Array<{ from: string; to: string; relation: string; confidence: number; source: string }> };
       turnCounter?: number;
     };
   };

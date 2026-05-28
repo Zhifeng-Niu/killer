@@ -119,6 +119,12 @@ import {
   computeExecutionOrder,
   detectDependencies,
   type SubIntent,
+  createEmptySemanticNetwork,
+  extractConceptsFromMessage,
+  extractSemanticRelations,
+  detectIsolatedConcepts,
+  inferImplicitRelations,
+  formatSemanticNetworkSummary,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -3807,6 +3813,96 @@ describe('background-tasks', () => {
     it('should return undefined for single intent formatting', () => {
       const result = decomposeIntent('simple question?');
       expect(formatIntentDecomposition(result)).toBeUndefined();
+    });
+  });
+
+  describe('Semantic Memory Network', () => {
+    it('should create empty network', () => {
+      const network = createEmptySemanticNetwork();
+      expect(network.concepts.size).toBe(0);
+      expect(network.relations.length).toBe(0);
+      expect(network.pendingClarifications.length).toBe(0);
+    });
+
+    it('should extract technology concepts from message', () => {
+      const network = createEmptySemanticNetwork();
+      const concepts = extractConceptsFromMessage('我们使用 React 作为前端框架，后端用的是 Express', network);
+      expect(concepts.length).toBeGreaterThanOrEqual(1);
+      expect(network.concepts.has('React')).toBe(true);
+    });
+
+    it('should increment mention count on repeated concepts', () => {
+      const network = createEmptySemanticNetwork();
+      extractConceptsFromMessage('基于 React 开发', network);
+      extractConceptsFromMessage('基于 React 开发', network);
+      expect(network.concepts.get('React')?.mentions).toBe(2);
+    });
+
+    it('should extract semantic relations from message', () => {
+      const network = createEmptySemanticNetwork();
+      const rels = extractSemanticRelations('React 是一种 JavaScript框架', network);
+      expect(rels.length).toBe(1);
+      expect(rels[0].relation).toBe('is-a');
+      expect(rels[0].source).toBe('explicit');
+    });
+
+    it('should not add duplicate relations', () => {
+      const network = createEmptySemanticNetwork();
+      extractSemanticRelations('React 是一种 JavaScript框架', network);
+      extractSemanticRelations('React 是一种 JavaScript框架', network);
+      expect(network.relations.length).toBe(1);
+    });
+
+    it('should detect isolated concepts and generate questions', () => {
+      const network = createEmptySemanticNetwork();
+      // Add concepts with enough mentions but no relations
+      network.concepts.set('Kotlin', {
+        name: 'Kotlin', type: 'technology', definition: '',
+        firstContext: '使用 Kotlin 开发', mentions: 3, firstMentioned: Date.now(), isolated: true,
+      });
+      const questions = detectIsolatedConcepts(network);
+      expect(questions.length).toBeGreaterThanOrEqual(1);
+      expect(questions[0].concept).toBe('Kotlin');
+      expect(questions[0].question).toContain('Kotlin');
+    });
+
+    it('should not generate questions for low-mention isolated concepts', () => {
+      const network = createEmptySemanticNetwork();
+      network.concepts.set('X', {
+        name: 'X', type: 'technology', definition: '',
+        firstContext: 'use X', mentions: 1, firstMentioned: Date.now(), isolated: true,
+      });
+      const questions = detectIsolatedConcepts(network);
+      expect(questions.length).toBe(0);
+    });
+
+    it('should infer implicit relations from co-occurrence', () => {
+      const network = createEmptySemanticNetwork();
+      network.concepts.set('React', {
+        name: 'React', type: 'technology', definition: '',
+        firstContext: '使用 React 和 Redux 开发应用', mentions: 2, firstMentioned: Date.now(), isolated: true,
+      });
+      network.concepts.set('Redux', {
+        name: 'Redux', type: 'technology', definition: '',
+        firstContext: 'React 和 Redux 配合使用', mentions: 2, firstMentioned: Date.now(), isolated: true,
+      });
+      const inferred = inferImplicitRelations(network);
+      expect(inferred.length).toBeGreaterThanOrEqual(1);
+      expect(inferred[0].relation).toBe('related-to');
+      expect(inferred[0].source).toBe('inferred');
+    });
+
+    it('should format semantic network summary', () => {
+      const network = createEmptySemanticNetwork();
+      extractConceptsFromMessage('基于 React 开发', network);
+      extractSemanticRelations('React 是一种 JavaScript框架', network);
+      const summary = formatSemanticNetworkSummary(network);
+      expect(summary).toContain('React');
+    });
+
+    it('should return empty summary for empty network', () => {
+      const network = createEmptySemanticNetwork();
+      expect(formatSemanticNetworkSummary(network)).toBe('');
     });
   });
 });
