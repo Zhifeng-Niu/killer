@@ -94,7 +94,7 @@ describe('ToolExecutor', () => {
 
     const info = executor.getInfo('search');
 
-    expect(info).toEqual({ name: 'search', description: 'Test tool: search' });
+    expect(info).toEqual({ name: 'search', description: 'Test tool: search', readOnly: false });
   });
 
   it('should return null for non-existent tool info', () => {

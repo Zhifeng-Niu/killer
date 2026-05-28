@@ -661,6 +661,7 @@ export class UnlearnTool implements Tool {
 export class InspectToolsTool implements Tool {
   name = 'inspect_tools';
   description = 'List all available tools with descriptions and status. Use this to understand your current capabilities and identify gaps. No params needed.';
+  isReadOnly = () => true;
 
   private readonly forge: ToolForge;
 
@@ -698,6 +699,7 @@ export class InspectToolsTool implements Tool {
 export class SelfReflectTool implements Tool {
   name = 'self_reflect';
   description = 'Deep introspection of your own runtime state, source code locations, and capability boundaries. Returns: runtime state, tool inventory, source paths, memory stats. Params: { aspect?: "runtime"|"tools"|"source"|"all" (default "all") }';
+  isReadOnly = () => true;
 
   private readonly forge: ToolForge;
 

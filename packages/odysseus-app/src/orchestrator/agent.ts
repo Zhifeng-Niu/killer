@@ -3517,10 +3517,11 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         tool_calls: result.toolCalls,
       });
 
+      // ── Pre-flight: repetition detection + permission checks ──
+      const approvedCalls: { name: string; params: unknown; id: string }[] = [];
+
       for (const toolCall of result.toolCalls) {
         const toolName = toolCall.function.name;
-        const label = TOOL_STATUS_LABELS[toolName] ?? toolName;
-        onStatus?.(`${label} (${round})`);
 
         // 重复检测
         const sig = `${toolName}:${toolCall.function.arguments}`;
@@ -3540,7 +3541,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           continue;
         }
 
-        // 权限检查
+        // 解析参数 + 权限检查
         let params: unknown;
         try {
           params = JSON.parse(toolCall.function.arguments);
@@ -3558,28 +3559,40 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           continue;
         }
 
-        // 执行工具
-        await this.hooks.emit('tool:execute', { tool: toolName, round });
+        approvedCalls.push({ name: toolName, params, id: toolCall.id ?? '' });
+      }
 
-        try {
-          const toolStart = Date.now();
-          const toolExecResult = await this.tools.execute(toolName, params);
-          const toolDuration = Date.now() - toolStart;
+      // ── Execute: batch with parallel read-only + serial write ──
+      if (approvedCalls.length > 0) {
+        const batchResults = await this.tools.executeBatch(
+          approvedCalls.map(c => ({ name: c.name, params: c.params, id: c.id })),
+          (toolName, progress) => {
+            const label = TOOL_STATUS_LABELS[toolName] ?? toolName;
+            if (progress.type === 'start') onStatus?.(`${label} (${round})`);
+          },
+        );
+
+        // ── Post-process: tracking + lesson extraction + result formatting ──
+        for (const batchResult of batchResults) {
+          const callId = batchResult.id ?? '';
+          const toolName = batchResult.name;
+
+          await this.hooks.emit('tool:execute', { tool: toolName, round });
 
           // 追踪工具使用效果
-          this.recordToolPerformance(toolName, toolExecResult.success, toolDuration);
-          this.recentToolResults.push({ success: toolExecResult.success, timestamp: Date.now() });
+          this.recordToolPerformance(toolName, batchResult.result.success, batchResult.durationMs);
+          this.recentToolResults.push({ success: batchResult.result.success, timestamp: Date.now() });
           if (this.recentToolResults.length > 30) this.recentToolResults = this.recentToolResults.slice(-30);
 
           // 从工具失败中提取教训
-          if (!toolExecResult.success) {
-            const lesson = extractLessonFromToolFailure(toolName, 'execution', toolExecResult.error ?? 'unknown');
+          if (!batchResult.result.success) {
+            const lesson = extractLessonFromToolFailure(toolName, 'execution', batchResult.result.error ?? 'unknown');
             if (lesson) recordLesson(lesson);
           }
 
-          const resultStr = toolExecResult.success
-            ? (typeof toolExecResult.data === 'string' ? toolExecResult.data : JSON.stringify(toolExecResult.data))
-            : `Tool "${toolName}" failed: ${toolExecResult.error}. IMPORTANT: Do NOT give up. Try a different approach, use alternative tools, or break the task into smaller steps. The user expects you to complete the task.`;
+          const resultStr = batchResult.result.success
+            ? (typeof batchResult.result.data === 'string' ? batchResult.result.data : JSON.stringify(batchResult.result.data))
+            : `Tool "${toolName}" failed: ${batchResult.result.error}. IMPORTANT: Do NOT give up. Try a different approach, use alternative tools, or break the task into smaller steps. The user expects you to complete the task.`;
 
           const truncated = resultStr.length > 8000
             ? resultStr.slice(0, 8000) + '\n...[truncated]'
@@ -3587,18 +3600,11 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
           messages.push({
             role: 'tool',
-            toolCallId: toolCall.id,
+            toolCallId: callId,
             content: truncated,
           });
 
           await this.hooks.emit('tool:result', { tool: toolName, round });
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          messages.push({
-            role: 'tool',
-            toolCallId: toolCall.id,
-            content: `[Tool Error: ${toolName}] ${errMsg}. IMPORTANT: Do NOT stop. Try a different approach or alternative tool to complete the task.`,
-          });
         }
       }
     }

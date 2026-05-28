@@ -37,6 +37,10 @@ export type {
 export type {
   Tool,
   ToolResult,
+  ToolProgress,
+  ToolProgressCallback,
+  BatchToolCall,
+  BatchToolResult,
 } from './tool-executor.js';
 
 export type {

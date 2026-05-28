@@ -60,6 +60,7 @@ function resolveProjectPath(filePath: string, projectRoot?: string): string {
 export class SelfReadTool implements Tool {
   readonly name = 'self_read';
   readonly description = 'Read your own source code files. Use this to understand how you work, find code to improve, or locate capabilities to extend. Provide a relative path from the project root.';
+  readonly isReadOnly = () => true;
   private readonly projectRoot: string;
 
   constructor(projectRoot?: string) {
@@ -245,6 +246,7 @@ export class SelfModifyTool implements Tool {
 export class SelfListTool implements Tool {
   readonly name = 'self_list';
   readonly description = 'List your own source code files and directories. Use this to explore your own structure and find files to modify or improve.';
+  readonly isReadOnly = () => true;
   private readonly projectRoot: string;
 
   constructor(projectRoot?: string) {

@@ -82,6 +82,7 @@ export class BuiltinTools {
     const tool: Tool = {
       name: 'memory_recall',
       description: 'Recall episodes from hippocampus memory via associative retrieval. Params: { query: string, limit?: number }',
+      isReadOnly: () => true,
       execute: async (params): Promise<ToolResult> => {
         const { query, limit = 5 } = params as { query: string; limit?: number };
         const result = this.hippocampus.associativeRecall({
@@ -114,6 +115,7 @@ export class BuiltinTools {
     const tool: Tool = {
       name: 'agent_status',
       description: 'Get current agent status including modules and uptime',
+      isReadOnly: () => true,
       execute: async (): Promise<ToolResult> => {
         return { success: true, data: this.getStatus() };
       },
@@ -143,6 +145,7 @@ export class BuiltinTools {
     const tool: Tool = {
       name: 'time',
       description: 'Get current time information. Params: { format?: "iso" | "unix" | "relative" }',
+      isReadOnly: () => true,
       execute: async (params): Promise<ToolResult> => {
         const { format = 'iso' } = params as { format?: string };
         const now = new Date();
@@ -173,6 +176,7 @@ export class BuiltinTools {
     const tool: Tool = {
       name: 'calculate',
       description: 'Evaluate a mathematical expression safely. Params: { expression: string }',
+      isReadOnly: () => true,
       execute: async (params): Promise<ToolResult> => {
         const { expression } = params as { expression: string };
 
@@ -267,6 +271,7 @@ export class BuiltinTools {
     const tool: Tool = {
       name: 'note_read',
       description: 'Read a saved note or list all notes. Params: { title?: string } — omit title to list all',
+      isReadOnly: () => true,
       execute: async (params): Promise<ToolResult> => {
         const { title } = (params as { title?: string }) ?? {};
 

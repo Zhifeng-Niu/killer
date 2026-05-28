@@ -66,6 +66,8 @@ export class ReadFileTool implements Tool {
   name = 'read_file';
   description = 'Read the contents of a file';
 
+  isReadOnly = () => true;
+
   async execute(params: unknown): Promise<ToolResult> {
     if (typeof params !== 'object' || params === null) {
       return { success: false, error: 'Invalid params' };
@@ -190,6 +192,8 @@ export class DeleteFileTool implements Tool {
 export class ListDirectoryTool implements Tool {
   name = 'list_directory';
   description = 'List contents of a directory';
+
+  isReadOnly = () => true;
 
   async execute(params: unknown): Promise<ToolResult> {
     if (typeof params !== 'object' || params === null) {
@@ -388,6 +392,8 @@ export class MemoryRetrieveTool implements Tool {
   name = 'memory_retrieve';
   description = 'Retrieve information from memory';
 
+  isReadOnly = () => true;
+
   async execute(params: unknown): Promise<ToolResult> {
     if (typeof params !== 'object' || params === null) {
       return { success: false, error: 'Invalid params' };
@@ -421,6 +427,8 @@ export class MemoryRetrieveTool implements Tool {
 export class MemoryListTool implements Tool {
   name = 'memory_list';
   description = 'List all keys in memory';
+
+  isReadOnly = () => true;
 
   async execute(_params: unknown): Promise<ToolResult> {
     const keys = Array.from(memoryStore.keys());
@@ -472,6 +480,8 @@ interface SearchResult {
 export class WebSearchTool implements Tool {
   name = 'web_search';
   description = 'Search the web for information';
+
+  isReadOnly = () => true;
 
   async execute(params: unknown): Promise<ToolResult> {
     if (typeof params !== 'object' || params === null) {
@@ -581,6 +591,8 @@ export class WebSearchTool implements Tool {
 export class WebFetchTool implements Tool {
   name = 'web_fetch';
   description = 'Fetch content from a URL. Params: { url: string, format?: "text"|"markdown" }';
+
+  isReadOnly = () => true;
 
   async execute(params: unknown): Promise<ToolResult> {
     if (typeof params !== 'object' || params === null) {

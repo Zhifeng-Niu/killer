@@ -18,6 +18,7 @@ export class EvolveAuditTool implements Tool {
     'Audit your own capabilities and identify gaps. ' +
     'Returns a prioritized list of missing or weak capabilities you could evolve. ' +
     'No params needed.';
+  readonly isReadOnly = () => true;
   private readonly engine: SelfEvolutionEngine;
 
   constructor(engine: SelfEvolutionEngine) {
@@ -175,6 +176,7 @@ export class EvolveStatusTool implements Tool {
     'Check the status of your self-evolution system. ' +
     'Params: { detail?: "summary"|"history"|"all" (default "summary") }. ' +
     'Shows evolution stats and recent history.';
+  readonly isReadOnly = () => true;
   private readonly engine: SelfEvolutionEngine;
 
   constructor(engine: SelfEvolutionEngine) {
