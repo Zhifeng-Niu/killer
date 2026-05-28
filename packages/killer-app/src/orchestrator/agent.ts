@@ -2871,6 +2871,15 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       await this.middleware.execute(ctx, async (innerCtx) => {
         // 核心处理逻辑（被中间件包裹）
 
+        // 检测是否为复杂意图 — 自动创建 plan 并触发自主执行
+        const complexIntent = this.detectComplexIntent(innerCtx.input);
+        if (complexIntent.isComplex && this.planExecutor.getActivePlans().length === 0) {
+          const goal = await this.createGoal(complexIntent.goalDescription, 0.7);
+          if (goal) {
+            onStatus?.(`Plan created: ${complexIntent.stepCount} steps detected`);
+          }
+        }
+
         // 检测是否需要多 Cell 委派
         if (this.shouldDelegate(innerCtx.input)) {
           const delegateResult = await this.delegateTask(innerCtx.input, onToken);
@@ -3437,6 +3446,66 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     await this.hooks.emit('delegate:complete', { task, cellsUsed: result.totalCellsUsed, durationMs: result.durationMs });
 
     return result;
+  }
+
+  /**
+   * 检测用户输入是否隐含多步骤任务
+   */
+  private detectComplexIntent(input: string): { isComplex: boolean; goalDescription: string; stepCount: number } {
+    if (input.length < 20 || input.startsWith('/')) {
+      return { isComplex: false, goalDescription: '', stepCount: 0 };
+    }
+
+    const signals: number[] = [];
+
+    // 1. 并列动作信号
+    const sequentialPatterns = [
+      /然后/g, /之后/g, /接着/g, /最后/g, /并且/g,
+      /\band\s+then\b/gi, /\bafter\s+(that|which)\b/gi, /\bthen\b/gi, /\bnext\b/gi, /\bfinally\b/gi,
+    ];
+    let seqCount = 0;
+    for (const p of sequentialPatterns) {
+      const matches = input.match(p);
+      seqCount += matches ? matches.length : 0;
+    }
+    if (seqCount >= 2) signals.push(3);
+    else if (seqCount >= 1) signals.push(1);
+
+    // 2. 多个动词/动作
+    const actionVerbs = [
+      /\b(创建|实现|开发|构建|写|分析|搜索|调研|设计|测试|部署|配置|修复|优化|重构|检查|验证)\b/g,
+      /\b(create|implement|build|write|analyze|search|design|test|deploy|configure|fix|optimize|refactor|check|verify)\b/gi,
+    ];
+    let actionCount = 0;
+    for (const p of actionVerbs) {
+      const matches = input.match(p);
+      actionCount += matches ? matches.length : 0;
+    }
+    if (actionCount >= 3) signals.push(3);
+    else if (actionCount >= 2) signals.push(1);
+
+    // 3. 因果链
+    const causalPatterns = [/\b以便\b/, /\b为了\b/, /\bso\s+that\b/gi, /\bin\s+order\s+to\b/gi];
+    let causalCount = 0;
+    for (const p of causalPatterns) {
+      if (p.test(input)) causalCount++;
+    }
+    if (causalCount >= 1) signals.push(2);
+
+    // 4. 长度信号
+    const sentences = input.split(/[.!?。！？\n]+/).filter(s => s.trim().length > 5);
+    if (sentences.length >= 3 && input.length > 80) signals.push(2);
+    else if (sentences.length >= 2 && input.length > 50) signals.push(1);
+
+    const score = signals.reduce((sum, s) => sum + s, 0);
+    const isComplex = score >= 4;
+    const stepCount = Math.min(Math.max(actionCount + seqCount, sentences.length, 2), 8);
+
+    return {
+      isComplex,
+      goalDescription: isComplex ? input : '',
+      stepCount: isComplex ? stepCount : 0,
+    };
   }
 
   /**
