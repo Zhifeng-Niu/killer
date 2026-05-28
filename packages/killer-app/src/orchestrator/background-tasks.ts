@@ -6723,6 +6723,7 @@ const SECTION_BUDGET_WEIGHTS: Record<string, number> = {
   'NEXT-TURN PREDICTION': 0.03,
   'META-FEEDBACK': 0.03,
   'TOOL CHAIN': 0.04,
+  'MOMENTUM': 0.03,
 };
 
 /** 最小保留预算（字符） */
@@ -7355,5 +7356,133 @@ export function formatToolChainSuggestion(suggestion: ToolChainSuggestion): stri
     lines.push(`  ${step.tool} ${marker} — ${step.purpose}`);
   }
   lines.push(`依据: ${suggestion.reasoning}`);
+  return lines.join('\n');
+}
+
+/**
+ * 对话动量追踪
+ */
+
+export interface MomentumState {
+  /** 动量方向 */
+  direction: 'accelerating' | 'steady' | 'decelerating' | 'stalled';
+  /** 话题深度变化 (-1 to 1) */
+  topicDepthDelta: number;
+  /** 信息密度 (chars per message avg, normalized 0-1) */
+  infoDensity: number;
+  /** 参与度分数 0-1 */
+  engagementScore: number;
+  /** 目标推进速度 0-1 */
+  goalProgress: number;
+  /** 综合动量分数 -1 to 1 */
+  momentumScore: number;
+  /** 建议的节奏调整 */
+  paceAdvice: string;
+}
+
+/**
+ * 分析对话动量
+ */
+export function analyzeConversationMomentum(
+  recentMessages: Array<{ role: 'user' | 'assistant'; content: string; timestamp?: number }>,
+  activeGoals: Array<{ progress: number }> = [],
+): MomentumState {
+  if (recentMessages.length < 2) {
+    return {
+      direction: 'steady',
+      topicDepthDelta: 0,
+      infoDensity: 0.5,
+      engagementScore: 0.5,
+      goalProgress: 0,
+      momentumScore: 0,
+      paceAdvice: '对话刚开始，保持探索',
+    };
+  }
+
+  const userMsgs = recentMessages.filter(m => m.role === 'user');
+  const assistantMsgs = recentMessages.filter(m => m.role === 'assistant');
+
+  // === 信息密度：用户消息平均长度趋势 ===
+  const recentUser = userMsgs.slice(-5);
+  const earlierUser = userMsgs.slice(-10, -5);
+  const recentAvgLen = recentUser.length > 0
+    ? recentUser.reduce((s, m) => s + m.content.length, 0) / recentUser.length
+    : 0;
+  const earlierAvgLen = earlierUser.length > 0
+    ? earlierUser.reduce((s, m) => s + m.content.length, 0) / earlierUser.length
+    : recentAvgLen;
+
+  const infoDensity = Math.min(1, recentAvgLen / 300);
+
+  // === 话题深度变化：技术关键词密度 ===
+  const techKeywords = /\b(function|class|interface|type|const|async|import|export|return|if|else|for|while)\b|[一-龥]{2,}(?:方法|函数|接口|模块|组件|服务|配置|部署|测试)/g;
+  const recentTechDensity = recentUser.length > 0
+    ? recentUser.reduce((s, m) => s + (m.content.match(techKeywords) ?? []).length, 0) / Math.max(1, recentUser.reduce((s, m) => s + m.content.length, 0) / 100)
+    : 0;
+  const earlierTechDensity = earlierUser.length > 0
+    ? earlierUser.reduce((s, m) => s + (m.content.match(techKeywords) ?? []).length, 0) / Math.max(1, earlierUser.reduce((s, m) => s + m.content.length, 0) / 100)
+    : recentTechDensity;
+
+  const topicDepthDelta = Math.max(-1, Math.min(1, (recentTechDensity - earlierTechDensity) * 2));
+
+  // === 参与度：消息频率 + 问题比例 ===
+  const questionRatio = recentUser.filter(m => /[?？]/.test(m.content)).length / Math.max(1, recentUser.length);
+  const codeBlocks = recentUser.filter(m => /```|`[^`]+`/.test(m.content)).length / Math.max(1, recentUser.length);
+  const engagementScore = Math.min(1, questionRatio * 0.5 + codeBlocks * 0.3 + infoDensity * 0.2);
+
+  // === 目标推进 ===
+  const goalProgress = activeGoals.length > 0
+    ? activeGoals.reduce((s, g) => s + g.progress, 0) / activeGoals.length
+    : 0.5;
+
+  // === 综合动量 ===
+  const lengthTrend = recentAvgLen - earlierAvgLen;
+  const momentumScore = Math.max(-1, Math.min(1,
+    topicDepthDelta * 0.3 +
+    (lengthTrend > 0 ? 0.2 : lengthTrend < -50 ? -0.3 : 0) +
+    (engagementScore - 0.5) * 0.3 +
+    (goalProgress - 0.5) * 0.2,
+  ));
+
+  // === 方向判断 ===
+  let direction: MomentumState['direction'];
+  if (momentumScore > 0.2) direction = 'accelerating';
+  else if (momentumScore > -0.1) direction = 'steady';
+  else if (momentumScore > -0.4) direction = 'decelerating';
+  else direction = 'stalled';
+
+  // === 节奏建议 ===
+  let paceAdvice: string;
+  if (direction === 'accelerating') {
+    paceAdvice = '对话加速中，保持深度、提供具体细节';
+  } else if (direction === 'decelerating') {
+    paceAdvice = '对话放缓，可尝试引入新话题或主动提问';
+  } else if (direction === 'stalled') {
+    paceAdvice = '对话停滞，建议总结进展、提出新方向';
+  } else {
+    paceAdvice = '节奏稳定，继续保持当前深度';
+  }
+
+  return {
+    direction,
+    topicDepthDelta,
+    infoDensity,
+    engagementScore,
+    goalProgress,
+    momentumScore,
+    paceAdvice,
+  };
+}
+
+/**
+ * 格式化动量分析为 prompt section
+ */
+export function formatMomentumState(state: MomentumState): string {
+  const dirLabel = { accelerating: '加速', steady: '稳定', decelerating: '放缓', stalled: '停滞' }[state.direction];
+  const lines: string[] = [
+    `动量: ${dirLabel} (${(state.momentumScore * 100).toFixed(0)}%)`,
+    `深度: ${(state.topicDepthDelta * 100).toFixed(0)}% | 密度: ${(state.infoDensity * 100).toFixed(0)}% | 参与: ${(state.engagementScore * 100).toFixed(0)}%`,
+    `建议: ${state.paceAdvice}`,
+  ];
   return lines.join('\n');
 }

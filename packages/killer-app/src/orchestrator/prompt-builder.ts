@@ -143,6 +143,8 @@ export interface PromptBuilderDeps {
   cognitiveFeedback?: string;
   /** 自适应工具链编排 */
   toolChainGuidance?: string;
+  /** 对话动量追踪 */
+  momentumGuidance?: string;
 }
 
 /**
@@ -467,6 +469,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 自适应工具链编排 ===
   if (deps.toolChainGuidance) {
     parts.push(`\nTOOL CHAIN — Recommended tool sequence for predicted intent:\n${deps.toolChainGuidance}`);
+  }
+
+  // === 对话动量追踪 ===
+  if (deps.momentumGuidance) {
+    parts.push(`\nMOMENTUM — Conversation pacing self-regulation:\n${deps.momentumGuidance}`);
   }
 
   // === 自主行动建议 ===

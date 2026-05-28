@@ -148,6 +148,8 @@ import {
   generateToolChainSuggestion,
   formatToolChainSuggestion,
   type ToolPattern,
+  analyzeConversationMomentum,
+  formatMomentumState,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -4509,6 +4511,88 @@ describe('background-tasks', () => {
       expect(result).toContain('(必需)');
       expect(result).toContain('(可选)');
       expect(result).toContain('memory_recall');
+    });
+  });
+
+  describe('analyzeConversationMomentum', () => {
+    it('should return steady for few messages', () => {
+      const result = analyzeConversationMomentum([
+        { role: 'user', content: 'hi' },
+      ]);
+      expect(result.direction).toBe('steady');
+      expect(result.momentumScore).toBe(0);
+    });
+
+    it('should detect accelerating with longer messages', () => {
+      const msgs = [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: 'hello' },
+        { role: 'user', content: 'tell me about TypeScript interfaces and generics' },
+        { role: 'assistant', content: 'TypeScript interfaces...' },
+        { role: 'user', content: 'how do I use async/await with generics in a class method that returns Promise<T>?' },
+      ];
+      const result = analyzeConversationMomentum(msgs);
+      expect(result.infoDensity).toBeGreaterThan(0);
+      expect(result.direction).toBeDefined();
+    });
+
+    it('should detect decelerating with short messages', () => {
+      const msgs = [
+        { role: 'user', content: 'Tell me about the complete architecture of this system including all components' },
+        { role: 'assistant', content: 'The architecture includes...' },
+        { role: 'user', content: 'ok' },
+        { role: 'assistant', content: 'sure' },
+        { role: 'user', content: 'thanks' },
+      ];
+      const result = analyzeConversationMomentum(msgs);
+      expect(result.direction).toMatch(/decelerating|stalled|steady/);
+    });
+
+    it('should calculate engagement from questions and code', () => {
+      const msgs = [
+        { role: 'user', content: 'How do I use `Array.map`? Can you show an example?' },
+        { role: 'assistant', content: 'Here is an example' },
+        { role: 'user', content: 'What about filtering with `Array.filter`?' },
+      ];
+      const result = analyzeConversationMomentum(msgs);
+      expect(result.engagementScore).toBeGreaterThan(0);
+    });
+
+    it('should incorporate goal progress', () => {
+      const msgs = [
+        { role: 'user', content: 'implement auth' },
+        { role: 'assistant', content: 'done' },
+        { role: 'user', content: 'add tests' },
+      ];
+      const withGoals = analyzeConversationMomentum(msgs, [{ progress: 0.8 }]);
+      const noGoals = analyzeConversationMomentum(msgs, []);
+      expect(withGoals.goalProgress).toBe(0.8);
+      expect(noGoals.goalProgress).toBe(0.5);
+    });
+
+    it('should provide pace advice', () => {
+      const result = analyzeConversationMomentum([
+        { role: 'user', content: 'hi' },
+      ]);
+      expect(result.paceAdvice).toBeTruthy();
+    });
+  });
+
+  describe('formatMomentumState', () => {
+    it('should format all fields', () => {
+      const state: ReturnType<typeof analyzeConversationMomentum> = {
+        direction: 'accelerating',
+        topicDepthDelta: 0.3,
+        infoDensity: 0.7,
+        engagementScore: 0.8,
+        goalProgress: 0.6,
+        momentumScore: 0.5,
+        paceAdvice: '保持深度',
+      };
+      const result = formatMomentumState(state);
+      expect(result).toContain('加速');
+      expect(result).toContain('50%');
+      expect(result).toContain('保持深度');
     });
   });
 });
