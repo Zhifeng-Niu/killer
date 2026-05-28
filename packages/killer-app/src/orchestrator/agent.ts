@@ -1427,6 +1427,49 @@ Examples:
     }
   }
 
+  /** 自主执行连续计数器 */
+  private autoContinueCount = 0;
+  private static readonly MAX_AUTO_CONTINUES = 20;
+
+  /**
+   * 自主执行循环：检查未完成的 plan steps，自动入队执行
+   */
+  private checkAndAutoContinue(
+    channel: string,
+    onToken?: (token: string) => void,
+    onStatus?: (status: string) => void,
+  ): void {
+    if (this.autoContinueCount >= KillerAgent.MAX_AUTO_CONTINUES) return;
+    if (this.inputQueue.length > 0) return; // 已有排队输入，不自动插入
+
+    const activePlans = this.planExecutor.getActivePlans();
+    if (activePlans.length === 0) return;
+
+    // 找到第一个有 pending step 的 plan
+    for (const plan of activePlans) {
+      const nextStep = this.planExecutor.getNextAction(plan.id);
+      if (!nextStep) continue;
+
+      this.autoContinueCount++;
+
+      const autoInput = `[AUTO-CONTINUE] Plan "${plan.goalId}" step ${nextStep.order + 1}/${plan.steps.length}: ${nextStep.description}`;
+
+      onStatus?.(`Auto-continue: ${nextStep.description.slice(0, 40)}...`);
+
+      // 入队自主输入，复用现有队列机制
+      this.inputQueue.push({
+        content: autoInput,
+        channel,
+        resolve: () => {},
+        reject: () => {},
+        onToken,
+      });
+
+      this.logger.info(`Auto-continue #${this.autoContinueCount}: "${nextStep.description}"`);
+      return; // 只入队一个 step，避免一次性全部排队
+    }
+  }
+
   /**
    * 当计划步骤失败时，尝试用 Cerebellum 做实验寻找替代方案
    */
@@ -2542,6 +2585,11 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     onToken?: (token: string) => void,
     onStatus?: (status: string) => void,
   ): Promise<{ content: string }> {
+    // 用户主动输入 → 重置自主执行计数器
+    if (!content.startsWith('[AUTO-CONTINUE]')) {
+      this.autoContinueCount = 0;
+    }
+
     // Concurrency guard: queue if already processing
     if (this.processing) {
       return new Promise<{ content: string }>((resolve, reject) => {
@@ -2554,6 +2602,10 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       return await this.processInputCore(content, _channel, onToken, onStatus);
     } finally {
       this.processing = false;
+
+      // === 自主执行循环：检查未完成的 plan steps ===
+      this.checkAndAutoContinue(_channel, onToken, onStatus);
+
       // Drain queue — process next queued input
       const next = this.inputQueue.shift();
       if (next) {
