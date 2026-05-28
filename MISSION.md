@@ -5,7 +5,7 @@ started_at: 2026-05-28T09:57:23Z
 expedition_branch: odyssey/20260528-175723
 baseline_metric: null
 best_metric: null
-total_waypoints: 1
+total_waypoints: 2
 consecutive_discards: 0
 ---
 
@@ -120,6 +120,7 @@ cd packages/odysseus-app && npx tsc --noEmit 2>&1
 - **WP1 (Architecture Research)**: Discovered Odysseus already has ToolForge, SelfModifyTools, EssenceForge — the building blocks for self-evolution exist but aren't connected into an autonomous loop
 - **WP2-4 (SelfEvolutionEngine)**: Created the missing piece — a closed-loop engine: audit → reason (LLM) → forge (generate code) → validate → integrate → verify. 1070 lines added across 3 new files. All 759 tests pass.
 - **Key insight**: The gap was NOT in low-level capabilities (ToolForge already does dynamic tool creation with hot-swap). The gap was the orchestration layer — nothing connected "I can't do X" → "let me create a tool for X" autonomously.
+- **WP6 (Source Code Mutation)**: Added mutateSource() — agent reads own .ts files, LLM generates modified version, writes, compiles, rolls back on failure. Protected modules (consciousness/, synapse/) are off-limits. mutate_source tool registered. 764 tests pass.
 
 ### Dead Ends
 {Auto-updated by engine.}
@@ -128,8 +129,7 @@ cd packages/odysseus-app && npx tsc --noEmit 2>&1
 {Unexpected findings. Auto-updated in creative mode.}
 
 ## Current Best
-- metric: SelfEvolutionEngine operational — 12/12 tests pass, agent can audit gaps + evolve tools autonomously
-- Baseline: No autonomous evolution loop existed before
+- metric: SelfEvolutionEngine + Source Mutation operational — 764 tests pass, agent can audit gaps, evolve tools, and mutate own source code
 
 ## Ideas Backlog
 {Auto-populated. Can be manually edited.}
