@@ -133,6 +133,8 @@ export interface PromptBuilderDeps {
   responseTimingGuidance?: string;
   /** 对话摘要压缩 */
   conversationSummary?: string;
+  /** 自校正指导 */
+  correctionGuidance?: string;
 }
 
 /**
@@ -437,6 +439,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 对话摘要 ===
   if (deps.conversationSummary) {
     parts.push(`\nCONVERSATION SUMMARY — Earlier context (compressed):\n${deps.conversationSummary}`);
+  }
+
+  // === 自校正 ===
+  if (deps.correctionGuidance) {
+    parts.push(`\nSELF-CORRECTION — Issues detected in previous response:\n${deps.correctionGuidance}`);
   }
 
   // === 自主行动建议 ===

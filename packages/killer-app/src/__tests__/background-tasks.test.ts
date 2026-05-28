@@ -134,6 +134,11 @@ import {
   extractTopicsFromMessages,
   generateConversationSummary,
   formatConversationSummary,
+  detectMissedIntents,
+  detectConstraintViolations,
+  detectMissingAnswers,
+  validateResponse,
+  formatCorrectionResult,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -4061,6 +4066,85 @@ describe('background-tasks', () => {
       ];
       const items = extractSummaryItems(msgs);
       expect(items.some(i => i.type === 'requirement')).toBe(true);
+    });
+  });
+
+  describe('Response Self-Correction Validator', () => {
+    it('should detect missed intents for multi-question input', () => {
+      const items = detectMissedIntents(
+        '如何配置数据库？怎么部署到生产？什么时候上线？',
+        '数据库配置如下...',
+      );
+      expect(items.length).toBeGreaterThanOrEqual(1);
+      expect(items[0].type).toBe('missed-intent');
+    });
+
+    it('should not flag single questions', () => {
+      const items = detectMissedIntents(
+        '怎么配置数据库？',
+        '数据库配置如下...',
+      );
+      expect(items.length).toBe(0);
+    });
+
+    it('should detect constraint violations', () => {
+      const items = detectConstraintViolations(
+        '不能用 jQuery，只用 React',
+        '建议使用 jQuery 的 $.ajax 方法',
+      );
+      expect(items.length).toBeGreaterThanOrEqual(1);
+      expect(items[0].type).toBe('constraint-violation');
+    });
+
+    it('should detect missing answers', () => {
+      const items = detectMissingAnswers(
+        '怎么配置环境变量？如何连接数据库？',
+        '环境变量配置方法如下...',
+      );
+      // At least one question's keywords not mentioned
+      expect(items.some(i => i.type === 'missing-answer')).toBe(true);
+    });
+
+    it('should return empty for no questions', () => {
+      const items = detectMissingAnswers(
+        '配置完成了',
+        '好的，配置已就绪',
+      );
+      expect(items.length).toBe(0);
+    });
+
+    it('should compute overall score', () => {
+      const result = validateResponse(
+        '怎么配置？为什么报错？如何部署？',
+        '简单回答',
+      );
+      expect(result.overallScore).toBeGreaterThanOrEqual(0);
+      expect(result.overallScore).toBeLessThanOrEqual(1);
+    });
+
+    it('should give high score for good responses', () => {
+      const result = validateResponse(
+        '你好',
+        '你好！有什么可以帮助你的吗？',
+      );
+      expect(result.overallScore).toBe(1);
+    });
+
+    it('should format correction result', () => {
+      const result = validateResponse(
+        '不能用 SQL，只用 NoSQL 怎么配置？',
+        '使用 SQL 语句...',
+      );
+      const formatted = formatCorrectionResult(result);
+      if (result.items.length > 0) {
+        expect(formatted).toContain('自校正评分');
+        expect(formatted).toContain('constraint-violation');
+      }
+    });
+
+    it('should return empty format for perfect response', () => {
+      const result = validateResponse('你好', '你好！');
+      expect(formatCorrectionResult(result)).toBe('');
     });
   });
 });

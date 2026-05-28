@@ -2879,6 +2879,7 @@ export function scoreSectionRelevance(
     'SEMANTIC NETWORK': 0.6,
     'RESPONSE TIMING': 0.65,
     'CONVERSATION SUMMARY': 0.7,
+    'SELF-CORRECTION': 0.75,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -6434,6 +6435,214 @@ export function formatConversationSummary(summary: ConversationSummary): string 
       'code-change': '代码', requirement: '需求', fact: '事实', action: '动作',
     };
     parts.push(`  [${typeLabel[item.type]}] ${item.content}`);
+  }
+
+  return parts.join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Waypoint 89: Response Self-Correction Validator — 响应自校正
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 校正问题类型
+ */
+export type CorrectionType =
+  | 'missed-intent'       // 遗漏子意图
+  | 'constraint-violation' // 违反用户约束
+  | 'missing-answer'      // 未回答问题
+  | 'stale-reference'     // 引用过时信息
+  | 'inconsistency';      // 自相矛盾
+
+/**
+ * 校正条目
+ */
+export interface CorrectionItem {
+  type: CorrectionType;
+  description: string;
+  /** 建议的修正动作 */
+  suggestion: string;
+  /** 严重度 0-1 */
+  severity: number;
+}
+
+/**
+ * 校正结果
+ */
+export interface CorrectionResult {
+  items: CorrectionItem[];
+  overallScore: number;
+}
+
+/**
+ * 检测遗漏的子意图
+ */
+export function detectMissedIntents(
+  userInput: string,
+  response: string,
+): CorrectionItem[] {
+  const items: CorrectionItem[] = [];
+
+  // 提取用户输入中的问题
+  const questions: string[] = [];
+  const qPatterns = [
+    /(?:怎么|如何|为什么|什么|哪|when|where|how|why|what|which).{2,30}?[?？]/gi,
+    /\d+[.、)]\s*.{3,40}/g,
+  ];
+
+  for (const pattern of qPatterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(userInput)) !== null) {
+      questions.push(match[0]);
+    }
+  }
+
+  if (questions.length >= 2 && response.length < 200 * questions.length) {
+    items.push({
+      type: 'missed-intent',
+      description: `用户提出了 ${questions.length} 个问题，但回答可能不完整`,
+      suggestion: '检查是否所有问题都已回答',
+      severity: 0.6,
+    });
+  }
+
+  return items;
+}
+
+/**
+ * 检测约束违反
+ */
+export function detectConstraintViolations(
+  userInput: string,
+  response: string,
+): CorrectionItem[] {
+  const items: CorrectionItem[] = [];
+
+  const constraintPatterns = [
+    /(?:不能|不要|不可以|禁止|别用|avoid|don't|must not|never)\s*(.{2,40})/gi,
+    /(?:只用|只能|必须用|只支持|only|must use)\s*(.{2,40})/gi,
+  ];
+
+  const constraints: string[] = [];
+  for (const pattern of constraintPatterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(userInput)) !== null) {
+      constraints.push(match[1].trim().toLowerCase());
+    }
+  }
+
+  for (const constraint of constraints) {
+    const constraintWords = constraint.split(/[,，、\s]+/).filter(w => w.length > 1);
+    if (constraintWords.some(w => response.toLowerCase().includes(w.toLowerCase()))) {
+      items.push({
+        type: 'constraint-violation',
+        description: `响应可能违反了用户约束: "${constraint}"`,
+        suggestion: `确认响应是否遵守了"${constraint}"的约束`,
+        severity: 0.8,
+      });
+    }
+  }
+
+  return items;
+}
+
+/**
+ * 检测未回答的问题
+ */
+export function detectMissingAnswers(
+  userInput: string,
+  response: string,
+): CorrectionItem[] {
+  const items: CorrectionItem[] = [];
+
+  const sentences = userInput.split(/[。.!！\n]+/).filter(s => s.trim());
+  const questions = sentences.filter(s => /[?？]$/.test(s.trim()));
+
+  if (questions.length === 0) return items;
+
+  for (const q of questions) {
+    const keywords = q.replace(/[?？]/g, '')
+      .split(/\s+/)
+      .filter(w => w.length > 2);
+
+    const mentioned = keywords.some(kw => response.includes(kw));
+    if (!mentioned && keywords.length > 0) {
+      items.push({
+        type: 'missing-answer',
+        description: `可能未回答: "${q.trim().slice(0, 60)}"`,
+        suggestion: '在下一轮补充这个回答',
+        severity: 0.5,
+      });
+    }
+  }
+
+  return items;
+}
+
+/**
+ * 检测自相矛盾
+ */
+export function detectInconsistencies(response: string): CorrectionItem[] {
+  const items: CorrectionItem[] = [];
+
+  const butPattern = /(.{10,40})但是(.{10,40})/g;
+  let match: RegExpExecArray | null;
+  while ((match = butPattern.exec(response)) !== null) {
+    const before = match[1];
+    const after = match[2];
+    const positive = /好|可以|正确|成功|没问题|ok|fine|works/;
+    const beforePositive = positive.test(before);
+    const afterPositive = positive.test(after);
+    if (beforePositive === afterPositive && before.length > 5 && after.length > 5) {
+      items.push({
+        type: 'inconsistency',
+        description: `可能的自相矛盾: "...${before.slice(-20)}但是${after.slice(0, 20)}..."`,
+        suggestion: '检查前后表述是否一致',
+        severity: 0.4,
+      });
+    }
+  }
+
+  return items;
+}
+
+/**
+ * 综合校正验证
+ */
+export function validateResponse(
+  userInput: string,
+  response: string,
+): CorrectionResult {
+  const items: CorrectionItem[] = [
+    ...detectMissedIntents(userInput, response),
+    ...detectConstraintViolations(userInput, response),
+    ...detectMissingAnswers(userInput, response),
+    ...detectInconsistencies(response),
+  ];
+
+  items.sort((a, b) => b.severity - a.severity);
+
+  const penalty = items.reduce((sum, item) => sum + item.severity * 0.2, 0);
+  const overallScore = Math.max(0, Math.min(1, 1 - penalty));
+
+  return { items, overallScore };
+}
+
+/**
+ * 格式化校正结果（用于 prompt 注入）
+ */
+export function formatCorrectionResult(result: CorrectionResult): string {
+  if (result.items.length === 0) return '';
+
+  const parts: string[] = [];
+  parts.push(`自校正评分: ${(result.overallScore * 100).toFixed(0)}%`);
+
+  for (const item of result.items.slice(0, 5)) {
+    const severityLabel = item.severity > 0.7 ? '⚠' : 'ℹ';
+    parts.push(`${severityLabel} [${item.type}] ${item.description}`);
+    if (item.suggestion) {
+      parts.push(`  → ${item.suggestion}`);
+    }
   }
 
   return parts.join('\n');
