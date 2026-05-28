@@ -53,3 +53,26 @@ export type {
   ParsedStep,
   ParsedInstruction,
 } from './instruction-parser.js';
+
+// Step Verifier — multi-dimensional execution result validation
+export {
+  StepVerifier,
+} from './step-verifier.js';
+export type {
+  StepVerification,
+  DimensionResult,
+  VerificationDimension,
+  StepVerifierConfig,
+  ToolCallResult,
+  VerificationContext,
+} from './step-verifier.js';
+
+// Delivery Report — structured task delivery reporting
+export {
+  DeliveryReportGenerator,
+} from './delivery-report.js';
+export type {
+  DeliveryReport,
+  StepReport,
+  DeliveryReportDeps,
+} from './delivery-report.js';

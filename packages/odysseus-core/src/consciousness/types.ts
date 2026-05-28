@@ -102,6 +102,7 @@ export type EventType =
   | 'goal.completed'
   | 'execution.progress'
   | 'execution.log'
+  | 'delivery.report'
   | 'plan.created';
 
 /**

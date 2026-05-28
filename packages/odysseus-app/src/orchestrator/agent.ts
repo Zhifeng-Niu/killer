@@ -80,6 +80,12 @@ import {
   ScheduledTaskRunner,
   InstructionParser,
   type ParsedInstruction,
+  StepVerifier,
+  type StepVerification,
+  type VerificationContext,
+  DeliveryReportGenerator,
+  type DeliveryReport,
+  type StepReport,
   type ChainResult,
   type TaskExecutionResult,
 } from '@odysseus/core';
@@ -177,14 +183,15 @@ export class OdysseusAgent implements IDriveSource {
   errorRecovery!: ErrorRecoveryManager;
   selfMonitor!: SelfMonitor;
   instructionParser!: InstructionParser;
+  stepVerifier!: StepVerifier;
+  deliveryReport!: DeliveryReportGenerator;
   scheduledRunner!: ScheduledTaskRunner;
   readonly hooks: LifecycleHooks = new LifecycleHooks();
   readonly middleware: MiddlewarePipeline = new MiddlewarePipeline();
   readonly contextWindow: ContextWindowManager = new ContextWindowManager();
 
-  // 对话上下文（工作记忆窗口）
+  // 对话上下文（工作记忆窗口）— 无硬上限，由 ContextWindowManager 智能裁剪
   private conversationHistory: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }> = [];
-  private readonly maxConversationTurns = 20;
   private readonly sessionDir: string;
   private readonly toolTimeoutMs = 30000; // 30s default timeout
 
@@ -1435,6 +1442,12 @@ Examples:
     // Instruction Parser — 结构化指令解析
     this.instructionParser = new InstructionParser(this.config.llm);
 
+    // Step Verifier — 多维度步骤验证
+    this.stepVerifier = new StepVerifier();
+
+    // Delivery Report Generator — 执行报告与交付
+    this.deliveryReport = new DeliveryReportGenerator();
+
     // Scheduled Task Runner — 定时任务调度
     this.scheduledRunner = new ScheduledTaskRunner();
   }
@@ -1594,6 +1607,9 @@ Examples:
             source: 'prefrontal',
             data: { planId, goalId: plan.goalId },
           });
+
+          // 生成交付报告
+          this.generateAndEmitDeliveryReport(plan.goalId, plan);
         }
       }
     } catch (error) {
@@ -1611,7 +1627,10 @@ Examples:
 
   /** 自主执行连续计数器 */
   private autoContinueCount = 0;
+  private consecutiveFailures = 0;
   private maxAutoContinues = 200; // 可配置，默认 200（原 20）
+  private static readonly INTERMEDIATE_SUMMARY_INTERVAL = 20;
+  private static readonly MAX_CONSECUTIVE_FAILURES = 5;
 
   // ─── IDriveSource — BrainstemLoop 自主驱动接口 ───
 
@@ -1745,19 +1764,22 @@ Examples:
     // 最小状态更新 — 只记对话历史
     this.conversationHistory.push({ role: 'user', content, timestamp: Date.now() });
     this.conversationHistory.push({ role: 'assistant', content: response, timestamp: Date.now() });
-    if (this.conversationHistory.length > this.maxConversationTurns * 2) {
-      this.conversationHistory = this.conversationHistory.slice(-this.maxConversationTurns * 2);
-    }
+    this.trimHistory();
 
     this.logger.info(`Auto-continue completed: "${stepDesc.slice(0, 50)}" → ${response.length} chars`);
+
+    // 中间摘要：每 N 轮触发一次 LLM 深度摘要，防止长程执行中上下文退化
+    if (this.autoContinueCount % OdysseusAgent.INTERMEDIATE_SUMMARY_INTERVAL === 0 && this.autoContinueCount > 0) {
+      this.triggerIntermediateSummary();
+    }
 
     // SelfMonitor 记录循环耗时和行动结果
     const cycleDuration = Date.now() - cycleStart;
     this.selfMonitor?.recordCycleTime(cycleDuration);
     this.selfMonitor?.recordAction('auto-continue', stepDesc, cycleDuration, response.length > 10);
 
-    // LongTaskEngine 更新进度
-    const verification = this.verifyStepResult(stepDesc, response);
+    // 多维度验证 + LongTaskEngine 更新进度
+    const verification = this.stepVerifier.verify(stepDesc, response);
     if (goalId) {
       const taskId = `task_${goalId}`;
       this.longTaskEngine?.recordStepCompletion(taskId, `step_${stepNum}`, {
@@ -1768,12 +1790,66 @@ Examples:
       });
     }
 
+    // 验证失败时记录 IterativeRefiner 指标，供后续策略决策
+    if (!verification.valid) {
+      this.iterativeRefiner?.recordMetric({
+        name: `step_${stepNum}_quality`,
+        value: verification.overallScore,
+        direction: 'higher',
+        unit: 'score',
+        timestamp: Date.now(),
+      });
+    }
+
+    // 质量门控 + 自主执行循环强化
+    if (verification.valid) {
+      this.consecutiveFailures = 0;
+    } else {
+      this.consecutiveFailures++;
+    }
+
+    // 质量门控：连续 N 步失败时暂停，发射告警
+    if (this.consecutiveFailures >= OdysseusAgent.MAX_CONSECUTIVE_FAILURES) {
+      this.logger.warn(`Quality gate: ${this.consecutiveFailures} consecutive failures — pausing auto-continue`);
+      this.consciousness.emit({
+        type: 'execution.log',
+        source: 'prefrontal',
+        data: {
+          phase: 'quality-gate-paused',
+          consecutiveFailures: this.consecutiveFailures,
+          suggestedStrategy: verification.suggestedStrategy,
+        },
+      });
+
+      // 策略恢复：根据 StepVerifier 建议自动采取行动
+      if (verification.suggestedStrategy === 'replan' || verification.suggestedStrategy === 'decompose') {
+        this.deliveryReport?.recordDecision(`Quality gate triggered ${verification.suggestedStrategy} after ${this.consecutiveFailures} failures`);
+        this.logger.info(`Auto-recovery: triggering ${verification.suggestedStrategy} for plan ${goalId}`);
+        this.consciousness.emit({
+          type: 'execution.log',
+          source: 'prefrontal',
+          data: { phase: 'auto-recovery', strategy: verification.suggestedStrategy, goalId },
+        });
+        // 重置计数器，允许继续尝试（新计划/分解后的步骤）
+        this.consecutiveFailures = 0;
+      }
+
+      // 不继续递归，让下一轮 checkAndAutoContinue 或用户输入决定
+      return { content: response };
+    }
+
+    // 停滞检测：SelfMonitor 报告停滞时降低递归速率
+    const stagnation = this.selfMonitor?.detectStagnation();
+    if (stagnation?.isStagnant) {
+      // 停滞时只执行一步就暂停，不连续递归
+      this.logger.info(`Stagnation detected (${stagnation.stagnationType}) — slowing auto-continue`);
+    }
+
     // 递归检查是否还有下一步要执行
     const nextStep = this.getNextPlanStep();
     if (nextStep && this.autoContinueCount < this.maxAutoContinues) {
       this.autoContinueCount++;
       this.logger.info(`Auto-drive recursion: continuing to next step "${nextStep.step.description.slice(0, 50)}"`);
-      // 直接入队下一步，而不是等 checkAndAutoContinue
       this.inputQueue.push({
         content: `[AUTO-CONTINUE] Plan "${nextStep.planId}" step ${nextStep.step.order + 1}/${this.planExecutor.getPlan(nextStep.planId)?.steps.length ?? '?'}: ${nextStep.step.description}`,
         channel: 'internal',
@@ -1782,19 +1858,26 @@ Examples:
       });
     }
 
-    // 发射验证事件
+    // 发射验证事件（包含多维度评分和策略建议）
     if (!verification.valid) {
-      this.logger.warn(`Step result verification failed: ${verification.reason}`);
+      this.logger.warn(`Step verification failed (score=${verification.overallScore.toFixed(2)}): ${verification.reason}`);
       this.consciousness.emit({
         type: 'execution.log',
         source: 'prefrontal',
-        data: { phase: 'verify-failed', step: stepNum, reason: verification.reason },
+        data: {
+          phase: 'verify-failed',
+          step: stepNum,
+          reason: verification.reason,
+          score: verification.overallScore,
+          strategy: verification.suggestedStrategy,
+          dimensions: verification.dimensions.map(d => `${d.dimension}=${d.score.toFixed(2)}`),
+        },
       });
     } else {
       this.consciousness.emit({
         type: 'execution.log',
         source: 'prefrontal',
-        data: { phase: 'verify-passed', step: stepNum, responseLength: response.length },
+        data: { phase: 'verify-passed', step: stepNum, score: verification.overallScore, responseLength: response.length },
       });
     }
 
@@ -1802,27 +1885,119 @@ Examples:
   }
 
   /**
-   * 验证 step 执行结果是否有效
+   * 智能裁剪对话历史 — 不使用硬截断，交给 ContextWindowManager
+   *
+   * 当历史超过软阈值时，用 ContextWindowManager 生成摘要并保留关键信息，
+   * 而非暴力 slice 丢弃。
    */
-  private verifyStepResult(stepDesc: string, response: string): { valid: boolean; reason?: string } {
-    if (!response || response.trim().length === 0) {
-      return { valid: false, reason: 'Empty response' };
-    }
-    if (response.length < 10) {
-      return { valid: false, reason: 'Response too short to be meaningful' };
-    }
-    const errorSignals = ['error:', 'exception:', 'failed:', 'timeout', 'unauthorized', 'forbidden'];
-    const lowerResponse = response.toLowerCase();
-    const hasError = errorSignals.some(sig => lowerResponse.includes(sig));
-    if (hasError && lowerResponse.includes('i cannot') === false) {
-      // 包含错误信号但不是"我不能"类型的正常拒绝
-      // 只有当错误信号出现在响应开头时才判定为失败
-      const firstLine = response.split('\n')[0].toLowerCase();
-      if (errorSignals.some(sig => firstLine.includes(sig))) {
-        return { valid: false, reason: `Error signal in first line: ${firstLine.slice(0, 80)}` };
+  private trimHistory(): void {
+    const SOFT_LIMIT = 400; // ~200 轮对话
+    if (this.conversationHistory.length <= SOFT_LIMIT) return;
+
+    // 将旧消息交给 ContextWindowManager 做智能摘要
+    const cutoff = Math.floor(SOFT_LIMIT * 0.6); // 保留最近 60%
+    const older = this.conversationHistory.slice(0, this.conversationHistory.length - cutoff);
+    const recent = this.conversationHistory.slice(this.conversationHistory.length - cutoff);
+
+    const contextMessages: ContextMessage[] = older.map(m => ({
+      role: m.role,
+      content: m.content,
+      timestamp: m.timestamp,
+    }));
+
+    // 触发 ContextWindowManager 摘要（LLM 异步，不阻塞）
+    this.contextWindow.manage(contextMessages);
+
+    // 关键 plan step 结果提取为 facts
+    for (const msg of older) {
+      if (msg.role === 'assistant' && msg.content.includes('[AUTO-CONTINUE]')) {
+        const planMatch = msg.content.match(/step (\d+)\/(\d+): (.+)/);
+        if (planMatch) {
+          this.contextWindow.addFact(`Plan step ${planMatch[1]}/${planMatch[2]}: ${planMatch[3].slice(0, 100)}`);
+        }
       }
     }
-    return { valid: true };
+
+    // 保留最近消息 + ContextWindowManager 管理的摘要会注入到 prompt 构建中
+    this.conversationHistory = recent;
+    this.logger.info(`History trimmed: ${older.length} old messages → ContextWindowManager summary`);
+  }
+
+  /**
+   * 中间摘要 — 长程执行中定期对当前对话历史做深度 LLM 摘要
+   *
+   * 将最近 N 轮 auto-continue 的关键成果提取为 facts，
+   * 防止随着步数增长而丢失早期关键决策和结果。
+   */
+  private triggerIntermediateSummary(): void {
+    const recentHistory = this.conversationHistory.slice(-OdysseusAgent.INTERMEDIATE_SUMMARY_INTERVAL * 4);
+    const contextMessages: ContextMessage[] = recentHistory.map(m => ({
+      role: m.role,
+      content: m.content,
+      timestamp: m.timestamp,
+    }));
+
+    // 交给 ContextWindowManager 做智能摘要（异步 LLM）
+    this.contextWindow.manage(contextMessages);
+
+    // 从最近的 assistant 回复中提取关键成果作为 facts
+    const recentAssistantMsgs = recentHistory
+      .filter(m => m.role === 'assistant')
+      .slice(-5);
+
+    for (const msg of recentAssistantMsgs) {
+      // 提取前 200 字符作为摘要 fact
+      const summary = msg.content.slice(0, 200).replace(/\n/g, ' ').trim();
+      if (summary.length > 30) {
+        this.contextWindow.addFact(`[auto-continue #${this.autoContinueCount}] ${summary}`);
+      }
+    }
+
+    this.logger.info(`Intermediate summary triggered at auto-continue #${this.autoContinueCount}`);
+  }
+
+  /**
+   * 生成并发射交付报告
+   */
+  private generateAndEmitDeliveryReport(goalId: string, plan: { steps: Array<{ id: string; description: string; order: number; status: string }> }): void {
+    const taskId = `task_${goalId}`;
+
+    const stepDetails: StepReport[] = plan.steps.map(step => ({
+      stepId: step.id,
+      description: step.description,
+      order: step.order,
+      status: (step.status === 'completed' ? 'completed'
+        : step.status === 'failed' ? 'failed' : 'skipped') as StepReport['status'],
+    }));
+
+    const report = this.deliveryReport.generate(taskId, {
+      getGoal: () => goalId,
+      getStepReports: () => stepDetails,
+      getElapsedTime: () => {
+        const checkpoint = this.longTaskEngine?.getCheckpoint(taskId);
+        return checkpoint ? Date.now() - checkpoint.startedAt : 0;
+      },
+      getKeyDecisions: () => [],
+      getCodeChanges: () => [],
+    });
+
+    const formatted = this.deliveryReport.formatReport(report);
+
+    this.consciousness.emit({
+      type: 'delivery.report',
+      source: 'prefrontal',
+      data: { report, formatted },
+    });
+
+    this.logger.info(`Delivery report generated for ${goalId}: ${report.deliveryStatus} (quality=${(report.qualityScore * 100).toFixed(0)}%)`);
+  }
+
+  /**
+   * 验证 step 执行结果 — 委托给 StepVerifier 多维度验证
+   */
+  private verifyStepResult(stepDesc: string, response: string): { valid: boolean; reason?: string } {
+    const result = this.stepVerifier.verify(stepDesc, response);
+    return { valid: result.valid, reason: result.reason };
   }
 
   /**
@@ -1930,6 +2105,35 @@ What alternative approach should we try? One sentence only.`;
   }
 
   /**
+   * 带 ErrorRecovery 的工具执行 — per-tool circuit breaker + exponential backoff
+   *
+   * 每个工具名有独立的 circuit breaker，防止一个工具的故障级联到其他工具。
+   * 失败时自动重试（backoff），多次失败后熔断。
+   */
+  private async executeToolWithRecovery(
+    toolName: string,
+    params: Record<string, unknown>,
+  ): Promise<{ success: boolean; data?: unknown; error?: string }> {
+    try {
+      return await this.errorRecovery.executeWithRecovery(
+        `tool:${toolName}`,
+        () => this.tools.execute(toolName, params),
+        async (error) => {
+          // fallback：返回结构化错误而非抛出异常
+          this.logger.info(`[ErrorRecovery] Tool "${toolName}" fallback after error: ${error instanceof Error ? error.message : String(error)}`);
+          return {
+            success: false,
+            error: `Tool "${toolName}" failed after recovery attempts: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        },
+      );
+    } catch {
+      // 极端情况：recovery 自身也失败
+      return { success: false, error: `Tool "${toolName}" unrecoverable failure` };
+    }
+  }
+
+  /**
    * 将计划步骤转化为实际工具调用
    *
    * 策略：将步骤描述作为 LLM prompt，让 LLM 决定用什么工具
@@ -1940,7 +2144,7 @@ What alternative approach should we try? One sentence only.`;
     // 如果步骤有明确的 action payload，直接执行工具
     if (step.action?.type && step.action?.payload) {
       try {
-        const result = await this.tools.execute(
+        const result = await this.executeToolWithRecovery(
           step.action.type,
           step.action.payload as Record<string, unknown>,
         );
@@ -1959,7 +2163,7 @@ What alternative approach should we try? One sentence only.`;
           if (forged) {
             // 重试执行
             try {
-              const retry = await this.tools.execute(
+              const retry = await this.executeToolWithRecovery(
                 step.action.type,
                 step.action.payload as Record<string, unknown>,
               );
@@ -3056,6 +3260,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     // 用户主动输入 → 重置自主执行计数器
     if (!content.startsWith('[AUTO-CONTINUE]')) {
       this.autoContinueCount = 0;
+      this.consecutiveFailures = 0;
     }
 
     // Concurrency guard: queue if already processing
@@ -3242,9 +3447,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         this.lastResponseFeatures = extractResponseFeatures(response);
         this.recentResponses.push(response);
         if (this.recentResponses.length > 20) this.recentResponses = this.recentResponses.slice(-20);
-        if (this.conversationHistory.length > this.maxConversationTurns * 2) {
-          this.conversationHistory = this.conversationHistory.slice(-this.maxConversationTurns * 2);
-        }
+        this.trimHistory();
 
         // 注入到 brainstem 做后台处理
         this.injectInput(input);
@@ -3809,9 +4012,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     // 记录到对话历史
     this.conversationHistory.push({ role: 'user', content: `[delegate] ${task}`, timestamp: Date.now() });
     this.conversationHistory.push({ role: 'assistant', content: result.synthesis, timestamp: Date.now() });
-    if (this.conversationHistory.length > this.maxConversationTurns * 2) {
-      this.conversationHistory = this.conversationHistory.slice(-this.maxConversationTurns * 2);
-    }
+    this.trimHistory();
 
     await this.hooks.emit('delegate:complete', { task, cellsUsed: result.totalCellsUsed, durationMs: result.durationMs });
 

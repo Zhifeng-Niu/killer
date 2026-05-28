@@ -1,29 +1,46 @@
 ---
 orientation: engineer
-status: complete
-started_at: 2026-05-29T06:00:00Z
-expedition_branch: odyssey/20260528-223038
+status: active
+started_at: 2026-05-29T08:00:00Z
+expedition_branch: odyssey/20260529-long-running-autonomous
 baseline_metric: 0
 best_metric: 0
-total_waypoints: 2
+total_waypoints: 0
 consecutive_discards: 0
 ---
 
-# Mission: 专项优化核心执行能力
+# Mission: 长程自主执行能力提升
 
 ## Goal
-针对工具调用、指令遵循、定时与持续性任务、长链路执行等核心能力进行专项优化，使 Agent 在复杂、动态、长链路的任务中真正具备可执行性。
+使 Agent 能够在单次任务中持续、自主地工作长达 8 小时，完成从规划、执行到迭代优化的完整闭环，交付工程级成果。在长程自主执行、复杂工程优化与真实开发场景中展现出更强的持续工作能力。
 
 ## Context
 Project type: typescript monorepo. Guard: pnpm build.
-前一 Waypoint 已完成：LongTaskEngine、IterativeRefiner、ErrorRecoveryManager、SelfMonitor 四个基础子系统（commit 6b92cc7）。
+
+### 已有基础设施
+- **LongTaskEngine**: 持久化检查点 + 时间预算（默认 8h）+ 停滞检测
+- **IterativeRefiner**: 执行→评估→调整循环，5 种策略（continue/backtrack/replan/decompose/escalate）
+- **ErrorRecoveryManager**: CircuitBreaker + ExponentialBackoff + FallbackExecutor
+- **SelfMonitor**: 健康状态追踪 + 停滞检测 + 执行时间线
+- **ToolChain**: 串行/并行/分支/循环/变换工具链编排
+- **InstructionParser**: 规则 + LLM 两级指令解析
+- **ScheduledTaskRunner**: once/recurring/daily 定时调度
+- **ContextWindowManager**: 智能上下文裁剪 + LLM 摘要 + 熔断器
+
+### 核心瓶颈（代码级分析）
+1. **maxConversationTurns=20** 太小 — auto-continue 每次 push 2 条消息，10 轮自主执行就触发截断，丢失关键上下文
+2. **processAutoContinue 直接 slice 历史** — 无摘要，不像 processInput 有 ContextWindowManager 智能裁剪
+3. **verifyStepResult 过于简单** — 只检查非空和长度 >20，不检查内容质量或任务完成度
+4. **Goal drive → processInput 桥接缺少 PlanExecutor 跟踪** — autoContinueCount++ 但不走 plan step 管理
+5. **ErrorRecovery 未接入 ToolExecutor** — circuit breaker 存在但未包裹工具调用
+6. **无中间摘要机制** — 长程执行中旧的 plan step 结果被截断后无法恢复关键信息
 
 ## Key Capability Gaps (Current Focus)
-1. **工具调用优化** — 工具注册、发现、调用链编排需要更强的动态性
-2. **指令遵循** — Agent 需要更精确地理解并执行复杂多步骤指令
-3. **定时与持续性任务** — 定时触发、周期任务、延迟执行
-4. **长链路执行** — 工具调用链、条件分支、并行/串行混合执行
-5. **执行上下文管理** — 跨步骤的上下文传递与状态累积
+1. **长程上下文保持** — 8h 执行中的上下文不能被粗暴截断，需要渐进摘要 + 关键事实保留
+2. **智能 step 验证** — 每个 plan step 的执行结果需要质量评估，不只是非空检查
+3. **Error Recovery 集成** — 将 circuit breaker/backoff 接入实际工具执行链
+4. **自主执行循环强化** — auto-continue 递归深度控制、停滞恢复、质量门控
+5. **执行报告与交付** — 长程任务完成后需要结构化的交付报告
 
 ## Scope
 
@@ -53,8 +70,7 @@ pnpm build
 ## What's Been Tried
 
 ### Wins
-- WP1: LongTaskEngine + IterativeRefiner + ErrorRecoveryManager + SelfMonitor (4 core modules, 1679 lines, build clean)
-- WP2: ToolChain (builder-pattern orchestration with serial/parallel/branch/loop/transform) + InstructionParser (rule-based + LLM-enhanced parsing) + ScheduledTaskRunner (once/recurring/daily scheduling) + ExecutionContext (cross-step state + snapshot/restore) — 4 modules, ~770 lines new code, fully integrated into agent.ts lifecycle, build clean
+{None yet for this mission.}
 
 ### Dead Ends
 {None yet.}
@@ -66,7 +82,39 @@ pnpm build
 - metric: 0 type errors
 - Baseline: 0 type errors
 
+## Waypoint Plan
+
+### WP1: LongRangeContext — 长程上下文管理器
+- 提高 maxConversationTurns 到 200（与 maxAutoContinues=200 匹配）
+- processAutoContinue 中接入 ContextWindowManager（摘要旧消息而非直接 slice）
+- 添加中间摘要机制：每 20 个 auto-continue 轮次自动触发一次 LLM 摘要
+- 关键 plan step 结果自动提取为 facts 注入 ContextWindowManager
+
+### WP2: StepVerifier — 智能步骤验证器
+- 替换简单的 verifyStepResult（非空+长度）为多维度验证
+- 验证维度：内容完整性、工具调用成功率、目标对齐度、代码质量（如果有）
+- 与 IterativeRefiner 集成：验证失败时触发 replan/decompose 策略
+- 验证结果反馈到 LongTaskEngine 的 step 跟踪
+
+### WP3: ErrorRecovery 集成 — 工具执行韧性
+- 将 ErrorRecoveryManager 的 circuit breaker 接入 ToolExecutor
+- per-tool circuit breaker（不同工具独立熔断）
+- ToolChain step 级别的超时和重试
+- 失败 step 的自动回退策略
+
+### WP4: AutonomousLoop — 自主执行循环强化
+- auto-continue 递归深度控制（防止无限递归）
+- 停滞恢复：stagnation → 自动触发 replan 或 decompose
+- 质量门控：连续 N 步验证失败时暂停并通知
+- 执行节奏控制：高速连续执行 vs 深度思考模式切换
+
+### WP5: DeliveryReport — 执行报告与交付
+- 长程任务完成后自动生成结构化交付报告
+- 包含：完成的步骤、跳过的步骤、关键决策、代码变更摘要、测试结果
+- 报告通过 consciousness 事件流输出
+- 与 LongTaskEngine checkpoint 集成，支持中途报告
+
 ## Ideas Backlog
 1. DynamicToolComposer — 动态工具组合（运行时合成新工具）
-2. InstructionFollowEvaluator — 指令遵循度评估器（量化 agent 对多步骤指令的执行准确率）
-3. LongChainExecutor — 超长链路执行器（100+ 步骤链的 checkpoint/resume + 流控）
+2. InstructionFollowEvaluator — 指令遵循度量化评估
+3. LongChainExecutor — 100+ 步骤超长链路执行器
