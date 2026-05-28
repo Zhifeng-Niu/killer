@@ -79,7 +79,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
-import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL, createDefaultSectionWeights, recordActiveSections, updateSectionWeights, getSectionWeightOffset, exportSectionWeights, importSectionWeights, type SectionWeights, classifyIntent, extractIntentSummary, trackIntentEvolution, formatIntentEvolution, type IntentNode, type IntentEvolution, evaluateSignalUtilization, updateUtilizationStats, getUnderutilizedSections, createDefaultUtilizationStats, type UtilizationStats, createDefaultStyleEvolution, extractResponseFeatures, inferSatisfactionFromReply, updateStyleEvolution, generateStyleGuidance, type StyleEvolutionModel, type ResponseStyleFeatures, createEmptyKnowledgeGraph, extractEntitiesFromMessage, extractRelationsFromMessage, getTopEntities, formatKnowledgeSummary, type ConversationKnowledgeGraph, computeRepetitionScore, computeToolEfficiency, assessCognitiveFatigue, formatFatigueGuidance, type FatigueIndicators, type CognitiveFatigueState, classifyGapSeverity, extractLastTopic, extractPendingCommitments, generateGapRecoveryStrategy, formatGapRecoveryGuidance, type GapContext, extractLessonFromQuality, extractLessonFromToolFailure, recordLesson, getRelevantLessons, formatLessonsPrompt, updateRhythmProfile, createDefaultRhythmProfile, formatRhythmGuidance, type RhythmSample, type RhythmProfile, decomposeIntent, formatIntentDecomposition, type IntentDecomposition, createEmptySemanticNetwork, extractConceptsFromMessage, extractSemanticRelations, detectIsolatedConcepts, inferImplicitRelations, formatSemanticNetworkSummary, type SemanticMemoryNetwork, assessResponseTiming, formatTimingGuidance, type ResponseTimingAssessment, generateConversationSummary, formatConversationSummary, validateResponse, formatCorrectionResult, type CorrectionResult, allocateBudget, pruneByBudget, predictNextIntent, formatNextTurnPrediction, type NextTurnPrediction, analyzeCrossModuleFeedback, formatCognitiveFeedback, type CognitiveFeedbackAnalysis, generateToolChainSuggestion, formatToolChainSuggestion, type ToolChainSuggestion, mineToolPatterns, type ToolUsageRecord, analyzeConversationMomentum, formatMomentumState, type MomentumState, calibratePersona, formatPersonaCalibration, type PersonaCalibration, detectKnowledgeGaps, formatKnowledgeGapAnalysis, type KnowledgeGapAnalysis, assessIntentChainHealth, formatIntentChainHealth, type IntentChainHealth } from './background-tasks.js';
+import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL, createDefaultSectionWeights, recordActiveSections, updateSectionWeights, getSectionWeightOffset, exportSectionWeights, importSectionWeights, type SectionWeights, classifyIntent, extractIntentSummary, trackIntentEvolution, formatIntentEvolution, type IntentNode, type IntentEvolution, evaluateSignalUtilization, updateUtilizationStats, getUnderutilizedSections, createDefaultUtilizationStats, type UtilizationStats, createDefaultStyleEvolution, extractResponseFeatures, inferSatisfactionFromReply, updateStyleEvolution, generateStyleGuidance, type StyleEvolutionModel, type ResponseStyleFeatures, createEmptyKnowledgeGraph, extractEntitiesFromMessage, extractRelationsFromMessage, getTopEntities, formatKnowledgeSummary, type ConversationKnowledgeGraph, computeRepetitionScore, computeToolEfficiency, assessCognitiveFatigue, formatFatigueGuidance, type FatigueIndicators, type CognitiveFatigueState, classifyGapSeverity, extractLastTopic, extractPendingCommitments, generateGapRecoveryStrategy, formatGapRecoveryGuidance, type GapContext, extractLessonFromQuality, extractLessonFromToolFailure, recordLesson, getRelevantLessons, formatLessonsPrompt, updateRhythmProfile, createDefaultRhythmProfile, formatRhythmGuidance, type RhythmSample, type RhythmProfile, decomposeIntent, formatIntentDecomposition, type IntentDecomposition, createEmptySemanticNetwork, extractConceptsFromMessage, extractSemanticRelations, detectIsolatedConcepts, inferImplicitRelations, formatSemanticNetworkSummary, type SemanticMemoryNetwork, assessResponseTiming, formatTimingGuidance, type ResponseTimingAssessment, generateConversationSummary, formatConversationSummary, validateResponse, formatCorrectionResult, type CorrectionResult, allocateBudget, pruneByBudget, predictNextIntent, formatNextTurnPrediction, type NextTurnPrediction, analyzeCrossModuleFeedback, formatCognitiveFeedback, type CognitiveFeedbackAnalysis, generateToolChainSuggestion, formatToolChainSuggestion, type ToolChainSuggestion, mineToolPatterns, type ToolUsageRecord, analyzeConversationMomentum, formatMomentumState, type MomentumState, calibratePersona, formatPersonaCalibration, type PersonaCalibration, detectKnowledgeGaps, formatKnowledgeGapAnalysis, type KnowledgeGapAnalysis, assessIntentChainHealth, formatIntentChainHealth, type IntentChainHealth, computeConversationEnergy, formatConversationEnergy, type ConversationEnergy } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
 import { extractFacts, type ExtractedFact } from './fact-extractor.js';
@@ -3620,6 +3620,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       'PERSONA CALIBRATION',
       'KNOWLEDGE GAPS',
       'INTENT CHAIN HEALTH',
+      'CONVERSATION ENERGY',
     ];
 
     const memoryStats = this.hippocampus.getStats();
@@ -3712,6 +3713,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       personaCalibration: this.computePersonaCalibration(),
       knowledgeGaps: this.computeKnowledgeGaps(),
       intentChainHealth: this.computeIntentChainHealth(),
+      conversationEnergy: this.computeConversationEnergyGuidance(),
       sectionWeightOffsets: exportSectionWeights(this.sectionWeights),
     });
 
@@ -3822,6 +3824,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
   private lastPersonaCalibration: PersonaCalibration | undefined;
   private lastKnowledgeGapAnalysis: KnowledgeGapAnalysis | undefined;
   private lastIntentChainHealth: IntentChainHealth | undefined;
+  private lastConversationEnergy: ConversationEnergy | undefined;
 
   private computeCorrectionGuidance(): string | undefined {
     if (!this.lastCorrectionResult || this.lastCorrectionResult.items.length === 0) return undefined;
@@ -3919,6 +3922,21 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     const health = assessIntentChainHealth(evolution, currentCategory, turnsSinceChange);
     this.lastIntentChainHealth = health;
     return formatIntentChainHealth(health);
+  }
+
+  private computeConversationEnergyGuidance(): string | undefined {
+    const userMessages = this.conversationHistory.filter(m => m.role === 'user');
+    if (userMessages.length < 3) return undefined;
+    const recentLengths = userMessages.slice(-6).map(m => m.content.length);
+    const responseTimes = userMessages.slice(-6).map((m, i) => {
+      if (i === 0) return 3000;
+      const prev = userMessages[userMessages.indexOf(m) - 1];
+      return prev?.timestamp && m.timestamp ? Math.max(100, m.timestamp - prev.timestamp) : 3000;
+    });
+    const emotionalState = this.persona.emotionalState.exportState();
+    const energy = computeConversationEnergy(recentLengths, responseTimes, emotionalState.current?.valence);
+    this.lastConversationEnergy = energy;
+    return formatConversationEnergy(energy);
   }
 
   private computeAmbiguityWarnings(): string[] | undefined {

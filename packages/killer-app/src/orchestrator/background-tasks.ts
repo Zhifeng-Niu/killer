@@ -6727,6 +6727,7 @@ const SECTION_BUDGET_WEIGHTS: Record<string, number> = {
   'PERSONA CALIBRATION': 0.04,
   'KNOWLEDGE GAPS': 0.03,
   'INTENT CHAIN HEALTH': 0.03,
+  'CONVERSATION ENERGY': 0.03,
 };
 
 /** 最小保留预算（字符） */
@@ -7860,6 +7861,122 @@ export function formatIntentChainHealth(health: IntentChainHealth): string {
   ];
   if (health.recoveryHint) {
     lines.push(`建议: ${health.recoveryHint}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * 对话能量模型 — 预测用户参与度变化
+ */
+
+export interface ConversationEnergy {
+  /** 能量级别 0-1 */
+  level: number;
+  /** 趋势 */
+  trend: 'rising' | 'stable' | 'declining' | 'crashing';
+  /** 流失风险 0-1 */
+  dropoffRisk: number;
+  /** 恢复建议 */
+  recoveryAction: string;
+}
+
+/**
+ * 计算对话能量
+ */
+export function computeConversationEnergy(
+  recentMessageLengths: number[],
+  responseTimesMs: number[],
+  emotionalValence: number | undefined,
+): ConversationEnergy {
+  if (recentMessageLengths.length === 0) {
+    return { level: 0.5, trend: 'stable', dropoffRisk: 0, recoveryAction: '' };
+  }
+
+  // === 消息长度趋势 ===
+  let lengthTrend = 0;
+  if (recentMessageLengths.length >= 3) {
+    const recent = recentMessageLengths.slice(-3);
+    const early = recentMessageLengths.slice(-6, -3);
+    if (early.length > 0) {
+      const recentAvg = recent.reduce((a, b) => a + b, 0) / recent.length;
+      const earlyAvg = early.reduce((a, b) => a + b, 0) / early.length;
+      lengthTrend = earlyAvg > 0 ? (recentAvg - earlyAvg) / earlyAvg : 0;
+    }
+  }
+
+  // === 响应时间趋势 ===
+  let speedTrend = 0;
+  if (responseTimesMs.length >= 3) {
+    const recent = responseTimesMs.slice(-3);
+    const early = responseTimesMs.slice(-6, -3);
+    if (early.length > 0) {
+      const recentAvg = recent.reduce((a, b) => a + b, 0) / recent.length;
+      const earlyAvg = early.reduce((a, b) => a + b, 0) / early.length;
+      // 响应变慢 = 能量下降
+      speedTrend = earlyAvg > 0 ? -(recentAvg - earlyAvg) / earlyAvg : 0;
+    }
+  }
+
+  // === 当前长度能量 ===
+  const lastLength = recentMessageLengths[recentMessageLengths.length - 1];
+  const lengthEnergy = Math.min(1, lastLength / 100);
+
+  // === 情感能量 ===
+  const emotionEnergy = emotionalValence !== undefined
+    ? 0.5 + emotionalValence * 0.3
+    : 0.5;
+
+  // === 综合能量 ===
+  const level = clamp01(
+    lengthEnergy * 0.35 +
+    emotionEnergy * 0.25 +
+    (0.5 + lengthTrend * 0.5) * 0.2 +
+    (0.5 + speedTrend * 0.5) * 0.2,
+  );
+
+  // === 趋势判定 ===
+  const combinedTrend = lengthTrend * 0.6 + speedTrend * 0.4;
+  let trend: ConversationEnergy['trend'];
+  if (combinedTrend > 0.2) trend = 'rising';
+  else if (combinedTrend > -0.1) trend = 'stable';
+  else if (combinedTrend > -0.4) trend = 'declining';
+  else trend = 'crashing';
+
+  // === 流失风险 ===
+  const dropoffRisk = clamp01(
+    (trend === 'crashing' ? 0.6 : trend === 'declining' ? 0.3 : 0) +
+    (level < 0.3 ? 0.3 : level < 0.5 ? 0.1 : 0),
+  );
+
+  // === 恢复建议 ===
+  let recoveryAction = '';
+  if (dropoffRisk > 0.5) {
+    recoveryAction = '用户参与度快速下降 — 提供总结或主动建议新话题以重新激活对话';
+  } else if (dropoffRisk > 0.3) {
+    recoveryAction = '用户参与度降低 — 提供更精炼的回复，尝试引入新视角';
+  }
+
+  return { level, trend, dropoffRisk, recoveryAction };
+}
+
+/**
+ * 格式化对话能量为 prompt section
+ */
+export function formatConversationEnergy(energy: ConversationEnergy): string {
+  if (energy.trend === 'stable' && energy.dropoffRisk < 0.2) return '';
+
+  const trendLabels: Record<ConversationEnergy['trend'], string> = {
+    rising: '↑上升',
+    stable: '→稳定',
+    declining: '↓下降',
+    crashing: '↓↓急降',
+  };
+
+  const lines: string[] = [
+    `能量: ${(energy.level * 100).toFixed(0)}% ${trendLabels[energy.trend]} | 流失风险: ${(energy.dropoffRisk * 100).toFixed(0)}%`,
+  ];
+  if (energy.recoveryAction) {
+    lines.push(`建议: ${energy.recoveryAction}`);
   }
   return lines.join('\n');
 }

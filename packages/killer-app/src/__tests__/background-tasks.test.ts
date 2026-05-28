@@ -158,6 +158,8 @@ import {
   formatIntentChainHealth,
   type IntentNode,
   type IntentEvolution,
+  computeConversationEnergy,
+  formatConversationEnergy,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -4819,6 +4821,77 @@ describe('background-tasks', () => {
       expect(result).toContain('碎片化');
       expect(result).toContain('30%');
       expect(result).toContain('回到主线');
+    });
+  });
+
+  describe('computeConversationEnergy', () => {
+    it('should return default for empty input', () => {
+      const result = computeConversationEnergy([], [], undefined);
+      expect(result.level).toBe(0.5);
+      expect(result.trend).toBe('stable');
+      expect(result.dropoffRisk).toBe(0);
+    });
+
+    it('should detect rising trend from growing messages', () => {
+      const result = computeConversationEnergy(
+        [20, 40, 60, 80, 120, 150],
+        [5000, 4000, 3000, 2000, 1500, 1000],
+        0.5,
+      );
+      expect(result.trend).toBe('rising');
+      expect(result.level).toBeGreaterThan(0.5);
+    });
+
+    it('should detect crashing trend from shrinking messages', () => {
+      const result = computeConversationEnergy(
+        [200, 150, 100, 50, 20, 5],
+        [1000, 2000, 5000, 10000, 20000, 30000],
+        -0.5,
+      );
+      expect(result.trend).toBe('crashing');
+      expect(result.dropoffRisk).toBeGreaterThan(0.3);
+    });
+
+    it('should detect stable trend', () => {
+      const result = computeConversationEnergy(
+        [80, 75, 85, 80, 78, 82],
+        [3000, 3200, 2800, 3100, 3000, 2900],
+        0,
+      );
+      expect(result.trend).toBe('stable');
+    });
+
+    it('should factor emotional valence into energy', () => {
+      const positive = computeConversationEnergy([80], [3000], 0.8);
+      const negative = computeConversationEnergy([80], [3000], -0.8);
+      expect(positive.level).toBeGreaterThan(negative.level);
+    });
+
+    it('should provide recovery action for high dropoff risk', () => {
+      const result = computeConversationEnergy(
+        [200, 100, 50, 20, 10, 3],
+        [1000, 5000, 15000, 25000, 40000, 50000],
+        -0.6,
+      );
+      expect(result.recoveryAction).toBeTruthy();
+    });
+  });
+
+  describe('formatConversationEnergy', () => {
+    it('should return empty for stable low-risk state', () => {
+      const result = formatConversationEnergy({
+        level: 0.7, trend: 'stable', dropoffRisk: 0.1, recoveryAction: '',
+      });
+      expect(result).toBe('');
+    });
+
+    it('should format declining energy with risk', () => {
+      const result = formatConversationEnergy({
+        level: 0.3, trend: 'declining', dropoffRisk: 0.4, recoveryAction: '精炼回复',
+      });
+      expect(result).toContain('30%');
+      expect(result).toContain('下降');
+      expect(result).toContain('精炼回复');
     });
   });
 });

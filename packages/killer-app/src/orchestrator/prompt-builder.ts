@@ -151,6 +151,8 @@ export interface PromptBuilderDeps {
   knowledgeGaps?: string;
   /** 意图链健康评估 */
   intentChainHealth?: string;
+  /** 对话能量模型 */
+  conversationEnergy?: string;
 }
 
 /**
@@ -495,6 +497,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 意图链健康评估 ===
   if (deps.intentChainHealth) {
     parts.push(`\nINTENT CHAIN HEALTH — Conversation direction self-regulation:\n${deps.intentChainHealth}`);
+  }
+
+  // === 对话能量模型 ===
+  if (deps.conversationEnergy) {
+    parts.push(`\nCONVERSATION ENERGY — User engagement self-monitoring:\n${deps.conversationEnergy}`);
   }
 
   // === 自主行动建议 ===
