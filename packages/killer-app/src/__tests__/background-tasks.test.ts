@@ -152,6 +152,8 @@ import {
   formatMomentumState,
   calibratePersona,
   formatPersonaCalibration,
+  detectKnowledgeGaps,
+  formatKnowledgeGapAnalysis,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -4662,6 +4664,71 @@ describe('background-tasks', () => {
       expect(result).toContain('技术');
       expect(result).toContain('轻松');
       expect(result).toContain('依据');
+    });
+  });
+
+  describe('detectKnowledgeGaps', () => {
+    it('should return empty gaps for simple message', () => {
+      const result = detectKnowledgeGaps('你好，今天天气怎么样？');
+      expect(result.gaps).toHaveLength(0);
+      expect(result.gapCount).toBe(0);
+      expect(result.coverageScore).toBe(1);
+    });
+
+    it('should detect unknown concepts', () => {
+      const result = detectKnowledgeGaps('什么是 React Server Components？');
+      expect(result.gaps.length).toBeGreaterThan(0);
+      expect(result.gaps[0].type).toBe('unknown_concept');
+      expect(result.gaps[0].description).toContain('React Server Components');
+      expect(result.gaps[0].severity).toBe(0.7);
+    });
+
+    it('should skip known entities', () => {
+      const result = detectKnowledgeGaps('什么是 React?', ['React']);
+      expect(result.gaps).toHaveLength(0);
+    });
+
+    it('should detect unresolved references', () => {
+      const result = detectKnowledgeGaps('之前说的那个文件怎么处理？');
+      expect(result.gaps.length).toBeGreaterThan(0);
+      expect(result.gaps.some(g => g.type === 'unresolved_reference')).toBe(true);
+    });
+
+    it('should detect missing context in long conversations', () => {
+      const result = detectKnowledgeGaps('顺便说一下 那个配置文件需要更新', [], 25);
+      expect(result.gaps.some(g => g.type === 'missing_context')).toBe(true);
+    });
+
+    it('should not detect missing context in short conversations', () => {
+      const result = detectKnowledgeGaps('顺便说一下 那个配置文件需要更新', [], 5);
+      expect(result.gaps.some(g => g.type === 'missing_context')).toBe(false);
+    });
+
+    it('should compute coverage score', () => {
+      const result = detectKnowledgeGaps('什么是 Webpack 和 Babel?', ['Webpack']);
+      expect(result.coverageScore).toBeGreaterThan(0);
+      expect(result.coverageScore).toBeLessThanOrEqual(1);
+    });
+
+    it('should limit gaps to 5', () => {
+      const longMsg = '什么是 AAA BBB CCC DDD EEE FFF GGG HHH?';
+      const result = detectKnowledgeGaps(longMsg);
+      expect(result.gaps.length).toBeLessThanOrEqual(5);
+    });
+  });
+
+  describe('formatKnowledgeGapAnalysis', () => {
+    it('should return empty for no gaps', () => {
+      const result = formatKnowledgeGapAnalysis({ gaps: [], gapCount: 0, coverageScore: 1 });
+      expect(result).toBe('');
+    });
+
+    it('should format gaps with coverage score', () => {
+      const analysis = detectKnowledgeGaps('什么是 GraphQL?');
+      const result = formatKnowledgeGapAnalysis(analysis);
+      expect(result).toContain('知识缺口');
+      expect(result).toContain('覆盖率');
+      expect(result).toContain('GraphQL');
     });
   });
 });

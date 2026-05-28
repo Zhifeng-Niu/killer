@@ -147,6 +147,8 @@ export interface PromptBuilderDeps {
   momentumGuidance?: string;
   /** Persona 自适应校准 */
   personaCalibration?: string;
+  /** 知识缺口检测 */
+  knowledgeGaps?: string;
 }
 
 /**
@@ -481,6 +483,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === Persona 自适应校准 ===
   if (deps.personaCalibration) {
     parts.push(`\nPERSONA CALIBRATION — Adapt your communication style:\n${deps.personaCalibration}`);
+  }
+
+  // === 知识缺口检测 ===
+  if (deps.knowledgeGaps) {
+    parts.push(`\nKNOWLEDGE GAPS — Detected information gaps to address:\n${deps.knowledgeGaps}`);
   }
 
   // === 自主行动建议 ===

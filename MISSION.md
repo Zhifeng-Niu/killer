@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 2440
-total_waypoints: 95
+total_waypoints: 96
 consecutive_discards: 0
 ---
 

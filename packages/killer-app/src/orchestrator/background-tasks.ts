@@ -6725,6 +6725,7 @@ const SECTION_BUDGET_WEIGHTS: Record<string, number> = {
   'TOOL CHAIN': 0.04,
   'MOMENTUM': 0.03,
   'PERSONA CALIBRATION': 0.04,
+  'KNOWLEDGE GAPS': 0.03,
 };
 
 /** 最小保留预算（字符） */
@@ -7619,5 +7620,153 @@ export function formatPersonaCalibration(calibration: PersonaCalibration): strin
     `语气: ${formalLabel} | 详尽: ${verbLabel} | 共情: ${empathLabel} | 深度: ${techLabel} | 主动: ${proactLabel}`,
     `依据: ${calibration.reasoning}`,
   ];
+  return lines.join('\n');
+}
+
+/**
+ * 主动知识缺口检测
+ */
+
+export interface KnowledgeGap {
+  /** 缺口类型 */
+  type: 'unknown_concept' | 'missing_context' | 'unresolved_reference' | 'outdated_info';
+  /** 缺口描述 */
+  description: string;
+  /** 上下文（用户提到的原话片段） */
+  context: string;
+  /** 严重度 0-1 */
+  severity: number;
+  /** 建议的研究动作 */
+  suggestedAction: string;
+}
+
+export interface KnowledgeGapAnalysis {
+  gaps: KnowledgeGap[];
+  gapCount: number;
+  coverageScore: number;
+}
+
+// 未知概念检测模式
+const UNKNOWN_CONCEPT_PATTERNS: Array<{
+  pattern: RegExp;
+  type: KnowledgeGap['type'];
+  actionTemplate: string;
+}> = [
+  {
+    pattern: /(?:什么是|what is|explain|介绍一下|tell me about)\s+([A-Z][A-Za-z0-9_.-]+(?:\s+[A-Z][A-Za-z0-9_.-]+)*)/g,
+    type: 'unknown_concept',
+    actionTemplate: '搜索 $1 相关文档和最新信息',
+  },
+  {
+    pattern: /(?:怎么用|how to use|how do I)\s+(\S+\s+(?:API|SDK|CLI|library|framework|plugin|module))/gi,
+    type: 'unknown_concept',
+    actionTemplate: '查找 $1 的使用文档',
+  },
+];
+
+// 未解析引用
+const UNRESOLVED_REF_PATTERNS: Array<{
+  pattern: RegExp;
+  type: KnowledgeGap['type'];
+  actionTemplate: string;
+}> = [
+  {
+    pattern: /(?:那个|之前说的|上次提到的|earlier|before|之前那个)\s*(.{2,20}?)(?:的|了|呢|is|was|the)?\s*(?:怎么|what|how|在哪|where)/g,
+    type: 'unresolved_reference',
+    actionTemplate: '检索记忆中关于 "$1" 的上下文',
+  },
+];
+
+/**
+ * 检测对话中的知识缺口
+ */
+export function detectKnowledgeGaps(
+  userMessage: string,
+  knownEntities: string[] = [],
+  conversationLength: number = 0,
+): KnowledgeGapAnalysis {
+  const gaps: KnowledgeGap[] = [];
+
+  // === 检测未知概念 ===
+  for (const rule of UNKNOWN_CONCEPT_PATTERNS) {
+    let match: RegExpExecArray | null;
+    const pattern = new RegExp(rule.pattern.source, rule.pattern.flags);
+    while ((match = pattern.exec(userMessage)) !== null) {
+      const concept = match[1].trim();
+      if (knownEntities.some(e => e.toLowerCase() === concept.toLowerCase())) continue;
+      if (concept.length < 3) continue;
+
+      gaps.push({
+        type: rule.type,
+        description: `未知概念: ${concept}`,
+        context: match[0],
+        severity: 0.7,
+        suggestedAction: rule.actionTemplate.replace('$1', concept),
+      });
+    }
+  }
+
+  // === 检测未解析引用 ===
+  for (const rule of UNRESOLVED_REF_PATTERNS) {
+    let match: RegExpExecArray | null;
+    const pattern = new RegExp(rule.pattern.source, rule.pattern.flags);
+    while ((match = pattern.exec(userMessage)) !== null) {
+      const ref = match[1].trim();
+      if (ref.length < 2) continue;
+
+      gaps.push({
+        type: rule.type,
+        description: `未解析引用: "${ref}"`,
+        context: match[0],
+        severity: conversationLength > 10 ? 0.5 : 0.3,
+        suggestedAction: rule.actionTemplate.replace('$1', ref),
+      });
+    }
+  }
+
+  // === 检测缺失上下文 ===
+  if (conversationLength > 20) {
+    const detailPatterns = /(?:顺便说一下|by the way|对了|补充一下|另外|additionally)\s+(.{5,40})/g;
+    let match: RegExpExecArray | null;
+    while ((match = detailPatterns.exec(userMessage)) !== null) {
+      gaps.push({
+        type: 'missing_context',
+        description: `新细节可能需要上下文: "${match[1].trim()}"`,
+        context: match[0],
+        severity: 0.4,
+        suggestedAction: '将新信息与之前讨论的主题关联',
+      });
+    }
+  }
+
+  // === 计算覆盖率 ===
+  const totalConcepts = (userMessage.match(/[A-Z][A-Za-z0-9_.]+/g) ?? []).length;
+  const coveredConcepts = knownEntities.length > 0 && totalConcepts > 0
+    ? (userMessage.match(new RegExp(`\\b(?:${knownEntities.map(e => e.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\b`, 'gi')) ?? []).length
+    : 0;
+  const coverageScore = totalConcepts > 0
+    ? Math.min(1, coveredConcepts / totalConcepts)
+    : 1;
+
+  return {
+    gaps: gaps.slice(0, 5),
+    gapCount: gaps.length,
+    coverageScore,
+  };
+}
+
+/**
+ * 格式化知识缺口分析为 prompt section
+ */
+export function formatKnowledgeGapAnalysis(analysis: KnowledgeGapAnalysis): string {
+  if (analysis.gaps.length === 0) return '';
+
+  const lines: string[] = [];
+  lines.push(`检测到 ${analysis.gaps.length} 个知识缺口 (覆盖率: ${(analysis.coverageScore * 100).toFixed(0)}%):`);
+
+  for (const gap of analysis.gaps) {
+    lines.push(`  - ${gap.description} → ${gap.suggestedAction}`);
+  }
+
   return lines.join('\n');
 }
