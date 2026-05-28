@@ -254,8 +254,8 @@ function renderContent(text: string): React.ReactNode {
     // ── Horizontal rule ──
     if (/^---+\s*$/.test(line)) {
       elements.push(
-        <Box key={`hr-${i}`} marginTop={1}>
-          <Text color={colors.faint}>{box.hDot.repeat(20)}</Text>
+        <Box key={`hr-${i}`} marginTop={1} marginLeft={1}>
+          <Text color={colors.dimmed}>{box.hDot.repeat(6)}</Text>
         </Box>
       );
       continue;
@@ -282,7 +282,12 @@ function renderContent(text: string): React.ReactNode {
         </Box>
       );
     } else if (!line.trim()) {
-      elements.push(<Text key={`blank-${i}`}>{' '}</Text>);
+      // 跳过连续空行 — 只保留一个紧凑间距
+      const prev = elements[elements.length - 1];
+      const prevIsBlank = prev != null && typeof prev === 'object' && 'key' in prev && String(prev.key).startsWith('blank-');
+      if (!prevIsBlank) {
+        elements.push(<Text key={`blank-${i}`}>{''}</Text>);
+      }
     } else if (line.match(/^\s{2,}[-*]\s/)) {
       // 嵌套无序列表（2+ 空格缩进）
       const indent = line.match(/^(\s*)/)?.[1].length ?? 0;
