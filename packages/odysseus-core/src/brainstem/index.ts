@@ -117,6 +117,7 @@ export {
   EvolveAuditTool,
   EvolveSelfTool,
   EvolveStatusTool,
+  MutateSourceTool,
 } from './evolution-tools.js';
 
 // Self-Evolution — autonomous capability improvement loop
@@ -132,6 +133,7 @@ export type {
   SelfEvolutionConfig,
   EvolutionResult,
   EvolutionLLM,
+  SourceMutator,
 } from './self-evolution-engine.js';
 
 // Auto-mission — agent creates autonomous self-improvement missions

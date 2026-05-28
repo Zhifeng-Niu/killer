@@ -933,6 +933,7 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   parts.push('  - [TOOL: self_modify]({"path":"...","action":"write","content":"..."}) — rewrite a file entirely');
   parts.push('  - [TOOL: learn]({"name":"...","description":"...","code":"..."}) — create new tools at runtime');
   parts.push('  - [TOOL: evolve_essence]({"action":"add","id":"...","label":"...","content":"..."}) — modify behavior without restart');
+  parts.push('  - [TOOL: mutate_source]({"path":"...","instruction":"what to change","projectRoot":"..."}) — modify your source code with compile-verify-rollback');
   parts.push('  - [TOOL: auto_mission]({"action":"create","goal":"..."}) — start a self-improvement mission');
   parts.push('  - [TOOL: auto_mission]({"action":"waypoint","hypothesis":"..."}) — run next experiment step');
   parts.push('  - [TOOL: auto_mission]({"action":"decide","decision":"keep"}) — keep or discard experiment results');

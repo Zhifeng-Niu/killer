@@ -6,8 +6,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ToolExecutor } from '../brainstem/tool-executor.js';
 import { ToolForge, EssenceForge } from '../brainstem/tool-forge.js';
 import { SelfEvolutionEngine } from '../brainstem/self-evolution-engine.js';
-import { EvolveAuditTool, EvolveSelfTool, EvolveStatusTool } from '../brainstem/evolution-tools.js';
-import type { EvolutionLLM } from '../brainstem/self-evolution-engine.js';
+import { EvolveAuditTool, EvolveSelfTool, EvolveStatusTool, MutateSourceTool } from '../brainstem/evolution-tools.js';
+import type { EvolutionLLM, SourceMutator } from '../brainstem/self-evolution-engine.js';
 import { mkdirSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -280,5 +280,115 @@ describe('Evolution Tools', () => {
 
       cleanup(dynamicDir);
     });
+  });
+
+  describe('MutateSourceTool', () => {
+    it('requires all parameters', async () => {
+      const { tools, toolForge, essenceForge, dynamicDir } = createTestEnv();
+      const engine = new SelfEvolutionEngine({ toolForge, essenceForge, tools });
+      const mutateTool = new MutateSourceTool(engine);
+
+      const result = await mutateTool.execute({});
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('path');
+
+      cleanup(dynamicDir);
+    });
+  });
+});
+
+describe('SelfEvolutionEngine.mutateSource', () => {
+  it('fails without LLM or mutator', async () => {
+    const { tools, toolForge, essenceForge, dynamicDir } = createTestEnv();
+    const engine = new SelfEvolutionEngine({ toolForge, essenceForge, tools });
+
+    const result = await engine.mutateSource({
+      filePath: 'packages/odysseus-core/src/brainstem/tools.ts',
+      instruction: 'Add a new method',
+      projectRoot: '/tmp',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.phase).toBe('reason');
+    cleanup(dynamicDir);
+  });
+
+  it('blocks protected modules', async () => {
+    const { tools, toolForge, essenceForge, dynamicDir } = createTestEnv();
+    const mockLLM = createMockLLM('irrelevant');
+    const mockMutator: SourceMutator = {
+      readFile: vi.fn().mockResolvedValue('export const x = 1;'),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      compile: vi.fn().mockResolvedValue({ success: true, errors: '' }),
+    };
+    const engine = new SelfEvolutionEngine({ toolForge, essenceForge, tools, llm: mockLLM, mutator: mockMutator });
+
+    const result = await engine.mutateSource({
+      filePath: 'packages/odysseus-core/src/consciousness/types.ts',
+      instruction: 'Change something',
+      projectRoot: '/tmp',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.phase).toBe('audit');
+    cleanup(dynamicDir);
+  });
+
+  it('runs full mutation cycle with rollback on compile failure', async () => {
+    const { tools, toolForge, essenceForge, dynamicDir } = createTestEnv();
+    const originalSource = 'export const x = 1;\nexport const y = 2;\n';
+    const modifiedSource = 'export const x = 42;\nexport const y = 2;\n';
+
+    const mockLLM = createMockLLM(modifiedSource);
+    let writeFileContent = '';
+    const mockMutator: SourceMutator = {
+      readFile: vi.fn().mockResolvedValue(originalSource),
+      writeFile: vi.fn().mockImplementation(async (_p: string, content: string) => {
+        writeFileContent = content;
+      }),
+      compile: vi.fn().mockResolvedValue({ success: false, errors: 'Type error on line 1' }),
+    };
+    const engine = new SelfEvolutionEngine({ toolForge, essenceForge, tools, llm: mockLLM, mutator: mockMutator });
+
+    const result = await engine.mutateSource({
+      filePath: 'packages/odysseus-core/src/brainstem/tools.ts',
+      instruction: 'Change x from 1 to 2',
+      projectRoot: '/tmp',
+    });
+
+    // Should fail (compile error) and rollback
+    expect(result.success).toBe(false);
+    expect(result.record.status).toBe('rolled_back');
+    // writeFile should have been called twice: once for mutation, once for rollback
+    expect(mockMutator.writeFile).toHaveBeenCalledTimes(2);
+    // Last write should be the original source (rollback)
+    expect(writeFileContent).toBe(originalSource);
+    cleanup(dynamicDir);
+  });
+
+  it('succeeds when compilation passes', async () => {
+    const { tools, toolForge, essenceForge, dynamicDir } = createTestEnv();
+    const originalSource = 'export const x = 1;\nexport const y = 2;\n';
+    const modifiedSource = 'export const x = 42;\nexport const y = 2;\n';
+
+    const mockLLM = createMockLLM(modifiedSource);
+    const mockMutator: SourceMutator = {
+      readFile: vi.fn().mockResolvedValue(originalSource),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      compile: vi.fn().mockResolvedValue({ success: true, errors: '' }),
+    };
+    const engine = new SelfEvolutionEngine({ toolForge, essenceForge, tools, llm: mockLLM, mutator: mockMutator });
+
+    const result = await engine.mutateSource({
+      filePath: 'packages/odysseus-core/src/brainstem/tools.ts',
+      instruction: 'Change x from 1 to 2',
+      projectRoot: '/tmp',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.phase).toBe('verify');
+    // writeFile called only once (no rollback)
+    expect(mockMutator.writeFile).toHaveBeenCalledTimes(1);
+    cleanup(dynamicDir);
   });
 });

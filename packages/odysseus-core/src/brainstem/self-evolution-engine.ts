@@ -112,6 +112,12 @@ export interface EvolutionLLM {
   complete(prompt: string): Promise<string>;
 }
 
+export interface SourceMutator {
+  readFile(path: string): Promise<string>;
+  writeFile(path: string, content: string): Promise<void>;
+  compile(projectRoot: string): Promise<{ success: boolean; errors: string }>;
+}
+
 // ── SelfEvolutionEngine ──
 
 export class SelfEvolutionEngine {
@@ -120,6 +126,7 @@ export class SelfEvolutionEngine {
   private readonly essenceForge: EssenceForge;
   private readonly tools: ToolExecutor;
   private readonly llm: EvolutionLLM | null;
+  private readonly mutator: SourceMutator | null;
   private readonly history: EvolutionRecord[] = [];
   private running = false;
 
@@ -128,12 +135,14 @@ export class SelfEvolutionEngine {
     essenceForge: EssenceForge;
     tools: ToolExecutor;
     llm?: EvolutionLLM;
+    mutator?: SourceMutator;
     config?: Partial<SelfEvolutionConfig>;
   }) {
     this.toolForge = deps.toolForge;
     this.essenceForge = deps.essenceForge;
     this.tools = deps.tools;
     this.llm = deps.llm ?? null;
+    this.mutator = deps.mutator ?? null;
     this.config = { ...DEFAULT_CONFIG, ...deps.config };
   }
 
@@ -509,6 +518,104 @@ REASON: <why not>`;
     // Trim to max
     if (this.history.length > this.config.maxHistory) {
       this.history.splice(0, this.history.length - this.config.maxHistory);
+    }
+  }
+
+  // ── Source Code Mutation ──
+
+  /**
+   * Mutate a source file: read → LLM generates modified version → write → compile → verify
+   *
+   * The agent reads its own source, describes what to change, and the engine
+   * orchestrates the full cycle with rollback on failure.
+   */
+  async mutateSource(deps: {
+    filePath: string;
+    instruction: string;
+    projectRoot: string;
+  }): Promise<EvolutionResult> {
+    if (!this.llm || !this.mutator) {
+      return this.makeResult('reason', 'failed', deps.instruction, 'Source mutation requires both LLM and SourceMutator');
+    }
+
+    if (this.running) {
+      return this.makeResult('audit', 'failed', deps.instruction, 'Evolution already in progress');
+    }
+
+    this.running = true;
+    const startTime = Date.now();
+    const id = `mut-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    try {
+      // Check protected modules
+      for (const pattern of this.config.protectedModules) {
+        if (deps.filePath.includes(pattern)) {
+          this.recordEvolution(id, 'audit', 'failed', deps.instruction, undefined, undefined, `File "${deps.filePath}" is in a protected module`, Date.now() - startTime);
+          return { success: false, phase: 'audit', record: this.history[this.history.length - 1] };
+        }
+      }
+
+      // Read current source
+      let originalSource: string;
+      try {
+        originalSource = await this.mutator.readFile(deps.filePath);
+      } catch (err) {
+        this.recordEvolution(id, 'audit', 'failed', deps.instruction, undefined, undefined, `Cannot read ${deps.filePath}: ${err instanceof Error ? err.message : String(err)}`, Date.now() - startTime);
+        return { success: false, phase: 'audit', record: this.history[this.history.length - 1] };
+      }
+
+      // LLM generates modified source
+      const mutationPrompt = `You are modifying your own source code. Apply the requested change precisely.
+
+File: ${deps.filePath}
+Current source (${originalSource.split('\n').length} lines):
+${originalSource}
+
+Requested change: ${deps.instruction}
+
+Rules:
+- Return the COMPLETE modified file content
+- Do NOT add comments explaining the change
+- Do NOT change anything unrelated to the request
+- Keep all existing imports, types, and structure
+- Return ONLY the code, no markdown fences`;
+
+      const modifiedSource = await this.llm.complete(mutationPrompt);
+      const cleanedSource = modifiedSource.replace(/^```(?:ts|typescript)?\n?/, '').replace(/\n?```$/, '').trim();
+
+      // Validate: don't write empty or tiny files
+      if (cleanedSource.length < 20) {
+        this.recordEvolution(id, 'forge', 'failed', deps.instruction, undefined, cleanedSource, 'Generated source too short (likely parsing error)', Date.now() - startTime);
+        return { success: false, phase: 'forge', record: this.history[this.history.length - 1] };
+      }
+
+      // Write modified source
+      await this.mutator.writeFile(deps.filePath, cleanedSource);
+
+      // Compile to verify
+      const compileResult = await this.mutator.compile(deps.projectRoot);
+
+      if (!compileResult.success) {
+        // Rollback: restore original source
+        await this.mutator.writeFile(deps.filePath, originalSource);
+        this.recordEvolution(id, 'validate', 'rolled_back', deps.instruction, undefined, cleanedSource, `Compilation failed (rolled back): ${compileResult.errors.slice(0, 200)}`, Date.now() - startTime);
+        return { success: false, phase: 'validate', record: this.history[this.history.length - 1] };
+      }
+
+      // Success
+      this.recordEvolution(id, 'verify', 'success', deps.instruction, undefined, cleanedSource, undefined, Date.now() - startTime);
+      return {
+        success: true,
+        phase: 'verify',
+        record: this.history[this.history.length - 1],
+        description: `Modified ${deps.filePath}: ${deps.instruction}`,
+      };
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.recordEvolution(id, 'forge', 'failed', deps.instruction, undefined, undefined, errorMsg, Date.now() - startTime);
+      return { success: false, phase: 'forge', record: this.history[this.history.length - 1] };
+    } finally {
+      this.running = false;
     }
   }
 }

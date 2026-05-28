@@ -55,6 +55,8 @@ import {
   EvolveAuditTool,
   EvolveSelfTool,
   EvolveStatusTool,
+  MutateSourceTool,
+  type SourceMutator,
   type Experiment,
   type ExperimentDecision,
   type ToolDefinition,
@@ -1290,6 +1292,28 @@ Examples:
     this.tools.register(new SelfListTool(projectRoot));
 
     // SelfEvolutionEngine — autonomous capability improvement loop
+    const sourceMutator: SourceMutator = {
+      readFile: async (filePath: string) => {
+        return fs.promises.readFile(filePath, 'utf-8');
+      },
+      writeFile: async (filePath: string, content: string) => {
+        await fs.promises.writeFile(filePath, content, 'utf-8');
+      },
+      compile: async (projectRoot: string) => {
+        const { execFileSync } = await import('node:child_process');
+        try {
+          execFileSync('npx', ['tsc', '--noEmit'], {
+            cwd: path.join(projectRoot, 'packages', 'odysseus-app'),
+            timeout: 30000,
+            encoding: 'utf-8',
+          });
+          return { success: true, errors: '' };
+        } catch (err: unknown) {
+          const output = (err as { stdout?: string; stderr?: string }).stderr ?? String(err);
+          return { success: false, errors: output.slice(0, 500) };
+        }
+      },
+    };
     this.evolutionEngine = new SelfEvolutionEngine({
       toolForge: this.toolForge,
       essenceForge: this.essenceForge,
@@ -1299,10 +1323,12 @@ Examples:
           return this.callLLMWithRetry(prompt, '');
         },
       },
+      mutator: sourceMutator,
     });
     this.tools.register(new EvolveAuditTool(this.evolutionEngine));
     this.tools.register(new EvolveSelfTool(this.evolutionEngine));
     this.tools.register(new EvolveStatusTool(this.evolutionEngine));
+    this.tools.register(new MutateSourceTool(this.evolutionEngine));
 
     // Cerebellum — 实验编排器（自主迭代引擎）+ ShellExecutor 使验证管线能真正执行命令
     const shellExecutor = new ShellExecutor(projectRoot);

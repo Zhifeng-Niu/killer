@@ -118,6 +118,55 @@ export class EvolveSelfTool implements Tool {
   }
 }
 
+// ── MutateSourceTool ──
+
+export class MutateSourceTool implements Tool {
+  readonly name = 'mutate_source';
+  readonly description =
+    'Modify your own source code at runtime. ' +
+    'Params: { path: string, instruction: string, projectRoot: string }. ' +
+    'Reads the file, sends instruction to LLM, writes modified source, compiles, and rolls back on failure.';
+  private readonly engine: SelfEvolutionEngine;
+
+  constructor(engine: SelfEvolutionEngine) {
+    this.engine = engine;
+  }
+
+  async execute(params: unknown): Promise<ToolResult> {
+    if (typeof params !== 'object' || params === null) {
+      return { success: false, error: 'Params required: { path, instruction, projectRoot }' };
+    }
+
+    const { path, instruction, projectRoot } = params as {
+      path?: string;
+      instruction?: string;
+      projectRoot?: string;
+    };
+
+    if (!path) return { success: false, error: '"path" is required — the file to modify' };
+    if (!instruction) return { success: false, error: '"instruction" is required — describe what to change' };
+    if (!projectRoot) return { success: false, error: '"projectRoot" is required — for compilation verification' };
+
+    const result = await this.engine.mutateSource({ filePath: path, instruction, projectRoot });
+
+    if (result.success) {
+      return {
+        success: true,
+        data: {
+          message: `Source mutated successfully: ${path}`,
+          description: result.description,
+          phase: result.phase,
+        },
+      };
+    }
+
+    return {
+      success: false,
+      error: `Source mutation failed at phase "${result.phase}": ${result.record.error ?? 'unknown'}`,
+    };
+  }
+}
+
 // ── EvolveStatusTool ──
 
 export class EvolveStatusTool implements Tool {
