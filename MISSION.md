@@ -5,7 +5,7 @@ started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
 best_metric: 2332
-total_waypoints: 83
+total_waypoints: 84
 consecutive_discards: 0
 ---
 
@@ -127,6 +127,7 @@ npm test 2>&1
 80. **Gap Recovery Strategy** (waypoint 81): 4-tier gap classification (brief/moderate/extended/long-absence) based on time since last user message. extractLastTopic() retrieves last topic from conversation history. extractPendingCommitments() finds I'll/TODO/need-to patterns. generateGapRecoveryStrategy() selects resume style (pickup/summary/fresh-context/check-in) with context points and suggested directions. GAP RECOVERY prompt section injected for gaps > 5 minutes. Agent tracks lastUserMessageTimestamp. Tests: 2313 total (94 files, 0 failures)
 81. **Active Learning Loop** (waypoint 82): LearnedLesson system with 5 categories (tool-choice/strategy/response-quality/context-loss/user-preference). extractLessonFromQuality() generates lessons from low-quality responses (score < 0.5). extractLessonFromToolFailure() captures tool-specific failure patterns. recordLesson() deduplicates and boosts confidence on repeated lessons. getRelevantLessons() matches context to find applicable lessons. formatLessonsPrompt() structures as "when X → avoid Y → prefer Z". LEARNED LESSONS prompt section injected. Agent records lessons on low quality evaluation and tool execution failure. Tests: 2323 total (10 learning loop tests)
 82. **Conversation Rhythm Adaptation** (waypoint 83): inferCadence() classifies user input pattern as rapid-fire/measured/deliberate/burst-pause based on interval and message length. RhythmProfile tracks avg interval, avg length, cadence, suggested response style (brief/balanced/detailed), and wait strategy (respond-immediately/pause-for-continuation/wait-for-completion). RHYTHM ADAPTATION prompt section injected. Agent tracks RhythmSample on each user message. Tests: 2332 total (9 rhythm tests)
+83. **Cognitive State Cross-Session Persistence** (waypoint 84): Extended SessionSnapshot with cognitiveState field containing sectionWeights, knowledgeGraph, rhythmProfile, and turnCounter. saveSession() serializes cognitive module state to disk. loadIdentityFromSession() restores section weights, knowledge graph entities/relations, rhythm profile, and turn counter on boot. Enables continuous intelligence growth across sessions — learned patterns and accumulated knowledge survive restarts. Tests: 2332 passing
 
 ### Dead Ends
 {Auto-updated by engine.}

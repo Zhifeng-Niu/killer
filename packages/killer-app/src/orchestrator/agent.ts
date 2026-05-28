@@ -555,6 +555,15 @@ export class KillerAgent {
       },
       memory: baseState.memory,
       hippocampusData: this.hippocampus.export() as Record<string, unknown>,
+      cognitiveState: {
+        sectionWeights: { offsets: this.sectionWeights.offsets, lastActiveSections: this.sectionWeights.lastActiveSections, updates: this.sectionWeights.updates },
+        knowledgeGraph: {
+          entities: [...this.knowledgeGraph.entities.entries()],
+          relations: this.knowledgeGraph.relations,
+        },
+        rhythmProfile: this.rhythmProfile,
+        turnCounter: this.turnCounter,
+      },
     };
   }
 
@@ -2181,6 +2190,16 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         behavioralInsights: [...this.behavioralInsights],
         // Tool performance tracking
         toolPerformance: this.exportToolPerformance(),
+        // Cognitive module state
+        cognitiveState: {
+          sectionWeights: { offsets: this.sectionWeights.offsets, lastActiveSections: this.sectionWeights.lastActiveSections, updates: this.sectionWeights.updates },
+          knowledgeGraph: {
+            entities: [...this.knowledgeGraph.entities.entries()],
+            relations: this.knowledgeGraph.relations,
+          },
+          rhythmProfile: this.rhythmProfile,
+          turnCounter: this.turnCounter,
+        },
       };
       // 原子写入：temp + rename 防止崩溃损坏
       const tmpPath = filePath + '.tmp';
@@ -2333,6 +2352,37 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       if (data.toolPerformance && typeof data.toolPerformance === 'object') {
         this.importToolPerformance(data.toolPerformance);
         if (Object.keys(data.toolPerformance).length > 0) restored++;
+      }
+
+      // Restore cognitive module state
+      if (data.cognitiveState && typeof data.cognitiveState === 'object') {
+        try {
+          const cs = data.cognitiveState;
+          if (cs.sectionWeights) {
+            this.sectionWeights = {
+              offsets: cs.sectionWeights.offsets ?? {},
+              lastActiveSections: cs.sectionWeights.lastActiveSections ?? [],
+              updates: cs.sectionWeights.updates ?? 0,
+            };
+            restored++;
+          }
+          if (cs.knowledgeGraph) {
+            this.knowledgeGraph = {
+              entities: new Map(cs.knowledgeGraph.entities ?? []),
+              relations: cs.knowledgeGraph.relations ?? [],
+            };
+            restored++;
+          }
+          if (cs.rhythmProfile) {
+            this.rhythmProfile = cs.rhythmProfile;
+            restored++;
+          }
+          if (typeof cs.turnCounter === 'number') {
+            this.turnCounter = cs.turnCounter;
+          }
+        } catch {
+          // 认知状态恢复失败不阻止启动
+        }
       }
 
       if (restored > 0) {

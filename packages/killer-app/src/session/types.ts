@@ -69,6 +69,13 @@ export interface SessionSnapshot {
     };
     /** HippocampusEngine 完整记忆数据（episodic, semantic, procedural, prospective, narrative） */
     hippocampusData?: Record<string, unknown>;
+    /** 认知模块持久化状态 */
+    cognitiveState?: {
+      sectionWeights?: { offsets: Record<string, number>; lastActiveSections: string[]; updates: number };
+      knowledgeGraph?: { entities: Array<[string, { name: string; type: string; mentions: number; firstMentioned: number }]>; relations: Array<{ from: string; to: string; relation: string; confidence: number }> };
+      rhythmProfile?: { avgIntervalSec: number; avgMessageLength: number; cadence: string; suggestedResponseStyle: string; suggestedWaitStrategy: string };
+      turnCounter?: number;
+    };
   };
   config: {
     llmProvider: string;
