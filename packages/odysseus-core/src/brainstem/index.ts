@@ -181,3 +181,30 @@ export type {
   FallbackFn,
   ErrorRecoveryConfig,
 } from './error-recovery.js';
+
+// Tool Chain — multi-step tool orchestration
+export { ToolChain } from './tool-chain.js';
+export type {
+  ChainStep,
+  ToolStep,
+  ParallelStep,
+  BranchStep,
+  LoopStep,
+  TransformStep,
+  ChainResult,
+} from './tool-chain.js';
+
+// Execution Context — cross-step state passing
+export { ExecutionContext } from './execution-context.js';
+
+// Scheduled Task Runner — timed and recurring task scheduling
+export {
+  ScheduledTaskRunner,
+} from './scheduled-task-runner.js';
+export type {
+  ScheduledTask,
+  OnceSchedule,
+  RecurringSchedule,
+  CronSchedule,
+  TaskExecutionResult,
+} from './scheduled-task-runner.js';

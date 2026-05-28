@@ -44,3 +44,12 @@ export type {
   RefinementRound,
   IterativeRefinerConfig,
 } from './iterative-refiner.js';
+
+// Instruction Parser — structured instruction parsing
+export {
+  InstructionParser,
+} from './instruction-parser.js';
+export type {
+  ParsedStep,
+  ParsedInstruction,
+} from './instruction-parser.js';

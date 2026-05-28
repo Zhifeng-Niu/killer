@@ -75,6 +75,13 @@ import {
   SelfMonitor,
   type HealthReport,
   type StagnationReport,
+  ToolChain,
+  ExecutionContext,
+  ScheduledTaskRunner,
+  InstructionParser,
+  type ParsedInstruction,
+  type ChainResult,
+  type TaskExecutionResult,
 } from '@odysseus/core';
 import { ShellExecutor } from './shell-executor.js';
 import { SensoryRouter, CLIChannel, OutputManager } from '../sensory/index.js';
@@ -169,6 +176,8 @@ export class OdysseusAgent implements IDriveSource {
   iterativeRefiner!: IterativeRefiner;
   errorRecovery!: ErrorRecoveryManager;
   selfMonitor!: SelfMonitor;
+  instructionParser!: InstructionParser;
+  scheduledRunner!: ScheduledTaskRunner;
   readonly hooks: LifecycleHooks = new LifecycleHooks();
   readonly middleware: MiddlewarePipeline = new MiddlewarePipeline();
   readonly contextWindow: ContextWindowManager = new ContextWindowManager();
@@ -476,7 +485,8 @@ export class OdysseusAgent implements IDriveSource {
     // 停止自我监控和长程任务引擎
     this.selfMonitor?.stop();
     this.longTaskEngine?.destroy();
-    this.logger.info('SelfMonitor and LongTaskEngine stopped');
+    this.scheduledRunner?.destroy();
+    this.logger.info('SelfMonitor, LongTaskEngine and ScheduledTaskRunner stopped');
 
     // 停止 hippocampus 定时器（dream/decay intervals）
     try {
@@ -1421,11 +1431,14 @@ Examples:
         debug: (msg: string) => this.logger.debug(msg),
       },
     );
+
+    // Instruction Parser — 结构化指令解析
+    this.instructionParser = new InstructionParser(this.config.llm);
+
+    // Scheduled Task Runner — 定时任务调度
+    this.scheduledRunner = new ScheduledTaskRunner();
   }
 
-  /**
-   * 连接模块
-   */
   private wireModules(): void {
     this.logger.info('Wiring modules together...');
 
@@ -2151,6 +2164,10 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     // 启动自我监控
     this.selfMonitor?.start();
     this.logger.info('SelfMonitor started');
+
+    // 启动定时任务调度器
+    this.scheduledRunner?.start();
+    this.logger.info('ScheduledTaskRunner started');
 
     // 订阅主循环事件以更新状态
     this.brainstem.on('phaseChange', (state) => {
