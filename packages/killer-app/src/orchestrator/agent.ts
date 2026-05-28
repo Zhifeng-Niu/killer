@@ -1471,6 +1471,36 @@ Examples:
   }
 
   /**
+   * 自主执行快速路径 — 跳过用户专用处理，直接执行 plan step
+   */
+  private async processAutoContinue(
+    content: string,
+    onToken?: (token: string) => void,
+    onStatus?: (status: string) => void,
+  ): Promise<{ content: string }> {
+    this.lastActivityAt = Date.now();
+    onStatus?.('Auto-executing...');
+
+    // 解析 plan ID 和 step 信息
+    const planMatch = content.match(/Plan "([^"]+)" step (\d+)\/(\d+): (.+)/);
+    const stepDesc = planMatch ? planMatch[4] : content.replace('[AUTO-CONTINUE] ', '');
+
+    // 构建 prompt（轻量版 — 不含用户画像、情感等）
+    const systemContext = this.buildSystemPrompt(stepDesc);
+    const response = await this.runNativeToolLoop(stepDesc, systemContext, onToken, onStatus);
+
+    // 最小状态更新 — 只记对话历史
+    this.conversationHistory.push({ role: 'user', content, timestamp: Date.now() });
+    this.conversationHistory.push({ role: 'assistant', content: response, timestamp: Date.now() });
+    if (this.conversationHistory.length > this.maxConversationTurns * 2) {
+      this.conversationHistory = this.conversationHistory.slice(-this.maxConversationTurns * 2);
+    }
+
+    this.logger.info(`Auto-continue completed: "${stepDesc.slice(0, 50)}" → ${response.length} chars`);
+    return { content: response };
+  }
+
+  /**
    * 当计划步骤失败时，尝试用 Cerebellum 做实验寻找替代方案
    */
   private async triggerExperimentForFailedStep(
@@ -2622,6 +2652,11 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     onToken?: (token: string) => void,
     onStatus?: (status: string) => void,
   ): Promise<{ content: string }> {
+    // === 自主执行快速路径 ===
+    if (content.startsWith('[AUTO-CONTINUE]')) {
+      return await this.processAutoContinue(content, onToken, onStatus);
+    }
+
     // 标记活跃时间，用于后台任务判断空闲
     this.previousInteractionTimestamp = this.lastInteractionTimestamp;
     this.lastActivityAt = Date.now();
