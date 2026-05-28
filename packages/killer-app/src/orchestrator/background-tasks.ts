@@ -2873,6 +2873,7 @@ export function scoreSectionRelevance(
     'KNOWLEDGE GRAPH': 0.5,
     'COGNITIVE FATIGUE': 0.65,
     'GAP RECOVERY': 0.7,
+    'LEARNED LESSONS': 0.6,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -5175,4 +5176,173 @@ export function formatGapRecoveryGuidance(strategy: GapRecoveryStrategy): string
   }
 
   return parts.join(' | ');
+}
+
+// ==================== 主动学习闭环 ====================
+
+export type LessonCategory = 'tool-choice' | 'strategy' | 'response-quality' | 'context-loss' | 'user-preference';
+
+export interface LearnedLesson {
+  /** 教训类别 */
+  category: LessonCategory;
+  /** 触发条件：什么时候应用这条教训 */
+  trigger: string;
+  /** 要避免的行为 */
+  avoid: string;
+  /** 推荐的行为 */
+  prefer: string;
+  /** 置信度 0-1（基于发生次数和成功率） */
+  confidence: number;
+  /** 记录时间 */
+  timestamp: number;
+  /** 发生次数 */
+  occurrences: number;
+}
+
+const MAX_LESSONS = 30;
+const LESSON_MIN_CONFIDENCE = 0.5;
+
+const lessons: LearnedLesson[] = [];
+
+/**
+ * 从质量评估结果提取教训
+ */
+export function extractLessonFromQuality(
+  qualityScore: number,
+  signals: string[],
+  recentContext: string,
+): LearnedLesson | undefined {
+  if (qualityScore >= 0.6) return undefined;
+  if (signals.length === 0) return undefined;
+
+  const signal = signals[0];
+  let category: LessonCategory = 'response-quality';
+  let avoid = 'verbose or off-topic responses';
+  let prefer = 'focused, concise answers';
+
+  if (signal.includes('repetition')) {
+    category = 'response-quality';
+    avoid = 'repeating previous response patterns';
+    prefer = 'generate fresh responses with new information';
+  } else if (signal.includes('off-topic') || signal.includes('tangent')) {
+    category = 'strategy';
+    avoid = 'exploring tangential topics';
+    prefer = 'stay focused on the current question';
+  } else if (signal.includes('shallow') || signal.includes('surface')) {
+    category = 'response-quality';
+    avoid = 'surface-level analysis';
+    prefer = 'provide deeper reasoning and evidence';
+  }
+
+  return {
+    category,
+    trigger: recentContext.slice(0, 80),
+    avoid,
+    prefer,
+    confidence: 0.5 + (1 - qualityScore) * 0.3,
+    timestamp: Date.now(),
+    occurrences: 1,
+  };
+}
+
+/**
+ * 从工具失败提取教训
+ */
+export function extractLessonFromToolFailure(
+  toolName: string,
+  failureType: string,
+  errorMessage: string,
+): LearnedLesson | undefined {
+  let avoid: string;
+  let prefer: string;
+
+  switch (failureType) {
+    case 'timeout':
+      avoid = `using ${toolName} for large inputs without batching`;
+      prefer = `batch inputs or use a faster alternative to ${toolName}`;
+      break;
+    case 'permission_denied':
+      avoid = `calling ${toolName} without checking permissions first`;
+      prefer = `verify permissions before using ${toolName}`;
+      break;
+    case 'invalid_args':
+      avoid = `passing incorrect arguments to ${toolName}`;
+      prefer = `validate arguments format for ${toolName} before calling`;
+      break;
+    default:
+      avoid = `calling ${toolName} when it's likely to fail`;
+      prefer = `check preconditions before using ${toolName}`;
+  }
+
+  return {
+    category: 'tool-choice',
+    trigger: `using ${toolName}`,
+    avoid,
+    prefer,
+    confidence: 0.6,
+    timestamp: Date.now(),
+    occurrences: 1,
+  };
+}
+
+/**
+ * 记录教训并去重/增强
+ */
+export function recordLesson(lesson: LearnedLesson): void {
+  // 查找相似的已有教训
+  const existing = lessons.find(
+    l => l.category === lesson.category && l.trigger === lesson.trigger,
+  );
+
+  if (existing) {
+    // 增强已有教训
+    existing.occurrences++;
+    existing.confidence = Math.min(1, existing.confidence + 0.1);
+    existing.timestamp = Date.now();
+    // 保留最新的 avoid/prefer
+    existing.avoid = lesson.avoid;
+    existing.prefer = lesson.prefer;
+  } else {
+    lessons.push({ ...lesson });
+    if (lessons.length > MAX_LESSONS) {
+      // 移除最旧的教训
+      const oldestIdx = lessons.reduce((min, l, i) => l.timestamp < lessons[min].timestamp ? i : min, 0);
+      lessons.splice(oldestIdx, 1);
+    }
+  }
+}
+
+/**
+ * 获取与当前上下文相关的教训
+ */
+export function getRelevantLessons(context: string, maxCount: number = 5): LearnedLesson[] {
+  const contextLower = context.toLowerCase();
+  return lessons
+    .filter(l => l.confidence >= LESSON_MIN_CONFIDENCE)
+    .filter(l => {
+      const triggerLower = l.trigger.toLowerCase();
+      // 简单关键词匹配
+      return contextLower.includes(triggerLower.slice(0, 20)) ||
+        triggerLower.split(/\s+/).some(w => w.length > 3 && contextLower.includes(w));
+    })
+    .sort((a, b) => b.confidence * b.occurrences - a.confidence * a.occurrences)
+    .slice(0, maxCount);
+}
+
+/**
+ * 格式化教训为 prompt 注入文本
+ */
+export function formatLessonsPrompt(lessonsToFormat: LearnedLesson[]): string | undefined {
+  if (lessonsToFormat.length === 0) return undefined;
+
+  return lessonsToFormat
+    .map(l => `when ${l.trigger.slice(0, 50)} → avoid: ${l.avoid} → prefer: ${l.prefer} (${l.confidence.toFixed(1)} confidence, ${l.occurrences}x)`)
+    .join('\n');
+}
+
+/**
+ * 清除教训（测试用）
+ */
+export function clearLessons(): void {
+  lessons.length = 0;
 }

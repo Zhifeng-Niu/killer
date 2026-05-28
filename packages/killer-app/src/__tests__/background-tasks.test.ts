@@ -98,6 +98,13 @@ import {
   generateGapRecoveryStrategy,
   formatGapRecoveryGuidance,
   type GapContext,
+  extractLessonFromQuality,
+  extractLessonFromToolFailure,
+  recordLesson,
+  getRelevantLessons,
+  formatLessonsPrompt,
+  clearLessons,
+  type LearnedLesson,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -3543,6 +3550,101 @@ describe('background-tasks', () => {
       };
       const strategy = generateGapRecoveryStrategy(ctx);
       expect(formatGapRecoveryGuidance(strategy)).toBeUndefined();
+    });
+  });
+
+  describe('Active Learning Loop', () => {
+    beforeEach(() => { clearLessons(); });
+
+    it('should extract lesson from low quality score', () => {
+      const lesson = extractLessonFromQuality(0.3, ['repetition'], 'user asked about auth');
+      expect(lesson).toBeDefined();
+      expect(lesson!.category).toBe('response-quality');
+      expect(lesson!.avoid).toContain('repeating');
+    });
+
+    it('should return undefined for good quality', () => {
+      expect(extractLessonFromQuality(0.8, [], 'test')).toBeUndefined();
+    });
+
+    it('should extract strategy lesson for off-topic signal', () => {
+      const lesson = extractLessonFromQuality(0.4, ['off-topic tangent'], 'discussion about API');
+      expect(lesson).toBeDefined();
+      expect(lesson!.category).toBe('strategy');
+      expect(lesson!.prefer).toContain('focused');
+    });
+
+    it('should extract lesson from tool failure', () => {
+      const lesson = extractLessonFromToolFailure('search', 'timeout', 'timeout exceeded');
+      expect(lesson).toBeDefined();
+      expect(lesson!.category).toBe('tool-choice');
+      expect(lesson!.avoid).toContain('search');
+    });
+
+    it('should extract permission lesson', () => {
+      const lesson = extractLessonFromToolFailure('file_write', 'permission_denied', 'access denied');
+      expect(lesson!.prefer).toContain('verify permissions');
+    });
+
+    it('should record and deduplicate lessons', () => {
+      const lesson: LearnedLesson = {
+        category: 'tool-choice',
+        trigger: 'using search tool',
+        avoid: 'searching without filters',
+        prefer: 'use specific search terms',
+        confidence: 0.6,
+        timestamp: Date.now(),
+        occurrences: 1,
+      };
+      recordLesson(lesson);
+      recordLesson({ ...lesson, timestamp: Date.now() });
+      const relevant = getRelevantLessons('using search tool for queries');
+      expect(relevant.length).toBe(1);
+      expect(relevant[0].occurrences).toBe(2);
+    });
+
+    it('should boost confidence on repeated lessons', () => {
+      const lesson: LearnedLesson = {
+        category: 'response-quality',
+        trigger: 'deep technical question',
+        avoid: 'shallow answers',
+        prefer: 'detailed analysis',
+        confidence: 0.5,
+        timestamp: Date.now(),
+        occurrences: 1,
+      };
+      recordLesson(lesson);
+      recordLesson({ ...lesson, timestamp: Date.now() });
+      const relevant = getRelevantLessons('deep technical question');
+      expect(relevant[0].confidence).toBeGreaterThan(0.5);
+    });
+
+    it('should filter lessons by context relevance', () => {
+      recordLesson({
+        category: 'tool-choice', trigger: 'using database', avoid: 'no index',
+        prefer: 'add index', confidence: 0.8, timestamp: Date.now(), occurrences: 1,
+      });
+      recordLesson({
+        category: 'tool-choice', trigger: 'using search', avoid: 'broad queries',
+        prefer: 'specific terms', confidence: 0.8, timestamp: Date.now(), occurrences: 1,
+      });
+      const relevant = getRelevantLessons('searching for files');
+      expect(relevant.length).toBe(1);
+      expect(relevant[0].trigger).toContain('search');
+    });
+
+    it('should format lessons as prompt text', () => {
+      recordLesson({
+        category: 'strategy', trigger: 'complex refactoring', avoid: 'changing too many files',
+        prefer: 'incremental changes', confidence: 0.8, timestamp: Date.now(), occurrences: 3,
+      });
+      const formatted = formatLessonsPrompt(getRelevantLessons('complex refactoring'));
+      expect(formatted).toContain('avoid');
+      expect(formatted).toContain('prefer');
+    });
+
+    it('should return undefined for empty lessons', () => {
+      expect(formatLessonsPrompt([])).toBeUndefined();
     });
   });
 });

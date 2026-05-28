@@ -121,6 +121,8 @@ export interface PromptBuilderDeps {
   fatigueGuidance?: string;
   /** 对话中断恢复指导 */
   gapRecoveryGuidance?: string;
+  /** 学到的教训 */
+  learnedLessons?: string;
 }
 
 /**
@@ -395,6 +397,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 对话中断恢复 ===
   if (deps.gapRecoveryGuidance) {
     parts.push(`\nGAP RECOVERY — ${deps.gapRecoveryGuidance}`);
+  }
+
+  // === 学到的教训 ===
+  if (deps.learnedLessons) {
+    parts.push(`\nLEARNED LESSONS — From past experience:\n${deps.learnedLessons}`);
   }
 
   // === 自主行动建议 ===

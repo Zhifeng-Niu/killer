@@ -4,8 +4,8 @@ status: active
 started_at: 2026-05-27T14:24:55Z
 expedition_branch: odyssey/20260527-222455
 baseline_metric: 747
-best_metric: 2313
-total_waypoints: 81
+best_metric: 2323
+total_waypoints: 82
 consecutive_discards: 0
 ---
 
@@ -125,6 +125,7 @@ npm test 2>&1
 78. **Knowledge Graph Agent Integration** (waypoint 79): Wire ConversationKnowledgeGraph into the agent's processInputCore — entities and relations extracted from every user message, accumulated across turns. Knowledge summary injected into system prompt via KNOWLEDGE GRAPH section. Added to SECTION_PREFIXES and baseScores for adaptive pruning. Fixed normalizeFeature type narrowing bug. Tests: 2290 (337 background-tasks + 1543 killer-app + 747 killer-core)
 79. **Cognitive Fatigue Detection** (waypoint 80): computeRepetitionScore() tracks Jaccard overlap between recent responses. computeToolEfficiency() measures success rate × speed decay. assessCognitiveFatigue() combines 4 indicators (repetition/efficiency/emotion/strategy) into fatigue level 0-1 with 3-tier recommendations (lighten/refocus/suggest-break). Fatigue guidance injected via COGNITIVE FATIGUE prompt section. Agent tracks recentResponses and recentToolResults for continuous assessment. Tests: 349 background-tasks + 12 fatigue tests
 80. **Gap Recovery Strategy** (waypoint 81): 4-tier gap classification (brief/moderate/extended/long-absence) based on time since last user message. extractLastTopic() retrieves last topic from conversation history. extractPendingCommitments() finds I'll/TODO/need-to patterns. generateGapRecoveryStrategy() selects resume style (pickup/summary/fresh-context/check-in) with context points and suggested directions. GAP RECOVERY prompt section injected for gaps > 5 minutes. Agent tracks lastUserMessageTimestamp. Tests: 2313 total (94 files, 0 failures)
+81. **Active Learning Loop** (waypoint 82): LearnedLesson system with 5 categories (tool-choice/strategy/response-quality/context-loss/user-preference). extractLessonFromQuality() generates lessons from low-quality responses (score < 0.5). extractLessonFromToolFailure() captures tool-specific failure patterns. recordLesson() deduplicates and boosts confidence on repeated lessons. getRelevantLessons() matches context to find applicable lessons. formatLessonsPrompt() structures as "when X → avoid Y → prefer Z". LEARNED LESSONS prompt section injected. Agent records lessons on low quality evaluation and tool execution failure. Tests: 2323 total (10 learning loop tests)
 
 ### Dead Ends
 {Auto-updated by engine.}
