@@ -38,10 +38,15 @@ export class PlanExecutor {
     timestamp: number;
   }>;
 
+  /** 步骤重试计数 */
+  private readonly stepRetryCount: Map<string, number>;
+  private static readonly MAX_STEP_RETRIES = 2;
+
   constructor(planner: Planner, config: PrefrontalConfig = DEFAULT_PREFRONTAL_CONFIG) {
     this.planner = planner;
     this.config = config;
     this.plans = new Map();
+    this.stepRetryCount = new Map();
     this.goalToPlans = new Map();
     this.executionHistory = [];
   }
@@ -103,21 +108,28 @@ export class PlanExecutor {
       throw new Error(`Plan not found: ${planId}`);
     }
 
-    // 更新步骤状态
-    let updatedPlan = this.planner.updateStepStatus(
-      plan,
-      stepId,
-      result.success ? 'completed' : 'failed',
-      result
-    );
+    if (result.success) {
+      this.stepRetryCount.delete(stepId);
+      const updatedPlan = this.planner.updateStepStatus(plan, stepId, 'completed', result);
+      this.plans.set(planId, updatedPlan);
+    } else {
+      const retries = (this.stepRetryCount.get(stepId) ?? 0) + 1;
+      this.stepRetryCount.set(stepId, retries);
 
-    // 如果步骤失败且策略不是探索性，触发重新规划
-    if (!result.success && updatedPlan.strategy !== 'exploratory') {
-      updatedPlan = this.planner.replan(updatedPlan, stepId);
+      if (retries < PlanExecutor.MAX_STEP_RETRIES) {
+        // 标记为 ready 以便重试
+        const updatedPlan = this.planner.updateStepStatus(plan, stepId, 'ready', result);
+        this.plans.set(planId, updatedPlan);
+      } else {
+        // 重试耗尽 — 标记为 skipped 让执行流继续
+        this.stepRetryCount.delete(stepId);
+        let updatedPlan = this.planner.updateStepStatus(plan, stepId, 'skipped', result);
+        if (updatedPlan.strategy !== 'exploratory') {
+          updatedPlan = this.planner.replan(updatedPlan, stepId);
+        }
+        this.plans.set(planId, updatedPlan);
+      }
     }
-
-    // 更新存储的计划
-    this.plans.set(planId, updatedPlan);
 
     // 记录执行历史
     this.executionHistory.push({

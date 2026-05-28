@@ -274,8 +274,18 @@ describe('Prefrontal Cortex', () => {
 
       executor.reportStepResult(plan.id, firstStep!.id, failResult);
 
-      const updatedPlan = executor.getPlan(plan.id);
-      // Failed step should have alternative
+      // First failure resets to 'ready' for retry
+      let updatedPlan = executor.getPlan(plan.id);
+      expect(updatedPlan?.steps[0].status).toBe('ready');
+
+      // Second failure also resets to 'ready'
+      executor.reportStepResult(plan.id, firstStep!.id, failResult);
+      updatedPlan = executor.getPlan(plan.id);
+      expect(updatedPlan?.steps[0].status).toBe('ready');
+
+      // Third failure exhausts retries → skipped + replan
+      executor.reportStepResult(plan.id, firstStep!.id, failResult);
+      updatedPlan = executor.getPlan(plan.id);
       expect(updatedPlan?.steps[0].description).toContain('Alternative approach');
     });
 

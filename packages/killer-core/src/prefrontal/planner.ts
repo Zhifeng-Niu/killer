@@ -215,10 +215,10 @@ export class Planner {
         return false;
       }
 
-      // 检查所有依赖是否完成
+      // 检查所有依赖是否完成或已跳过（跳过的步骤视为可继续）
       for (const depId of step.dependencies) {
         const depStep = plan.steps.find(s => s.id === depId);
-        if (!depStep || depStep.status !== 'completed') {
+        if (!depStep || (depStep.status !== 'completed' && depStep.status !== 'skipped')) {
           return false;
         }
       }
@@ -248,8 +248,8 @@ export class Planner {
       result,
     };
 
-    // 如果步骤完成，解锁后续步骤
-    if (status === 'completed') {
+    // 如果步骤完成或跳过，解锁后续步骤
+    if (status === 'completed' || status === 'skipped') {
       for (let i = stepIndex + 1; i < newSteps.length; i++) {
         if (newSteps[i].dependencies.includes(stepId) && this.allDepsCompleted(newSteps[i], newSteps)) {
           newSteps[i].status = 'ready';
@@ -289,7 +289,7 @@ export class Planner {
   private allDepsCompleted(step: PlanStep, allSteps: PlanStep[]): boolean {
     return step.dependencies.every(depId => {
       const depStep = allSteps.find(s => s.id === depId);
-      return depStep?.status === 'completed';
+      return depStep?.status === 'completed' || depStep?.status === 'skipped';
     });
   }
 }
