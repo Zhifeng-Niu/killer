@@ -123,6 +123,8 @@ export interface PromptBuilderDeps {
   gapRecoveryGuidance?: string;
   /** 学到的教训 */
   learnedLessons?: string;
+  /** 对话节奏指导 */
+  rhythmGuidance?: string;
 }
 
 /**
@@ -402,6 +404,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 学到的教训 ===
   if (deps.learnedLessons) {
     parts.push(`\nLEARNED LESSONS — From past experience:\n${deps.learnedLessons}`);
+  }
+
+  // === 对话节奏自适应 ===
+  if (deps.rhythmGuidance) {
+    parts.push(`\nRHYTHM ADAPTATION — ${deps.rhythmGuidance}`);
   }
 
   // === 自主行动建议 ===

@@ -105,6 +105,13 @@ import {
   formatLessonsPrompt,
   clearLessons,
   type LearnedLesson,
+  inferCadence,
+  inferResponseStyle,
+  inferWaitStrategy,
+  updateRhythmProfile,
+  createDefaultRhythmProfile,
+  formatRhythmGuidance,
+  type RhythmSample,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -3645,6 +3652,83 @@ describe('background-tasks', () => {
 
     it('should return undefined for empty lessons', () => {
       expect(formatLessonsPrompt([])).toBeUndefined();
+    });
+  });
+
+  describe('Conversation Rhythm Adaptation', () => {
+    it('should detect rapid-fire cadence', () => {
+      const samples: RhythmSample[] = [
+        { timestamp: 1000, messageLength: 10 },
+        { timestamp: 8000, messageLength: 15 },
+        { timestamp: 14000, messageLength: 12 },
+        { timestamp: 20000, messageLength: 8 },
+      ];
+      expect(inferCadence(samples)).toBe('rapid-fire');
+    });
+
+    it('should detect deliberate cadence', () => {
+      const samples: RhythmSample[] = [
+        { timestamp: 1000, messageLength: 150 },
+        { timestamp: 180000, messageLength: 200 },
+        { timestamp: 360000, messageLength: 180 },
+      ];
+      expect(inferCadence(samples)).toBe('deliberate');
+    });
+
+    it('should detect burst-pause cadence', () => {
+      const samples: RhythmSample[] = [
+        { timestamp: 1000, messageLength: 120 },
+        { timestamp: 15000, messageLength: 150 },
+        { timestamp: 28000, messageLength: 90 },
+      ];
+      expect(inferCadence(samples)).toBe('burst-pause');
+    });
+
+    it('should default to measured for balanced patterns', () => {
+      const samples: RhythmSample[] = [
+        { timestamp: 1000, messageLength: 40 },
+        { timestamp: 60000, messageLength: 50 },
+      ];
+      expect(inferCadence(samples)).toBe('measured');
+    });
+
+    it('should return measured for insufficient samples', () => {
+      expect(inferCadence([])).toBe('measured');
+      expect(inferCadence([{ timestamp: 1000, messageLength: 10 }])).toBe('measured');
+    });
+
+    it('should suggest brief responses for rapid-fire', () => {
+      expect(inferResponseStyle('rapid-fire')).toBe('brief');
+      expect(inferResponseStyle('deliberate')).toBe('detailed');
+      expect(inferResponseStyle('measured')).toBe('balanced');
+    });
+
+    it('should suggest wait strategy based on cadence', () => {
+      expect(inferWaitStrategy('rapid-fire')).toBe('pause-for-continuation');
+      expect(inferWaitStrategy('burst-pause')).toBe('wait-for-completion');
+      expect(inferWaitStrategy('deliberate')).toBe('respond-immediately');
+    });
+
+    it('should update rhythm profile from samples', () => {
+      const profile = createDefaultRhythmProfile();
+      expect(profile.cadence).toBe('measured');
+
+      const samples: RhythmSample[] = [
+        { timestamp: 1000, messageLength: 10 },
+        { timestamp: 8000, messageLength: 12 },
+        { timestamp: 14000, messageLength: 8 },
+        { timestamp: 20000, messageLength: 15 },
+      ];
+      const updated = updateRhythmProfile(profile, samples);
+      expect(updated.cadence).toBe('rapid-fire');
+      expect(updated.suggestedResponseStyle).toBe('brief');
+    });
+
+    it('should format rhythm guidance', () => {
+      const profile = createDefaultRhythmProfile();
+      const guidance = formatRhythmGuidance(profile);
+      expect(guidance).toContain('measured');
+      expect(guidance).toContain('balanced');
     });
   });
 });

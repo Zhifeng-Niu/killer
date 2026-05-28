@@ -2874,6 +2874,7 @@ export function scoreSectionRelevance(
     'COGNITIVE FATIGUE': 0.65,
     'GAP RECOVERY': 0.7,
     'LEARNED LESSONS': 0.6,
+    'RHYTHM ADAPTATION': 0.55,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -5345,4 +5346,133 @@ export function formatLessonsPrompt(lessonsToFormat: LearnedLesson[]): string | 
  */
 export function clearLessons(): void {
   lessons.length = 0;
+}
+
+// ==================== 对话节奏自适应 ====================
+
+export type UserCadence = 'rapid-fire' | 'measured' | 'deliberate' | 'burst-pause';
+
+export interface RhythmProfile {
+  /** 平均消息间隔（秒） */
+  avgIntervalSec: number;
+  /** 平均消息长度（字符） */
+  avgMessageLength: number;
+  /** 速度模式 */
+  cadence: UserCadence;
+  /** 建议回复风格 */
+  suggestedResponseStyle: 'brief' | 'balanced' | 'detailed';
+  /** 建议等待策略 */
+  suggestedWaitStrategy: 'respond-immediately' | 'pause-for-continuation' | 'wait-for-completion';
+}
+
+export interface RhythmSample {
+  timestamp: number;
+  messageLength: number;
+}
+
+const RHYTHM_WINDOW = 10;
+
+/**
+ * 从节奏样本推断用户风格
+ */
+export function inferCadence(samples: RhythmSample[]): UserCadence {
+  if (samples.length < 2) return 'measured';
+
+  const intervals: number[] = [];
+  for (let i = 1; i < samples.length; i++) {
+    intervals.push(samples[i].timestamp - samples[i - 1].timestamp);
+  }
+
+  const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+  const avgLength = samples.reduce((a, s) => a + s.messageLength, 0) / samples.length;
+
+  // 快速短消息 → rapid-fire
+  if (avgInterval < 15000 && avgLength < 30) return 'rapid-fire';
+  // 慢速长消息 → deliberate
+  if (avgInterval > 120000 && avgLength > 100) return 'deliberate';
+  // 短间隔但长消息 → burst-pause
+  if (avgInterval < 30000 && avgLength > 80) return 'burst-pause';
+  // 默认
+  return 'measured';
+}
+
+/**
+ * 从节奏推断建议的回复风格
+ */
+export function inferResponseStyle(cadence: UserCadence): RhythmProfile['suggestedResponseStyle'] {
+  switch (cadence) {
+    case 'rapid-fire': return 'brief';
+    case 'deliberate': return 'detailed';
+    default: return 'balanced';
+  }
+}
+
+/**
+ * 从节奏推断等待策略
+ */
+export function inferWaitStrategy(cadence: UserCadence): RhythmProfile['suggestedWaitStrategy'] {
+  switch (cadence) {
+    case 'rapid-fire': return 'pause-for-continuation';
+    case 'burst-pause': return 'wait-for-completion';
+    case 'deliberate': return 'respond-immediately';
+    default: return 'respond-immediately';
+  }
+}
+
+/**
+ * 更新节奏配置文件
+ */
+export function updateRhythmProfile(
+  profile: RhythmProfile,
+  newSamples: RhythmSample[],
+): RhythmProfile {
+  const window = newSamples.slice(-RHYTHM_WINDOW);
+  if (window.length < 2) return profile;
+
+  const intervals: number[] = [];
+  for (let i = 1; i < window.length; i++) {
+    const gap = (window[i].timestamp - window[i - 1].timestamp) / 1000;
+    intervals.push(gap);
+  }
+
+  const avgIntervalSec = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+  const avgMessageLength = window.reduce((a, s) => a + s.messageLength, 0) / window.length;
+  const cadence = inferCadence(window);
+
+  return {
+    avgIntervalSec,
+    avgMessageLength,
+    cadence,
+    suggestedResponseStyle: inferResponseStyle(cadence),
+    suggestedWaitStrategy: inferWaitStrategy(cadence),
+  };
+}
+
+/**
+ * 创建默认节奏配置
+ */
+export function createDefaultRhythmProfile(): RhythmProfile {
+  return {
+    avgIntervalSec: 30,
+    avgMessageLength: 50,
+    cadence: 'measured',
+    suggestedResponseStyle: 'balanced',
+    suggestedWaitStrategy: 'respond-immediately',
+  };
+}
+
+/**
+ * 格式化节奏指导文本（注入 prompt）
+ */
+export function formatRhythmGuidance(profile: RhythmProfile): string {
+  const parts: string[] = [];
+  parts.push(`user cadence: ${profile.cadence}`);
+  parts.push(`avg interval: ${profile.avgIntervalSec.toFixed(0)}s`);
+  parts.push(`response style: ${profile.suggestedResponseStyle}`);
+
+  if (profile.suggestedWaitStrategy !== 'respond-immediately') {
+    parts.push(`note: ${profile.suggestedWaitStrategy}`);
+  }
+
+  return parts.join(' | ');
 }
