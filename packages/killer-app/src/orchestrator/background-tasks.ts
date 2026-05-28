@@ -2877,6 +2877,7 @@ export function scoreSectionRelevance(
     'RHYTHM ADAPTATION': 0.55,
     'INTENT DECOMPOSITION': 0.7,
     'SEMANTIC NETWORK': 0.6,
+    'RESPONSE TIMING': 0.65,
   };
 
   let score = baseScores[sectionPrefix] ?? 0.5;
@@ -5957,6 +5958,209 @@ export function formatSemanticNetworkSummary(network: SemanticMemoryNetwork): st
       parts.push(`  ${q.question}`);
     }
   }
+
+  return parts.join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Waypoint 87: Adaptive Response Timing — 自适应响应时机
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 响应时机策略
+ */
+export type ResponseTimingStrategy =
+  | 'immediate'     // 简单问题，直接回答
+  | 'thoughtful'    // 需要思考，结构化回答
+  | 'deep-research' // 复杂问题，先检索再回答
+  | 'proactive';    // 主动补全/预取
+
+/**
+ * 响应时机评估结果
+ */
+export interface ResponseTimingAssessment {
+  strategy: ResponseTimingStrategy;
+  /** 0-1 复杂度评分 */
+  complexity: number;
+  /** 建议的回答结构 */
+  suggestedStructure: string;
+  /** 建议的最大回答长度 */
+  suggestedMaxLength: number;
+  /** 预加载建议（需要提前检索的上下文） */
+  prefetchHints: string[];
+  /** 时机理由 */
+  reason: string;
+}
+
+/**
+ * 输入复杂度信号
+ */
+const COMPLEXITY_SIGNALS = {
+  high: [
+    /架构|设计|重构|迁移|优化性能|安全策略/i,
+    /如何实现|怎么设计|最佳实践|方案对比/i,
+    /多个|所有|全部|批量|整体/i,
+    /比较|对比|权衡|trade.?off/i,
+  ],
+  medium: [
+    /为什么|原理|机制|底层|内部/i,
+    /调试|debug|排查|诊断|分析/i,
+    /配置|设置|部署|上线/i,
+  ],
+  low: [
+    /是什么|什么是|定义|意思/i,
+    /怎么用|语法|参数|用法/i,
+  ],
+};
+
+/**
+ * 评估输入复杂度
+ */
+export function assessInputComplexity(input: string): number {
+  let score = 0.3; // 基础分
+
+  // 长度信号
+  if (input.length > 200) score += 0.15;
+  if (input.length > 500) score += 0.1;
+
+  // 高复杂度信号
+  for (const pattern of COMPLEXITY_SIGNALS.high) {
+    if (pattern.test(input)) { score += 0.15; break; }
+  }
+
+  // 中复杂度信号
+  for (const pattern of COMPLEXITY_SIGNALS.medium) {
+    if (pattern.test(input)) { score += 0.15; break; }
+  }
+
+  // 多意图信号
+  const semicolons = (input.match(/[;；，,]/g) || []).length;
+  if (semicolons >= 3) score += 0.1;
+
+  // 代码块信号
+  if (/```|`[^`]+`/.test(input)) score += 0.1;
+
+  return Math.min(1, score);
+}
+
+/**
+ * 根据复杂度推断响应结构
+ */
+function inferResponseStructure(complexity: number, input: string): string {
+  if (complexity > 0.7) {
+    if (/比较|对比|权衡|方案/.test(input)) return '对比分析：列出各方案的优缺点，给出推荐';
+    if (/架构|设计|实现/.test(input)) return '分层回答：概述 → 详细设计 → 实现步骤 → 注意事项';
+    return '结构化回答：背景分析 → 核心要点 → 实施建议 → 潜在风险';
+  }
+  if (complexity > 0.4) {
+    if (/为什么|原理/.test(input)) return '原理解析：问题定义 → 原因分析 → 示例说明';
+    if (/调试|排查|debug/.test(input)) return '排查路径：现象 → 可能原因 → 排查步骤';
+    return '分步回答：直接给答案，必要时展开细节';
+  }
+  return '直接回答：简洁明了，一句话说清楚';
+}
+
+/**
+ * 生成预加载建议
+ */
+export function generatePrefetchHints(
+  input: string,
+  complexity: number,
+): string[] {
+  const hints: string[] = [];
+
+  if (/性能|优化|慢|卡|延迟/.test(input)) {
+    hints.push('metrics:recent — 最近性能指标');
+    hints.push('tools:execution-stats — 工具执行统计');
+  }
+  if (/架构|设计|模块|组件/.test(input)) {
+    hints.push('memory:architecture-decisions — 架构决策记录');
+    hints.push('knowledge-graph:related-modules — 相关模块关系');
+  }
+  if (/错误|异常|报错|bug|fail/.test(input)) {
+    hints.push('tool-patterns:recent-failures — 近期失败模式');
+    hints.push('lessons:relevant — 相关教训');
+  }
+  if (/部署|上线|发布|release/.test(input)) {
+    hints.push('goals:active — 活跃目标列表');
+    hints.push('memory:deployment-history — 部署历史');
+  }
+
+  if (complexity > 0.6 && hints.length === 0) {
+    hints.push('context:recent — 最近对话上下文');
+  }
+
+  return hints;
+}
+
+/**
+ * 评估响应时机策略
+ */
+export function assessResponseTiming(
+  input: string,
+  flowPattern?: string,
+  fatigueLevel?: number,
+): ResponseTimingAssessment {
+  const complexity = assessInputComplexity(input);
+  const prefetchHints = generatePrefetchHints(input, complexity);
+  const suggestedStructure = inferResponseStructure(complexity, input);
+
+  let strategy: ResponseTimingStrategy;
+  let suggestedMaxLength: number;
+  let reason: string;
+
+  // 疲劳状态降低响应复杂度
+  const fatigueAdj = (fatigueLevel ?? 0) > 0.6 ? -0.15 : 0;
+
+  const adjustedComplexity = Math.max(0, Math.min(1, complexity + fatigueAdj));
+
+  if (adjustedComplexity > 0.7) {
+    strategy = 'deep-research';
+    suggestedMaxLength = 2000;
+    reason = `高复杂度(${(complexity * 100).toFixed(0)}%)需要深度分析和结构化回答`;
+  } else if (adjustedComplexity > 0.4) {
+    strategy = 'thoughtful';
+    suggestedMaxLength = 1200;
+    reason = `中等复杂度(${(complexity * 100).toFixed(0)}%)需要有条理的回答`;
+  } else {
+    // 检查是否可以主动补全
+    if (flowPattern === 'question-answer' || flowPattern === 'explore-deepen-implement') {
+      strategy = 'proactive';
+      suggestedMaxLength = 600;
+      reason = `简单问题，但可以预判后续需求并主动提供`;
+    } else {
+      strategy = 'immediate';
+      suggestedMaxLength = 400;
+      reason = `简单问题，直接回答即可`;
+    }
+  }
+
+  return {
+    strategy,
+    complexity,
+    suggestedStructure,
+    suggestedMaxLength,
+    prefetchHints,
+    reason,
+  };
+}
+
+/**
+ * 格式化时机指导（用于 prompt 注入）
+ */
+export function formatTimingGuidance(assessment: ResponseTimingAssessment): string {
+  const parts: string[] = [];
+
+  parts.push(`策略: ${assessment.strategy}`);
+  parts.push(`复杂度: ${(assessment.complexity * 100).toFixed(0)}%`);
+  parts.push(`建议结构: ${assessment.suggestedStructure}`);
+  parts.push(`建议长度: ≤${assessment.suggestedMaxLength}字`);
+
+  if (assessment.prefetchHints.length > 0) {
+    parts.push(`预加载: ${assessment.prefetchHints.join(', ')}`);
+  }
+
+  parts.push(`理由: ${assessment.reason}`);
 
   return parts.join('\n');
 }

@@ -129,6 +129,8 @@ export interface PromptBuilderDeps {
   intentDecomposition?: string;
   /** 语义记忆网络摘要 */
   semanticNetworkGuidance?: string;
+  /** 响应时机指导 */
+  responseTimingGuidance?: string;
 }
 
 /**
@@ -423,6 +425,11 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   // === 语义记忆网络 ===
   if (deps.semanticNetworkGuidance) {
     parts.push(`\nSEMANTIC NETWORK — Knowledge concepts and relations:\n${deps.semanticNetworkGuidance}`);
+  }
+
+  // === 响应时机 ===
+  if (deps.responseTimingGuidance) {
+    parts.push(`\nRESPONSE TIMING — Adapt response depth and structure:\n${deps.responseTimingGuidance}`);
   }
 
   // === 自主行动建议 ===

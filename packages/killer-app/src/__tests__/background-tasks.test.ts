@@ -125,6 +125,10 @@ import {
   detectIsolatedConcepts,
   inferImplicitRelations,
   formatSemanticNetworkSummary,
+  assessInputComplexity,
+  assessResponseTiming,
+  generatePrefetchHints,
+  formatTimingGuidance,
 } from '../orchestrator/background-tasks.js';
 
 function createMockHippocampus(overrides: Record<string, unknown> = {}) {
@@ -3903,6 +3907,66 @@ describe('background-tasks', () => {
     it('should return empty summary for empty network', () => {
       const network = createEmptySemanticNetwork();
       expect(formatSemanticNetworkSummary(network)).toBe('');
+    });
+  });
+
+  describe('Adaptive Response Timing', () => {
+    it('should assess simple input as low complexity', () => {
+      const complexity = assessInputComplexity('什么是 React？');
+      expect(complexity).toBeLessThan(0.5);
+    });
+
+    it('should assess complex input as high complexity', () => {
+      const complexity = assessInputComplexity('如何设计一个高可用的微服务架构？需要考虑性能优化和安全策略，还要处理多个服务的批量部署');
+      expect(complexity).toBeGreaterThan(0.5);
+    });
+
+    it('should recommend immediate strategy for simple questions', () => {
+      const assessment = assessResponseTiming('怎么用 git commit？');
+      expect(assessment.strategy).toBe('immediate');
+      expect(assessment.suggestedMaxLength).toBeLessThanOrEqual(500);
+    });
+
+    it('should recommend deep-research for complex questions', () => {
+      const assessment = assessResponseTiming('比较 React 和 Vue 的架构设计，分析各自的优缺点和适用场景，包括性能优化、批量部署、安全策略的整体方案');
+      expect(['deep-research', 'thoughtful']).toContain(assessment.strategy);
+      expect(assessment.complexity).toBeGreaterThan(0.5);
+    });
+
+    it('should recommend thoughtful for medium complexity', () => {
+      const assessment = assessResponseTiming('为什么会报这个错误？帮我排查一下，分析底层原理和调试步骤，给出详细的排查方案');
+      expect(['thoughtful', 'deep-research']).toContain(assessment.strategy);
+    });
+
+    it('should adjust for fatigue', () => {
+      const normal = assessResponseTiming('简单问题');
+      const fatigued = assessResponseTiming('简单问题', undefined, 0.8);
+      expect(fatigued.complexity).toBeLessThanOrEqual(normal.complexity);
+    });
+
+    it('should generate prefetch hints for performance queries', () => {
+      const hints = generatePrefetchHints('页面加载很慢，怎么优化性能？', 0.6);
+      expect(hints.length).toBeGreaterThan(0);
+      expect(hints[0]).toContain('metrics');
+    });
+
+    it('should generate prefetch hints for error queries', () => {
+      const hints = generatePrefetchHints('为什么报错了？', 0.5);
+      expect(hints.length).toBeGreaterThan(0);
+      expect(hints.some(h => h.includes('failure') || h.includes('lessons'))).toBe(true);
+    });
+
+    it('should suggest proactive strategy for known flow patterns', () => {
+      const assessment = assessResponseTiming('什么是 Docker？', 'question-answer');
+      expect(assessment.strategy).toBe('proactive');
+    });
+
+    it('should format timing guidance', () => {
+      const assessment = assessResponseTiming('怎么配置环境？');
+      const guidance = formatTimingGuidance(assessment);
+      expect(guidance).toContain('策略:');
+      expect(guidance).toContain('复杂度:');
+      expect(guidance).toContain('建议结构:');
     });
   });
 });
