@@ -335,20 +335,20 @@ async function handleCommand(input: string, agent: OdysseusAgent): Promise<strin
         '# Commands',
         '',
         '## Core',
-        '- /status — Agent status',
+        '- /status — Agent status overview',
         '- /clear — Clear chat',
         '- /retry — Resend last message',
-        '- /find <keyword> — Search messages',
+        '- /find `<keyword>` — Search messages',
         '',
         '## Cognitive',
         '- /think — Deep reasoning',
         '- /dream — Memory consolidation',
-        '- /evolve — Darwinian evolution',
+        '- /evolve `[audit|self|status]` — Darwinian evolution',
         '- /goals — Active goals',
         '- /plan — Create a goal',
         '- /delegate — Multi-cell delegation',
         '- /cells — Active cells',
-        '- /spawn — Spawn new column',
+        '- /spawn `[role]` — Spawn new column',
         '',
         '## Memory',
         '- /memory — Memory stats',
@@ -366,11 +366,11 @@ async function handleCommand(input: string, agent: OdysseusAgent): Promise<strin
         '- /health — Health report',
         '- /diagnostics — System diagnostics',
         '- /metrics — Performance stats',
-        '- /model [name] — View/switch model',
-        '- /key <key> — Update API key',
-        '- /mode [policy] — Permission: auto|confirm|deny',
-        '- /approve <tool> — Approve tool',
-        '- /deny <tool> — Block tool',
+        '- /model `[name]` — View/switch model',
+        '- /key `<key>` — Update API key',
+        '- /mode `[auto|confirm|deny]` — Permission policy',
+        '- /approve `<tool>` — Approve tool',
+        '- /deny `<tool>` — Block tool',
         '- /inspect — List all tools',
         '- /mission — Mission control',
         '- /exit — Quit',
@@ -452,36 +452,46 @@ async function handleCommand(input: string, agent: OdysseusAgent): Promise<strin
         const gaps = agent.evolutionEngine.auditCapabilities();
         const status = agent.evolutionEngine.getStatus();
         const lines = [
-          `Self-Evolution Status:`,
-          `  Total evolutions: ${status.totalEvolutions} (${status.successfulEvolutions} ok, ${status.failedEvolutions} failed)`,
-          `  Dynamic tools: ${status.dynamicToolCount}`,
-          `  Capability gaps: ${gaps.length}`,
+          '## Self-Evolution',
+          '',
+          `| | |`,
+          `|---|---|`,
+          `| Total evolutions | ${status.totalEvolutions} |`,
+          `| Successful | ${status.successfulEvolutions} |`,
+          `| Failed | ${status.failedEvolutions} |`,
+          `| Dynamic tools | ${status.dynamicToolCount} |`,
+          `| Capability gaps | ${gaps.length} |`,
         ];
-        for (const g of gaps.slice(0, 5)) {
-          lines.push(`  [${g.severity}] ${g.description}`);
+        if (gaps.length > 0) {
+          lines.push('', '### Gaps');
+          for (const g of gaps.slice(0, 5)) {
+            lines.push(`- [\`${g.severity}\`] ${g.description}`);
+          }
         }
-        if (gaps.length === 0) lines.push('  No gaps — operating at full capability');
         return lines.join('\n');
       }
       if (args?.trim() === 'self') {
         const r = await agent.evolve();
-        return `Evolution: ${r.mutations} mutations, ${r.successful} successful`;
+        return `## Evolution Complete\n\n- Mutations: ${r.mutations}\n- Successful: ${r.successful}`;
       }
       if (args?.trim() === 'status') {
         const s = agent.evolutionEngine.getStatus();
         const recent = agent.evolutionEngine.getRecentEvolutions(5);
         const lines = [
-          `Running: ${s.running}`,
-          `Total: ${s.totalEvolutions} | OK: ${s.successfulEvolutions} | Fail: ${s.failedEvolutions}`,
+          '## Evolution History',
+          '',
+          `Running: ${s.running} | Total: ${s.totalEvolutions} | OK: ${s.successfulEvolutions} | Fail: ${s.failedEvolutions}`,
           `Dynamic tools: ${s.dynamicToolCount}`,
-          recent.length > 0 ? 'Recent:' : 'No evolution history yet',
         ];
-        for (const r of recent) {
-          lines.push(`  ${r.phase} ${r.status} ${r.toolName ?? ''} (${r.durationMs}ms)`);
+        if (recent.length > 0) {
+          lines.push('');
+          for (const r of recent) {
+            lines.push(`- ${r.phase} ${r.status} ${r.toolName ?? ''} (\`${r.durationMs}ms\`)`);
+          }
         }
         return lines.join('\n');
       }
-      return 'Usage: /evolve [audit|self|status]';
+      return 'Usage: `/evolve [audit|self|status]`';
     }
     case 'metrics': {
       const { MetricsCollector } = await import('../metrics/index.js');
