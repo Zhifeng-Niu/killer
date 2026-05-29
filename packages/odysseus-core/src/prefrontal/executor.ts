@@ -220,6 +220,36 @@ export class PlanExecutor {
   }
 
   /**
+   * 计算计划的注意力分数
+   *
+   * 由三个因子相乘：priority（目标优先级）× urgency（紧急度）× progress（剩余工作量）
+   * urgency: 靠近 deadline 时急升；无 deadline 时按年龄缓慢上升（老 plan 更紧迫）
+   * progress: 剩余步骤比例，刚开始的 plan 得分更高（避免 starvation）
+   */
+  computeAttentionScore(plan: Plan, goal?: Goal): number {
+    const priority = goal?.priority ?? 0.5;
+
+    // Urgency: deadline 越近越紧迫，无 deadline 按年龄线性上升
+    let urgency = 0.5;
+    if (goal?.deadline) {
+      const remaining = goal.deadline - Date.now();
+      if (remaining <= 0) urgency = 1.0;
+      else if (remaining < 60 * 60 * 1000) urgency = 0.9;
+      else urgency = Math.max(0.1, 1.0 - remaining / (24 * 60 * 60 * 1000));
+    } else {
+      const age = Date.now() - plan.createdAt;
+      urgency = Math.min(0.8, 0.2 + age / (2 * 60 * 60 * 1000)); // 每 2h +0.2，上限 0.8
+    }
+
+    // Progress: 剩余步骤越多得分越高（刚启动的 plan 优先）
+    const totalSteps = plan.steps.length;
+    const doneSteps = plan.steps.filter(s => s.status === 'completed' || s.status === 'skipped').length;
+    const remaining = totalSteps > 0 ? (totalSteps - doneSteps) / totalSteps : 0;
+
+    return priority * urgency * Math.max(0.1, remaining);
+  }
+
+  /**
    * 获取活跃计划列表
    */
   getActivePlans(): Plan[] {
@@ -227,18 +257,30 @@ export class PlanExecutor {
       const now = Date.now();
       const age = now - plan.createdAt;
 
-      // 检查是否超时
       if (age > this.config.autoAbandonTimeout) {
         return false;
       }
 
-      // 检查是否已完成
       const allCompleted = plan.steps.every(
         step => step.status === 'completed' || step.status === 'skipped'
       );
       const anyFailed = plan.steps.some(step => step.status === 'failed');
 
       return !(allCompleted || anyFailed);
+    });
+  }
+
+  /**
+   * 获取活跃计划列表，按注意力分数降序排列
+   */
+  getActivePlansSorted(goalMap?: Map<string, Goal>): Plan[] {
+    const active = this.getActivePlans();
+    if (!goalMap || active.length <= 1) return active;
+
+    return active.sort((a, b) => {
+      const goalA = goalMap.get(a.goalId);
+      const goalB = goalMap.get(b.goalId);
+      return this.computeAttentionScore(b, goalB) - this.computeAttentionScore(a, goalA);
     });
   }
 

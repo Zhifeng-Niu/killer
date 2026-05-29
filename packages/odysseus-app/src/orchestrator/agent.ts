@@ -1752,10 +1752,10 @@ Examples:
       // 停滞时仍然继续，但记录状态
     }
 
-    const activePlans = this.planExecutor.getActivePlans();
+    const activePlans = this.planExecutor.getActivePlansSorted();
     if (activePlans.length === 0) return;
 
-    // 找到第一个有 pending step 的 plan
+    // Dynamic attention: plans sorted by attention score — highest priority plan gets next step
     for (const plan of activePlans) {
       let nextStep = this.planExecutor.getNextAction(plan.id);
       if (!nextStep) continue;
