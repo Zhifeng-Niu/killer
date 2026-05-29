@@ -452,17 +452,22 @@ const MessageBubble = React.memo(function MessageBubble({ message }: { message: 
 
 function ThinkingIndicator() {
   const [frame, setFrame] = useState(0);
+  const [dots, setDots] = useState(0);
 
   useEffect(() => {
-    const timer = setInterval(() => setFrame(f => (f + 1) % thinkFrames.length), 150);
+    const timer = setInterval(() => {
+      setFrame(f => (f + 1) % thinkFrames.length);
+      setDots(d => (d + 1) % 4);
+    }, 200);
     return () => clearInterval(timer);
   }, []);
 
   const current = thinkFrames[frame];
+  const dotStr = '.'.repeat(dots);
   return (
     <Box marginLeft={1} marginTop={1}>
       <Text color={current.col}>{current.ch} </Text>
-      <Text color={colors.secondary} italic>thinking...</Text>
+      <Text color={colors.secondary} italic>{`thinking${dotStr}`}</Text>
     </Box>
   );
 }
@@ -473,11 +478,11 @@ function StreamingCursor() {
   const [frame, setFrame] = useState(0);
 
   useEffect(() => {
-    const timer = setInterval(() => setFrame(f => (f + 1) % waveFrames.length), 100);
+    const timer = setInterval(() => setFrame(f => (f + 1) % waveFrames.length), 120);
     return () => clearInterval(timer);
   }, []);
 
-  return <Text color={colors.purple}>{waveFrames[frame]}</Text>;
+  return <Text color={colors.purpleBright}>{waveFrames[frame]}</Text>;
 }
 
 // ── 主面板 ──
