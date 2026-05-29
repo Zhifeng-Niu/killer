@@ -304,13 +304,13 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
 
   return (
     <Box flexDirection="column" height="100%">
+      <ChatPanel messages={messages} isThinking={isThinking} />
       <Header
         model={agent.getModel?.() ?? ''}
         emotion={emotion}
         uptime={Date.now() - bootTimeRef.current}
         messageCount={messages.length}
       />
-      <ChatPanel messages={messages} isThinking={isThinking} />
       <InputArea
         onSubmit={handleSubmit}
         agentStatus={agentStatus}
