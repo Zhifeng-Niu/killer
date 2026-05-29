@@ -4071,9 +4071,27 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         // 解析参数 + 权限检查
         let params: unknown;
         try {
-          params = JSON.parse(toolCall.function.arguments);
+          const args = toolCall.function.arguments;
+          if (!args || args.trim() === '') {
+            params = {};
+          } else {
+            params = JSON.parse(args);
+          }
         } catch {
-          params = {};
+          // LLM 有时返回非标准 JSON（无引号 key、单引号等）
+          // 尝试安全修复后重试
+          const raw = toolCall.function.arguments ?? '';
+          this.logger.warn(`Tool "${toolName}" args parse failed, attempting repair: ${raw.slice(0, 200)}`);
+          try {
+            const repaired = raw
+              .replace(/'/g, '"')           // 单引号→双引号
+              .replace(/(\w+)\s*:/g, '"$1":') // 无引号 key→加引号
+              .replace(/,\s*([}\]])/g, '$1');  // 去尾逗号
+            params = JSON.parse(repaired);
+          } catch {
+            this.logger.warn(`Tool "${toolName}" args repair also failed, passing empty params`);
+            params = {};
+          }
         }
 
         const permCheck = this.toolPermissions.check(toolName, params);
