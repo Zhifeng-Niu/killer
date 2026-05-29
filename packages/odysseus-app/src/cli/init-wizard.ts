@@ -203,14 +203,19 @@ export async function runInitWizard(): Promise<void> {
     const detectedKeys = detectAvailableKeys();
 
     if (detectedKeys.length === 1) {
-      // 单 key 零交互 — 自动保存
       const dk = detectedKeys[0];
       const provider = PROVIDER_OPTIONS.find(p => p.envKey === dk.envKey);
       if (provider) {
-        await saveConfig(provider.name, dk.key, undefined);
-        console.log(`  ✓ 检测到 ${provider.description}，已自动配置！`);
-        console.log('  运行 odysseus 即可启动。');
-        return;
+        console.log(`  检测到 ${provider.description}: ${maskKey(dk.key)}`);
+        const useIt = await question('  使用这个？(Y/n): ');
+        if (useIt.trim().toLowerCase() !== 'n') {
+          await saveConfig(provider.name, dk.key, undefined);
+          console.log(`  ✓ 已配置 ${provider.description}！`);
+          console.log('  运行 odysseus 即可启动。');
+          return;
+        }
+        console.log('');
+        // 用户拒绝 → 继续到下面的手动选择流程
       }
     }
 
