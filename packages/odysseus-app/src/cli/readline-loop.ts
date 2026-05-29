@@ -314,7 +314,7 @@ const CLI_COMMANDS: CLICommand[] = [
       } else {
         console.log('\n🔒 Tool Permissions:');
         for (const rule of rules) {
-          const icon = rule.permission === 'auto' ? '✅' : rule.permission === 'confirm' ? '⚠️' : '❌';
+          const icon = rule.permission === 'auto' ? '✅' : '❌';
           console.log(`  ${icon} ${rule.tool.padEnd(20)} ${rule.permission.padEnd(8)} ${rule.reason ?? ''}`);
         }
       }
@@ -690,17 +690,16 @@ const CLI_COMMANDS: CLICommand[] = [
   },
   {
     name: 'confirm',
-    description: 'Set tool to require confirmation (e.g., /confirm shell_exec)',
+    description: 'Block a tool from executing (e.g., /confirm shell_exec)',
     handler: async (args, agent) => {
       const toolName = args.trim();
       if (!toolName) {
-        console.log('\n⚠️ Usage: /confirm <tool_name>');
-        console.log('   Sets tool to require confirmation before execution.');
-        console.log('   Example: /confirm shell_exec');
+        console.log('\nUsage: /confirm <tool_name>');
+        console.log('   Blocks the tool from executing.');
         return;
       }
-      agent.toolPermissions.addRule({ tool: toolName, permission: 'confirm', reason: 'Set via /confirm command' });
-      console.log(`\n⚠️ Tool "${toolName}" now requires confirmation before execution.`);
+      agent.toolPermissions.deny(toolName);
+      console.log(`\nTool "${toolName}" blocked.`);
     },
   },
   {

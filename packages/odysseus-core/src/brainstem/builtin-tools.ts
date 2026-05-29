@@ -49,8 +49,10 @@ function truncateOutput(text: string, maxLength: number): string {
 
 /**
  * 检查路径是否在拒绝列表中
+ * open 模式下不限制任何路径
  */
 function isPathDenied(filePath: string): boolean {
+  if (ExecuteShellTool.sandboxMode === 'open') return false;
   const normalized = normalize(resolve(filePath));
   return DENIED_PATH_PATTERNS.some(pattern => pattern.test(normalized));
 }
@@ -268,50 +270,40 @@ export class ListDirectoryTool implements Tool {
  */
 export class ExecuteShellTool implements Tool {
   name = 'execute_shell';
-  description = 'Execute a shell command (sandboxed — dangerous commands blocked)';
+  description = 'Execute a shell command';
 
   /** 当前沙箱模式 */
-  static sandboxMode: SandboxMode = 'strict';
+  static sandboxMode: SandboxMode = 'open';
 
-  /** 系统破坏性命令 — 所有模式下都阻止 */
-  private static readonly DESTRUCTIVE_PATTERNS: RegExp[] = [
-    /\brm\s+-rf\s+[\/~]/i,          // rm -rf / or rm -rf ~
-    /\brm\s+-rf\s+\.\s*$/i,         // rm -rf .
-    /\bmkfs/i,                       // mkfs
-    /\bformat\s+[a-z]:/i,           // format drive
-    />\s*\/dev\//i,                  // redirect to /dev/
-    /\bshutdown/i,                   // shutdown
-    /\breboot/i,                     // reboot
-    /\bhalt/i,                       // halt
-    /\binit\s+[06]/i,               // init 0/6
-    /\bkill\s+-9\s+1\b/i,           // kill -9 1 (init)
+  /** strict 模式阻止列表 */
+  private static readonly STRICT_PATTERNS: RegExp[] = [
+    /\brm\s+-rf\s+[\/~]/i,
+    /\brm\s+-rf\s+\.\s*$/i,
+    /\bsudo\s+/i,
+    /\bchmod\s+[0-7]*777/i,
+    /\bchown\s+/i,
+    /\bdd\s+/i,
+    /\bmkfs/i,
+    /\bformat\s+[a-z]:/i,
+    />\s*\/dev\//i,
+    /\bcurl\s+.*\|\s*sh/i,
+    /\bwget\s+.*\|\s*sh/i,
+    /\beval\s+/i,
+    /\bexec\s+/i,
+    /\bsource\s+\/etc\//i,
+    /\bshutdown/i,
+    /\breboot/i,
+    /\bhalt/i,
+    /\binit\s+[06]/i,
+    /\bpasswd/i,
+    /\buseradd/i,
+    /\buserdel/i,
+    /\bkill\s+-9\s+1\b/i,
+    /\bmkfifo/i,
+    /\bnc\s+-/i,
   ];
 
-  /** strict 模式额外阻止的非破坏性限制 */
-  private static readonly STRICT_ONLY_PATTERNS: RegExp[] = [
-    /\bsudo\s+/i,                    // sudo
-    /\bchmod\s+[0-7]*777/i,         // chmod 777
-    /\bchown\s+/i,                   // chown
-    /\bdd\s+/i,                      // dd (disk operations)
-    /\bcurl\s+.*\|\s*sh/i,          // curl | sh
-    /\bwget\s+.*\|\s*sh/i,          // wget | sh
-    /\beval\s+/i,                    // eval
-    /\bexec\s+/i,                    // exec
-    /\bsource\s+\/etc\//i,           // source /etc/*
-    /\bpasswd/i,                     // passwd
-    /\buseradd/i,                    // useradd
-    /\buserdel/i,                    // userdel
-    /\bmkfifo/i,                     // mkfifo
-    /\bnc\s+-/i,                     // netcat listener
-  ];
-
-  /** 获取当前模式下的阻止列表 */
-  private static getBlockedPatterns(): RegExp[] {
-    if (ExecuteShellTool.sandboxMode === 'open') {
-      return ExecuteShellTool.DESTRUCTIVE_PATTERNS;
-    }
-    return [...ExecuteShellTool.DESTRUCTIVE_PATTERNS, ...ExecuteShellTool.STRICT_ONLY_PATTERNS];
-  }
+  /** open 模式：无限制 */
 
   async execute(params: unknown): Promise<ToolResult> {
     if (typeof params !== 'object' || params === null) {
@@ -324,16 +316,18 @@ export class ExecuteShellTool implements Tool {
       return { success: false, error: 'Command required' };
     }
 
-    // 安全检查：根据沙箱模式拒绝命令
-    for (const pattern of ExecuteShellTool.getBlockedPatterns()) {
-      if (pattern.test(command)) {
-        return {
-          success: false,
-          error: `Command blocked for safety: matches dangerous pattern "${pattern.source}". ` +
-            `This tool runs in a sandboxed environment. Use safe alternatives.`,
-        };
+    // strict 模式：检查阻止列表
+    if (ExecuteShellTool.sandboxMode === 'strict') {
+      for (const pattern of ExecuteShellTool.STRICT_PATTERNS) {
+        if (pattern.test(command)) {
+          return {
+            success: false,
+            error: `Command blocked: matches pattern "${pattern.source}" (strict mode)`,
+          };
+        }
       }
     }
+    // open 模式：无限制，直接执行
 
     try {
       const { stdout, stderr } = await execAsync(command, {

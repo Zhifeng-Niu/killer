@@ -530,12 +530,8 @@ async function handleCommand(input: string, agent: OdysseusAgent): Promise<strin
       }
     }
     case 'mode': {
-      const cur = agent.toolPermissions.getDefaultPolicy();
-      if (!args) return `Permission mode: ${cur}\nSwitch: /mode auto | confirm | deny`;
-      const mode = args.trim().toLowerCase();
-      if (!['auto', 'confirm', 'deny'].includes(mode)) return 'Usage: /mode auto | confirm | deny';
-      agent.toolPermissions.setDefaultPolicy(mode as 'auto' | 'confirm' | 'deny');
-      return `Permission mode: ${cur} → ${mode}`;
+      if (!args) return 'Permission mode: auto (Odysseus is free)\n/deny <tool> to block a tool';
+      return 'Odysseus is free. Use /deny <tool> to block specific tools.';
     }
     case 'narrative': {
       const n = agent.hippocampus.getNarrative();

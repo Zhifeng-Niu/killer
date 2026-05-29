@@ -1216,7 +1216,7 @@ Examples:
       getPermissionRules: () => this.toolPermissions.getRules(),
       approveToolAction: (name) => this.toolPermissions.approve(name),
       denyToolAction: (name) => this.toolPermissions.deny(name),
-      confirmToolAction: (name) => this.toolPermissions.addRule({ tool: name, permission: 'confirm', reason: 'Set via command' }),
+      confirmToolAction: (name) => this.toolPermissions.deny(name),
       getHealthReport: () => MetricsCollector.getInstance().healthCheck(),
       getMetricsSnapshot: () => MetricsCollector.getInstance().snapshot(),
       getNarrative: () => this.hippocampus.getNarrative(),

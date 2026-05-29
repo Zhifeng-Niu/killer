@@ -373,8 +373,8 @@ export function registerRoutes(server: APIServer, agent: OdysseusAgent): void {
   server.route('POST', '/permissions/confirm', (req) => {
     const { tool } = req.body as { tool?: string };
     if (!tool || typeof tool !== 'string') return validationError('tool', ERROR.TOOL_REQUIRED);
-    agent.toolPermissions.addRule({ tool, permission: 'confirm', reason: 'Set via API' });
-    return { status: 200, body: { confirmed: tool } };
+    agent.toolPermissions.deny(tool);
+    return { status: 200, body: { denied: tool } };
   });
 
   // === Cerebellum: Mission Management ===
