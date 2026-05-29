@@ -379,12 +379,23 @@ async function handleCommand(input: string, agent: OdysseusAgent): Promise<strin
     case 'status': {
       const s = agent.getStatus();
       const model = agent.getModel?.() ?? 'unknown';
-      return `运行: ${s.running ? '✓' : '✗'} | 模型: ${model} | 运行时间: ${Math.floor(s.uptime / 1000)}s`;
+      return [
+        `## Status`,
+        '',
+        `| | |`,
+        `|---|---|`,
+        `| Running | ${s.running ? '✓ active' : '✗ stopped'} |`,
+        `| Model | \`${model}\` |`,
+        `| Uptime | ${Math.floor(s.uptime / 1000)}s |`,
+        `| Brainstem | ${s.modules.brainstem.phase} (${s.modules.brainstem.loopCount} loops) |`,
+        `| Hippocampus | ${s.modules.hippocampus.episodes} episodes |`,
+        `| Synapse | ${s.modules.synapse.cells} cells |`,
+      ].join('\n');
     }
     case 'columns': {
       const cells = agent.synapse.getAllColumns();
       if (!cells.length) return '没有活跃的 Cells';
-      return cells.map(c => `${box.v} ${c.id.id} (${c.config.type})`).join('\n');
+      return cells.map(c => `- ${c.id.id} — \`${c.config.type}\``).join('\n');
     }
     case 'goals': {
       const goals = agent.getGoals();
@@ -393,19 +404,40 @@ async function handleCommand(input: string, agent: OdysseusAgent): Promise<strin
     }
     case 'memory': {
       const m = agent.getMemoryStats();
-      return `Episodes: ${m.totalEpisodes} | Short: ${m.shortTermCount} | Long: ${m.longTermCount} | Associations: ${m.associationCount}`;
+      return [
+        '## Memory',
+        '',
+        `| Layer | Count |`,
+        `|---|---|`,
+        `| Total Episodes | ${m.totalEpisodes} |`,
+        `| Short-term | ${m.shortTermCount} |`,
+        `| Long-term | ${m.longTermCount} |`,
+        `| Associations | ${m.associationCount} |`,
+      ].join('\n');
     }
     case 'emotions': {
       const e = agent.persona.emotionalState.getState();
-      return `情感: ${emotionToEmoji(e.primaryEmotion)} ${e.primaryEmotion} (强度: ${e.intensity.toFixed(2)})`;
+      return [
+        '## Emotional State',
+        '',
+        `- **${e.primaryEmotion}** ${emotionToEmoji(e.primaryEmotion)}`,
+        `- Intensity: ${e.intensity.toFixed(2)}`,
+        `- Valence: ${(e as { valence?: number }).valence?.toFixed(2) ?? '—'}`,
+      ].join('\n');
     }
     case 'persona': {
       const p = agent.getPersona();
-      return `${p.name} | Traits: ${p.traits.join(', ') || 'none'}`;
+      const traits = p.traits.length ? p.traits.map(t => `\`${t}\``).join(', ') : 'none';
+      return [
+        '## Persona',
+        '',
+        `- **${p.name}**`,
+        `- Traits: ${traits}`,
+      ].join('\n');
     }
     case 'health': {
       const h = agent.healthMonitor.check();
-      return `状态: ${h.status}`;
+      return `## Health\n\n\`${h.status}\``;
     }
     case 'dream': {
       const r = await agent.dream();
@@ -455,7 +487,15 @@ async function handleCommand(input: string, agent: OdysseusAgent): Promise<strin
       const { MetricsCollector } = await import('../metrics/index.js');
       const metrics = MetricsCollector.getInstance();
       const report = metrics.healthCheck();
-      return `LLM: ${report.llm.calls} calls, ${report.llm.errors} errors, avg ${report.llm.avgLatency}s`;
+      return [
+        '## Metrics',
+        '',
+        `| | |`,
+        `|---|---|`,
+        `| LLM Calls | ${report.llm.calls} |`,
+        `| LLM Errors | ${report.llm.errors} |`,
+        `| Avg Latency | ${report.llm.avgLatency}s |`,
+      ].join('\n');
     }
     case 'model': {
       const current = agent.getModel();
@@ -475,14 +515,28 @@ async function handleCommand(input: string, agent: OdysseusAgent): Promise<strin
     }
     case 'narrative': {
       const n = agent.hippocampus.getNarrative();
-      const themes = n.activeThemes.length ? n.activeThemes.join(', ') : 'none';
-      return `Chapters: ${n.chapters.length} | Themes: ${themes} | Identity: ${n.identityStatement || 'forming...'}`;
+      const themes = n.activeThemes.length ? n.activeThemes.map(t => `\`${t}\``).join(', ') : 'none';
+      return [
+        '## Narrative',
+        '',
+        `- Chapters: ${n.chapters.length}`,
+        `- Themes: ${themes}`,
+        `- Identity: ${n.identityStatement || 'forming...'}`,
+      ].join('\n');
     }
     case 'predictions': {
       const p = agent.persona.getPredictions();
       const style = p.psychologicalProfile?.decisionStyle || 'unknown';
       const openness = (p.psychologicalProfile?.openness ?? 0).toFixed(2);
-      return `Decision: ${style} | Openness: ${openness} | Needs: ${p.predictedNeeds?.length ?? 0}`;
+      return [
+        '## User Predictions',
+        '',
+        `| | |`,
+        `|---|---|`,
+        `| Decision Style | ${style} |`,
+        `| Openness | ${openness} |`,
+        `| Predicted Needs | ${p.predictedNeeds?.length ?? 0} |`,
+      ].join('\n');
     }
     case 'spawn': {
       const role = args || 'general';
@@ -498,10 +552,14 @@ async function handleCommand(input: string, agent: OdysseusAgent): Promise<strin
       const s = agent.getStatus();
       const h = agent.healthMonitor.formatReport();
       return [
-        `Brainstem: ${s.modules.brainstem.phase} (loops: ${s.modules.brainstem.loopCount})`,
-        `Hippocampus: ${s.modules.hippocampus.episodes} episodes`,
-        `Synapse: ${s.modules.synapse.cells} cells`,
-        `Health: ${h}`,
+        '## Diagnostics',
+        '',
+        `| Module | Status |`,
+        `|---|---|`,
+        `| Brainstem | ${s.modules.brainstem.phase} (${s.modules.brainstem.loopCount} loops) |`,
+        `| Hippocampus | ${s.modules.hippocampus.episodes} episodes |`,
+        `| Synapse | ${s.modules.synapse.cells} cells |`,
+        `| Health | ${h} |`,
       ].join('\n');
     }
     case 'sessions': {
