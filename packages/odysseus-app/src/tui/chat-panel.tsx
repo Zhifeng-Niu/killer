@@ -209,10 +209,10 @@ function renderContent(text: string): React.ReactNode {
     if (callMatch) {
       const params = callMatch[2];
       elements.push(
-        <Box key={`tool-${i}`} marginTop={1} marginLeft={1} borderStyle="single" borderLeft borderRight={false} borderTop={false} borderBottom={false} borderColor={colors.purpleDim} paddingX={1}>
+        <Box key={`tool-${i}`} marginTop={1} marginLeft={1} borderStyle="single" borderLeft borderRight={false} borderTop={false} borderBottom={false} borderColor={colors.purpleBright} paddingX={1}>
           <Box flexDirection="column">
-            <Text color={colors.purple}>{icons.tool} {callMatch[1]}</Text>
-            {params && <Text color={colors.separator}>{params.length > 120 ? params.slice(0, 120) + '…' : params}</Text>}
+            <Text color={colors.purpleBright} bold>{icons.tool} {callMatch[1]}</Text>
+            {params && <Text color={colors.secondary}>{params.length > 120 ? params.slice(0, 120) + '…' : params}</Text>}
           </Box>
         </Box>,
       );
@@ -322,8 +322,8 @@ function renderToolResult(tool: string, data: string, keyBase: number): React.Re
   return (
     <Box key={`result-${keyBase}`} marginTop={1} marginLeft={1} borderStyle="single" borderLeft borderRight={false} borderTop={false} borderBottom={false} borderColor={colors.cyan} paddingX={1}>
       <Box flexDirection="column">
-        <Text color={colors.cyan}>{icons.success} {tool}</Text>
-        {data && <Text color={colors.separator}>{truncated}</Text>}
+        <Text color={colors.cyan} bold>{icons.success} {tool}</Text>
+        {data && <Text color={colors.secondary}>{truncated}</Text>}
       </Box>
     </Box>
   );
@@ -335,14 +335,14 @@ function renderCodeBlock(lines: string[], lang: string, keyBase: number): React.
     <Box key={`code-${keyBase}`} flexDirection="column" marginTop={1} marginBottom={1}>
       {lang && (
         <Box marginLeft={1}>
-          <Text color={colors.separator} backgroundColor={colors.surface}> {lang} </Text>
-          <Text color={colors.bg}> {lines.length} lines</Text>
+          <Text color={colors.purple} backgroundColor={colors.surface}> {lang} </Text>
+          <Text color={colors.separator}> {lines.length} lines</Text>
         </Box>
       )}
-      <Box flexDirection="column" marginLeft={1} borderStyle="bold" borderLeft borderRight={false} borderTop={false} borderBottom={false} borderColor={colors.separator} paddingX={1}>
+      <Box flexDirection="column" marginLeft={1} borderStyle="bold" borderLeft borderRight={false} borderTop={false} borderBottom={false} borderColor={colors.purpleDim} paddingX={1}>
         {lines.map((line, idx) => (
           <Box key={`cl-${keyBase}-${idx}`}>
-            <Text color={colors.bg}>{String(idx + 1).padStart(numWidth)} │ </Text>
+            <Text color={colors.separator}>{String(idx + 1).padStart(numWidth)} │ </Text>
             {lang && shouldHighlight(lang) ? highlightCodeLine(line) : <Text color={colors.secondary}>{line}</Text>}
           </Box>
         ))}
@@ -405,21 +405,19 @@ function renderTable(rows: string[], keyBase: number): React.ReactNode {
 function EmptyState() {
   return (
     <Box flexDirection="column" paddingY={2} marginLeft={2}>
-      <Text color={colors.purple} bold>  ╋  O D Y S S E U S</Text>
-      <Text color={colors.secondary}>  ┃  Autonomous Agent Framework</Text>
+      <Text color={colors.purple} bold>  ◈  O D Y S S E U S</Text>
+      <Text color={colors.secondary}>     Autonomous Agent Framework</Text>
       <Text> </Text>
-      <Box flexDirection="column" marginLeft={1}>
-        <Text color={colors.separator}>  ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈</Text>
-        <Text> </Text>
-        <Text color={colors.text}>  type anything to start</Text>
-        <Text> </Text>
-        <Box><Text color={colors.purple}>  /think</Text><Text color={colors.secondary}> deep reasoning</Text></Box>
-        <Box><Text color={colors.purple}>  /dream</Text><Text color={colors.secondary}> memory consolidation</Text></Box>
-        <Box><Text color={colors.purple}>  /goals</Text><Text color={colors.secondary}> set a goal</Text></Box>
-        <Box><Text color={colors.purple}>  /help</Text><Text color={colors.secondary}> all commands</Text></Box>
-        <Text> </Text>
-        <Text color={colors.bg}>  ↑↓ history · Tab · Esc</Text>
-      </Box>
+      <Text color={colors.purpleDim}>  ▓▓▒▒░░░░░░░░░░░░░░░░░░░</Text>
+      <Text> </Text>
+      <Text color={colors.text}>  type anything to start</Text>
+      <Text> </Text>
+      <Box><Text color={colors.purple}>  /think</Text><Text color={colors.secondary}> deep reasoning</Text></Box>
+      <Box><Text color={colors.purple}>  /dream</Text><Text color={colors.secondary}> memory consolidation</Text></Box>
+      <Box><Text color={colors.purple}>  /goals</Text><Text color={colors.secondary}> set a goal</Text></Box>
+      <Box><Text color={colors.purple}>  /help</Text><Text color={colors.secondary}> all commands</Text></Box>
+      <Text> </Text>
+      <Text color={colors.separator}>  ↑↓ history · Tab · Esc</Text>
     </Box>
   );
 }
@@ -515,7 +513,7 @@ export const ChatPanel = React.memo(function ChatPanel({ messages, isThinking }:
               {showDivider && (
                 <Box marginLeft={1}>
                   <Text color={colors.purple}>{box.hBold}</Text>
-                  <Text color={colors.separator}>{box.hDot.repeat(2)}</Text>
+                  <Text color={colors.purpleDim}>{'▓▒░'}</Text>
                 </Box>
               )}
               <MessageBubble message={msg} />
