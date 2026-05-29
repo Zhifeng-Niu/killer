@@ -10,6 +10,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { ChatPanel, type ChatMessage } from './chat-panel.js';
 import { InputArea } from './input-area.js';
+import { Header } from './header.js';
 import { colors, box } from './theme.js';
 import type { OdysseusAgent } from '../orchestrator/index.js';
 import { generateBootGreeting } from '../cli/greeting.js';
@@ -46,6 +47,23 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
   const lastUserInputRef = useRef<string | null>(null);
   const renderedIdsRef = useRef<Set<string>>(new Set());
   const messagesRef = useRef<ChatMessage[]>([]);
+  const bootTimeRef = useRef(Date.now());
+
+  // ── Header 状态 ──
+  const [emotion, setEmotion] = useState('neutral');
+  const [headerTick, setHeaderTick] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setHeaderTick(t => t + 1), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    try {
+      const e = agent.persona.emotionalState.getState();
+      setEmotion(e.primaryEmotion);
+    } catch { /* boot 期间 persona 可能未就绪 */ }
+  }, [headerTick, messages.length]);
 
   // ── Boot greeting — 模型名一行带过 ──
   useEffect(() => {
@@ -57,11 +75,8 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
       lastTopic: agent.getLastTopic(),
     });
     const clean = greeting.replace(/\x1b\[[0-9;]*m/g, '').trim();
-    // 模型名一行带过
-    const model = agent.getModel?.() ?? '';
-    const bootLine = clean + (model ? `\nmodel: ${model}` : '');
-    if (bootLine.trim()) {
-      const msg = createMessage('agent', bootLine);
+    if (clean) {
+      const msg = createMessage('agent', clean);
       replaceMessages([msg]);
     }
   }, [agent]);
@@ -289,6 +304,12 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
 
   return (
     <Box flexDirection="column" height="100%">
+      <Header
+        model={agent.getModel?.() ?? ''}
+        emotion={emotion}
+        uptime={Date.now() - bootTimeRef.current}
+        messageCount={messages.length}
+      />
       <ChatPanel messages={messages} isThinking={isThinking} />
       <InputArea
         onSubmit={handleSubmit}
