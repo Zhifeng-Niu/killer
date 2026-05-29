@@ -3876,6 +3876,66 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
    * - 不依赖 continuation prompt 让 LLM 继续输出工具调用
    * - 使用 API 原生的 finish_reason: "tool_calls" 信号
    */
+  /**
+   * 检测用户消息是否包含行动意图
+   * "继续", "开始", "按你的想法来", "go ahead" 等
+   */
+  private isActionIntent(input: string): boolean {
+    const t = input.trim().toLowerCase();
+    const triggers = [
+      '继续', '开始', '执行', '做吧', '来吧', '按你的', '推进',
+      'go', 'do it', 'start', 'begin', 'execute', 'run', 'proceed',
+      'make it', 'go ahead', '按你', '自己的想法', '自主',
+    ];
+    // 短指令型消息
+    if (t.length < 40 && triggers.some(k => t.includes(k))) return true;
+    // 有活跃 plan 且有 pending steps
+    if (this.planExecutor.getActivePlans().some(p => p.steps.some(s => s.status === 'ready'))) return true;
+    return false;
+  }
+
+  /**
+   * Phase 1 纯文本后，如果 LLM 描述了行动意图但不调工具，
+   * 强制 follow-up 让它真正执行。
+   * 返回新的 response（含工具调用），或 null 表示不需要桥接。
+   */
+  private async tryBridgeToExecution(
+    phase1Response: string,
+    userInput: string,
+    systemContext: string,
+    onToken?: (token: string) => void,
+    onStatus?: (status: string) => void,
+  ): Promise<string | null> {
+    // 不桥接的条件：用户消息是纯对话（非行动意图）且没有活跃 plan
+    const userWantsAction = this.isActionIntent(userInput);
+    const hasActivePlan = this.planExecutor.getActivePlans().some(
+      p => p.steps.some(s => s.status === 'ready'),
+    );
+
+    // 检查 Phase 1 响应是否包含行动描述语言
+    const actionPatterns = /(?:先|接下来|我要|I'll|first|next|then|plan to|going to|步骤|需要先|will do|会.*做|should|let me)/i;
+    const responseDescribesAction = actionPatterns.test(phase1Response);
+
+    if (!userWantsAction && !hasActivePlan && !responseDescribesAction) {
+      return null; // 纯对话，不需要桥接
+    }
+
+    onStatus?.('Executing planned actions...');
+
+    // 构建 follow-up prompt，明确要求使用工具
+    const bridgePrompt = [
+      `The user wants you to ACT, not just plan.`,
+      `You said: "${phase1Response.slice(0, 500)}"`,
+      '',
+      'Now EXECUTE your first step using tools.',
+      'Use [TOOL: name](params) format to call tools.',
+      'Do NOT describe what you will do — actually call the tools now.',
+    ].join('\n');
+
+    const execResponse = await this.callLLMWithRetry(bridgePrompt, systemContext, onToken);
+    return execResponse;
+  }
+
   private async runNativeToolLoop(
     userInput: string,
     systemContext: string,
@@ -3892,8 +3952,21 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     response = toolResult.response;
 
     if (!toolResult.toolsExecuted) {
-      // 纯文本响应，无工具调用 — 直接返回
-      return response;
+      // 纯文本响应 — 检查是否需要强制工具执行
+      // 当 LLM 说"我要做 X"但不调工具时，自动桥接到执行
+      const forcedResult = await this.tryBridgeToExecution(
+        response, userInput, systemContext, onToken, onStatus,
+      );
+      if (forcedResult) {
+        response = forcedResult;
+        // 重新解析工具结果，决定是否进入 Phase 2
+        const bridgeToolResult = await this.executeToolCallsFromResponse(response, onToken);
+        response = bridgeToolResult.response;
+        if (!bridgeToolResult.toolsExecuted) return response;
+        // Fall through to Phase 2 below
+      } else {
+        return response;
+      }
     }
 
     // === 阶段 2：有工具调用 — 进入原生 function calling 循环 ===
