@@ -8,7 +8,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useStdout } from 'ink';
-import { colors, box, icons, thinkFrames, streamFlowFrames, rippleFrames, ambientFlowFrames, dividerFlowFrames, roleColors } from './theme.js';
+import { colors, box, icons, thinkFrames, streamFlowFrames, rippleFrames, roleColors } from './theme.js';
 
 export interface ChatMessage {
   id: string;
@@ -408,23 +408,13 @@ function renderTable(rows: string[], keyBase: number): React.ReactNode {
 // ── 空状态 ──
 
 function EmptyState() {
-  const [frame, setFrame] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => setFrame(f => (f + 1) % ambientFlowFrames.length), 100);
-    return () => clearInterval(timer);
-  }, []);
-
-  const flow = ambientFlowFrames[frame];
   return (
     <Box flexDirection="column" paddingY={2} marginLeft={2}>
       <Text color={colors.purple} bold>  ◈  O D Y S S E U S</Text>
       <Text color={colors.secondary}>     Autonomous Agent Framework</Text>
       <Text> </Text>
       <Box marginLeft={2}>
-        {flow.bar.split('').map((ch, i) => (
-          <Text key={i} color={flow.colors[i]}>{ch}</Text>
-        ))}
+        <Text color={colors.purpleDim}>{'━'.repeat(30)}</Text>
       </Box>
       <Text> </Text>
       <Text color={colors.text}>  type anything to start</Text>
@@ -486,20 +476,12 @@ function ThinkingIndicator() {
   );
 }
 
-// ── 分隔线流动 ──
+// ── 消息分隔线 ──
 
-function FlowDivider() {
-  const [frame, setFrame] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => setFrame(f => (f + 1) % dividerFlowFrames.length), 100);
-    return () => clearInterval(timer);
-  }, []);
-
+function MessageDivider() {
   return (
-    <Box marginLeft={1}>
-      <Text color={colors.purple}>{box.hBold}</Text>
-      <Text color={colors.purpleDim}>{dividerFlowFrames[frame]}</Text>
+    <Box marginLeft={1} marginY={0}>
+      <Text color={colors.separator}>{'─'.repeat(40)}</Text>
     </Box>
   );
 }
@@ -544,11 +526,10 @@ export const ChatPanel = React.memo(function ChatPanel({ messages, isThinking }:
         <EmptyState />
       ) : (
         visible.map((msg, idx) => {
-          const prevMsg = idx > 0 ? visible[idx - 1] : null;
-          const showDivider = prevMsg != null && prevMsg.role === 'user' && msg.role === 'agent';
+          const showDivider = idx > 0;
           return (
             <React.Fragment key={msg.id}>
-              {showDivider && <FlowDivider />}
+              {showDivider && <MessageDivider />}
               <MessageBubble message={msg} />
             </React.Fragment>
           );
