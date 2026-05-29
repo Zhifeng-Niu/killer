@@ -140,6 +140,10 @@ export async function triggerAutoEvolve(
  *
  * 建议风格：自然、温暖、像朋友——不是算法推荐，而是真正关心。
  */
+/** 最近推送的建议去重缓存 */
+const recentSuggestions: string[] = [];
+const MAX_RECENT_CACHE = 20;
+
 export function generateProactiveSuggestions(
   persona: PersonaEngine,
   hippocampus: HippocampusEngine,
@@ -161,12 +165,23 @@ export function generateProactiveSuggestions(
     for (const need of predictions.predictedNeeds) {
       if (need.confidence > 0.6) {
         const desc = need.description.toLowerCase().replace(/^follow-up or deeper exploration of /, '');
+
+        // 过滤内部概念（xxx: yyy 格式是系统内部标记，不应作为用户建议）
+        if (/^[a-z_]+:\s/.test(desc)) continue;
+
+        // 过滤过于简短或无意义的描述
+        if (desc.length < 5) continue;
+
         const templates = [
           `I was thinking — you might want to revisit ${desc}. Want to pick that up?`,
           `Something tells me you might be interested in ${desc}. Just a hunch.`,
           `Hey, I remember we were getting into ${desc}. Want to keep going?`,
         ];
         const template = templates[Math.floor(Math.random() * templates.length)];
+
+        // 去重检查
+        if (recentSuggestions.some(s => s.includes(desc))) continue;
+
         suggestions.push({
           type: 'suggestion',
           content: template,
@@ -240,6 +255,12 @@ export function generateProactiveSuggestions(
     if (suggestions.length > 0) {
       suggestions.sort((a, b) => b.priority - a.priority);
       const top = suggestions[0];
+
+      // 记录去重
+      recentSuggestions.push(top.content);
+      if (recentSuggestions.length > MAX_RECENT_CACHE) {
+        recentSuggestions.shift();
+      }
 
       consciousness.emit({
         type: 'proactive.suggestion',
