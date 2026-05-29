@@ -49,21 +49,7 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
   const messagesRef = useRef<ChatMessage[]>([]);
   const bootTimeRef = useRef(Date.now());
 
-  // ── Header 状态 ──
-  const [emotion, setEmotion] = useState('neutral');
-  const [headerTick, setHeaderTick] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => setHeaderTick(t => t + 1), 30000);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    try {
-      const e = agent.persona.emotionalState.getState();
-      setEmotion(e.primaryEmotion);
-    } catch { /* boot 期间 persona 可能未就绪 */ }
-  }, [headerTick, messages.length]);
+  // ── Header 自管理 emotion 和 tick，不触发 App 重渲染 ──
 
   // ── Boot greeting — 模型名一行带过 ──
   useEffect(() => {
@@ -307,7 +293,7 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
       <ChatPanel messages={messages} isThinking={isThinking} />
       <Header
         model={agent.getModel?.() ?? ''}
-        emotion={emotion}
+        agent={agent}
         uptime={Date.now() - bootTimeRef.current}
         messageCount={messages.length}
       />

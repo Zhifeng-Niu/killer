@@ -2,17 +2,17 @@
  * Status Bar — 底部固定状态行
  *
  * 放在 InputArea 上方，终端底部稳定区。
- * 紧凑一行：emoji + 模型 · 运行时间 · 消息数
- * 不抢视觉焦点，但始终可见。
+ * 自管理 30s tick，不触发父组件重渲染。
  */
 
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useStdout } from 'ink';
-import { colors, box, formatDuration } from './theme.js';
+import { colors, formatDuration } from './theme.js';
+import type { OdysseusAgent } from '../orchestrator/agent.js';
 
 interface HeaderProps {
   model: string;
-  emotion: string;
+  agent: OdysseusAgent;
   uptime: number;
   messageCount: number;
 }
@@ -30,7 +30,7 @@ function emotionToEmoji(emotion: string): string {
 
 export const Header = React.memo(function Header({
   model,
-  emotion,
+  agent,
   uptime,
   messageCount,
 }: HeaderProps) {
@@ -43,12 +43,15 @@ export const Header = React.memo(function Header({
     return () => clearInterval(timer);
   }, []);
 
+  let emotion = 'neutral';
+  try {
+    emotion = agent.persona.emotionalState.getState().primaryEmotion;
+  } catch { /* boot 期间 persona 可能未就绪 */ }
+
   const modelShort = model.length > 24 ? model.slice(0, 22) + '…' : model;
   const uptimeStr = formatDuration(uptime);
   const mood = emotionToEmoji(emotion);
 
-  // 左侧：模型 + 情感
-  // 右侧：时间 + 消息数
   const left = `${mood} ${modelShort}`;
   const right = `${uptimeStr} · ${messageCount}`;
   const gap = Math.max(1, termCols - left.length - right.length - 4);
