@@ -4147,12 +4147,16 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     return toolNames.map(name => {
       const info = this.tools.getInfo(name);
       const desc = info?.description || `Execute tool: ${name}`;
+      // 优先使用工具声明的真实参数 schema，回退到描述解析
+      const parameters = info?.parameters && Object.keys(info.parameters).length > 0
+        ? info.parameters
+        : parseToolParams(desc);
       return {
         type: 'function' as const,
         function: {
           name,
           description: desc,
-          parameters: parseToolParams(desc),
+          parameters,
         },
       };
     });

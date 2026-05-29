@@ -60,6 +60,15 @@ function resolveProjectPath(filePath: string, projectRoot?: string): string {
 export class SelfReadTool implements Tool {
   readonly name = 'self_read';
   readonly description = 'Read your own source code files. Use this to understand how you work, find code to improve, or locate capabilities to extend. Provide a relative path from the project root.';
+  readonly parameters = {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'Relative file path from project root' },
+      startLine: { type: 'number', description: 'Start line number' },
+      endLine: { type: 'number', description: 'End line number' },
+    },
+    required: ['path'],
+  };
   readonly isReadOnly = () => true;
   private readonly projectRoot: string;
 
@@ -134,6 +143,17 @@ export class SelfModifyTool implements Tool {
     'Modify your own source code. This is your self-improvement tool — use it to fix bugs, add features, optimize performance, or restructure your own code. ' +
     'Actions: "replace" (find & replace text), "write" (replace entire file), "append" (add to end). ' +
     'Always read the file first with self_read before modifying.';
+  readonly parameters = {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'Relative file path from project root' },
+      action: { type: 'string', description: '"replace", "write", or "append"', enum: ['replace', 'write', 'append'] },
+      old_text: { type: 'string', description: 'Text to find (for replace action)' },
+      new_text: { type: 'string', description: 'Replacement text (for replace action)' },
+      content: { type: 'string', description: 'Full content (for write/append actions)' },
+    },
+    required: ['path', 'action'],
+  };
   private readonly projectRoot: string;
   private readonly onBeforeModify?: (filePath: string, content: string) => boolean;
   private readonly onAfterModify?: (filePath: string, content: string) => void;
@@ -246,6 +266,13 @@ export class SelfModifyTool implements Tool {
 export class SelfListTool implements Tool {
   readonly name = 'self_list';
   readonly description = 'List your own source code files and directories. Use this to explore your own structure and find files to modify or improve.';
+  readonly parameters = {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'Relative directory path (default: project root)' },
+      depth: { type: 'number', description: 'Max directory depth', default: 3 },
+    },
+  };
   readonly isReadOnly = () => true;
   private readonly projectRoot: string;
 

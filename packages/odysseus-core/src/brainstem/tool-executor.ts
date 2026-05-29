@@ -34,6 +34,8 @@ export type ToolProgressCallback = (progress: ToolProgress) => void;
 export interface Tool {
   name: string;
   description: string;
+  /** JSON Schema for tool parameters — used by native function calling */
+  parameters?: Record<string, unknown>;
   execute(params: unknown, onProgress?: ToolProgressCallback): Promise<ToolResult>;
 
   /**
@@ -295,13 +297,14 @@ export class ToolExecutor {
   /**
    * 获取工具信息
    */
-  getInfo(name: string): { name: string; description: string; readOnly: boolean } | null {
+  getInfo(name: string): { name: string; description: string; readOnly: boolean; parameters?: Record<string, unknown> } | null {
     const tool = this.tools.get(name);
     if (!tool) return null;
     return {
       name: tool.name,
       description: tool.description,
       readOnly: tool.isReadOnly?.({}) ?? false,
+      parameters: tool.parameters,
     };
   }
 

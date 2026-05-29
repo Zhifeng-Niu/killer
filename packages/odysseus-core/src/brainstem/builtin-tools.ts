@@ -67,6 +67,14 @@ function isPathDenied(filePath: string): boolean {
 export class ReadFileTool implements Tool {
   name = 'read_file';
   description = 'Read the contents of a file';
+  parameters = {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'File path to read' },
+      encoding: { type: 'string', description: 'File encoding', default: 'utf-8' },
+    },
+    required: ['path'],
+  };
 
   isReadOnly = () => true;
 
@@ -110,6 +118,15 @@ export class ReadFileTool implements Tool {
 export class WriteFileTool implements Tool {
   name = 'write_file';
   description = 'Write content to a file';
+  parameters = {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'File path to write' },
+      content: { type: 'string', description: 'Content to write' },
+      encoding: { type: 'string', description: 'File encoding', default: 'utf-8' },
+    },
+    required: ['path', 'content'],
+  };
 
   async execute(params: unknown): Promise<ToolResult> {
     if (typeof params !== 'object' || params === null) {
@@ -156,6 +173,11 @@ export class WriteFileTool implements Tool {
 export class DeleteFileTool implements Tool {
   name = 'delete_file';
   description = 'Delete a file';
+  parameters = {
+    type: 'object',
+    properties: { path: { type: 'string', description: 'File path to delete' } },
+    required: ['path'],
+  };
 
   async execute(params: unknown): Promise<ToolResult> {
     if (typeof params !== 'object' || params === null) {
@@ -194,6 +216,11 @@ export class DeleteFileTool implements Tool {
 export class ListDirectoryTool implements Tool {
   name = 'list_directory';
   description = 'List contents of a directory';
+  parameters = {
+    type: 'object',
+    properties: { path: { type: 'string', description: 'Directory path to list' } },
+    required: ['path'],
+  };
 
   isReadOnly = () => true;
 
@@ -271,6 +298,14 @@ export class ListDirectoryTool implements Tool {
 export class ExecuteShellTool implements Tool {
   name = 'execute_shell';
   description = 'Execute a shell command';
+  parameters = {
+    type: 'object',
+    properties: {
+      command: { type: 'string', description: 'Shell command to execute' },
+      timeout: { type: 'number', description: 'Timeout in ms', default: 30000 },
+    },
+    required: ['command'],
+  };
 
   /** 当前沙箱模式 */
   static sandboxMode: SandboxMode = 'open';
@@ -374,6 +409,14 @@ const memoryStore = new Map<string, unknown>();
 export class MemoryStoreTool implements Tool {
   name = 'memory_store';
   description = 'Store information in memory';
+  parameters = {
+    type: 'object',
+    properties: {
+      key: { type: 'string', description: 'Storage key' },
+      value: { description: 'Value to store' },
+    },
+    required: ['key', 'value'],
+  };
 
   async execute(params: unknown): Promise<ToolResult> {
     if (typeof params !== 'object' || params === null) {
@@ -400,6 +443,11 @@ export class MemoryStoreTool implements Tool {
 export class MemoryRetrieveTool implements Tool {
   name = 'memory_retrieve';
   description = 'Retrieve information from memory';
+  parameters = {
+    type: 'object',
+    properties: { key: { type: 'string', description: 'Key to retrieve' } },
+    required: ['key'],
+  };
 
   isReadOnly = () => true;
 
@@ -436,6 +484,7 @@ export class MemoryRetrieveTool implements Tool {
 export class MemoryListTool implements Tool {
   name = 'memory_list';
   description = 'List all keys in memory';
+  parameters = { type: 'object', properties: {} };
 
   isReadOnly = () => true;
 
@@ -454,6 +503,7 @@ export class MemoryListTool implements Tool {
 export class MemoryClearTool implements Tool {
   name = 'memory_clear';
   description = 'Clear all memory';
+  parameters = { type: 'object', properties: {} };
 
   async execute(_params: unknown): Promise<ToolResult> {
     const size = memoryStore.size;
@@ -489,6 +539,11 @@ interface SearchResult {
 export class WebSearchTool implements Tool {
   name = 'web_search';
   description = 'Search the web for information';
+  parameters = {
+    type: 'object',
+    properties: { query: { type: 'string', description: 'Search query' } },
+    required: ['query'],
+  };
 
   isReadOnly = () => true;
 
@@ -599,7 +654,15 @@ export class WebSearchTool implements Tool {
  */
 export class WebFetchTool implements Tool {
   name = 'web_fetch';
-  description = 'Fetch content from a URL. Params: { url: string, format?: "text"|"markdown" }';
+  description = 'Fetch content from a URL';
+  parameters = {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: 'URL to fetch' },
+      format: { type: 'string', description: 'Response format', enum: ['text', 'markdown'], default: 'markdown' },
+    },
+    required: ['url'],
+  };
 
   isReadOnly = () => true;
 
@@ -754,6 +817,14 @@ function extractHtmlContent(html: string): { title: string; text: string } {
 export class SynapseBroadcastTool implements Tool {
   name = 'synapse_broadcast';
   description = 'Broadcast message to all connected cells';
+  parameters = {
+    type: 'object',
+    properties: {
+      message: { type: 'string', description: 'Message to broadcast' },
+      target: { type: 'string', description: 'Optional target cell filter' },
+    },
+    required: ['message'],
+  };
 
   async execute(params: unknown): Promise<ToolResult> {
     if (typeof params !== 'object' || params === null) {
@@ -784,6 +855,15 @@ export class SynapseBroadcastTool implements Tool {
 export class SendMessageTool implements Tool {
   name = 'send_message';
   description = 'Send message to a specific cell';
+  parameters = {
+    type: 'object',
+    properties: {
+      target: { type: 'string', description: 'Target cell ID' },
+      message: { type: 'string', description: 'Message content' },
+      type: { type: 'string', description: 'Message type', default: 'info' },
+    },
+    required: ['target', 'message'],
+  };
 
   async execute(params: unknown): Promise<ToolResult> {
     if (typeof params !== 'object' || params === null) {
