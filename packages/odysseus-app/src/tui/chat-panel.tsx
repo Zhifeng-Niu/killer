@@ -8,7 +8,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useStdout } from 'ink';
-import { colors, box, icons, thinkFrames, waveFrames } from './theme.js';
+import { colors, box, icons, thinkFrames, waveFrames, roleColors } from './theme.js';
 
 export interface ChatMessage {
   id: string;
@@ -431,20 +431,13 @@ const MessageBubble = React.memo(function MessageBubble({ message }: { message: 
   const isError = message.role === 'error';
   const isSystem = message.role === 'system';
 
-  const roleColor = isUser ? colors.user
-    : isError ? colors.error
-    : isSystem ? colors.amber
-    : colors.agent;
-  const roleIcon = isUser ? icons.user
-    : isError ? icons.error
-    : isSystem ? icons.warn
-    : icons.agent;
+  const rc = roleColors[message.role] ?? roleColors.agent;
 
   return (
     <Box flexDirection="column" marginLeft={1} marginTop={1}>
       <Box>
-        <Text color={roleColor}>{roleIcon} </Text>
-        <Text color={roleColor} bold>{isUser ? 'you' : isError ? 'error' : isSystem ? 'system' : 'odysseus'}</Text>
+        <Text color={rc.color}>{rc.icon} </Text>
+        <Text color={rc.color} bold>{rc.label}</Text>
         {message.duration != null && (
           <Text color={colors.secondary}> {message.duration}ms</Text>
         )}
