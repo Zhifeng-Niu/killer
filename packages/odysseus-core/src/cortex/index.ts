@@ -36,6 +36,16 @@ export type {
 // Classes
 export { SkillEcosystem } from './skill-eco.js';
 export { EvolutionEngine } from './evolution-engine.js';
+export { CuriosityEngine } from './curiosity-engine.js';
+
+// Curiosity types
+export type {
+  KnowledgeGap,
+  ExplorationStrategy,
+  ExplorationResult,
+  DiscoveryEntry,
+  InterestProfile,
+} from './curiosity-engine.js';
 
 // Constants
 export { DEFAULT_EVOLUTION_CONFIG } from './evolution.js';

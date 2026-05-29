@@ -89,10 +89,12 @@ import {
   SelfReviewer,
   type ReviewContext,
   type ReviewResult,
+  CuriosityEngine,
   type ChainResult,
   type TaskExecutionResult,
 } from '@odysseus/core';
 import { ShellExecutor } from './shell-executor.js';
+import { AutonomousExplorer } from './autonomous-explorer.js';
 import { SensoryRouter, CLIChannel, OutputManager } from '../sensory/index.js';
 import { WebhookChannel } from '../sensory/webhook/index.js';
 import type {
@@ -188,6 +190,7 @@ export class OdysseusAgent implements IDriveSource {
   instructionParser!: InstructionParser;
   stepVerifier!: StepVerifier;
   selfReviewer!: SelfReviewer;
+  autonomousExplorer!: AutonomousExplorer;
   deliveryReport!: DeliveryReportGenerator;
   scheduledRunner!: ScheduledTaskRunner;
   readonly hooks: LifecycleHooks = new LifecycleHooks();
@@ -1455,6 +1458,15 @@ Examples:
     // Self Reviewer — 执行后自审查
     this.selfReviewer = new SelfReviewer();
 
+    // Autonomous Explorer — 自主好奇心探索
+    this.autonomousExplorer = new AutonomousExplorer({
+      curiosity: new CuriosityEngine(),
+      callLLM: (prompt) => this.callLLMWithRetry(prompt, ''),
+      executeTool: (name, params) => this.executeToolWithRecovery(name, params as Record<string, unknown>),
+      consciousness: this.consciousness,
+      logger: this.logger,
+    });
+
     // Scheduled Task Runner — 定时任务调度
     this.scheduledRunner = new ScheduledTaskRunner();
   }
@@ -2442,20 +2454,13 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       }
     });
 
-    // 订阅反思完成事件 — 触发主动行为建议
+    // 订阅反思完成事件 — 触发自主探索
     this.brainstem.on('reflectionComplete', () => {
-      // 每隔 AUTO_PROACTIVE_INTERVAL 个周期触发一次主动建议
+      // 每隔 AUTO_PROACTIVE_INTERVAL 个周期触发一次自主探索
       if (this.loopCount % AUTO_PROACTIVE_INTERVAL === 0) {
-        try {
-          generateProactiveSuggestions(
-            this.persona,
-            this.hippocampus,
-            this.consciousness,
-            this.logger,
-          );
-        } catch (err) {
-          this.logger.warn('Proactive suggestions failed:', { error: err instanceof Error ? err.message : String(err) });
-        }
+        this.autonomousExplorer.explore().catch((err) => {
+          this.logger.warn('Autonomous exploration failed:', { error: err instanceof Error ? err.message : String(err) });
+        });
       }
     });
 
@@ -2553,22 +2558,18 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     }, 3 * 60 * 1000);
     this.backgroundTimers.push(emotionTimer);
 
-    // 主动建议：每 4 分钟检查一次，空闲 1 分钟后触发
-    const proactiveTimer = setInterval(() => {
+    // 自主探索：空闲时 Agent 自己去探索世界（取代旧的模板建议）
+    const explorationTimer = setInterval(() => {
       const idleMs = Date.now() - this.lastActivityAt;
       if (idleMs > 60 * 1000 && !this.processing) { // 1 min idle
-        generateProactiveSuggestions(
-          this.persona,
-          this.hippocampus,
-          this.consciousness,
-          this.logger,
-        );
+        this.autonomousExplorer.explore().catch(err => {
+          this.logger.warn('Autonomous exploration failed', err);
+        });
 
-        // 检查上下文提醒（用户之前提到的待办事项）
         checkPendingReminders(this.consciousness, this.logger);
       }
     }, 4 * 60 * 1000); // 4 min check
-    this.backgroundTimers.push(proactiveTimer);
+    this.backgroundTimers.push(explorationTimer);
 
     // 每日总结：每小时检查一次，距离上次总结超过 24 小时时触发
     let lastSummaryAt = Date.now();
