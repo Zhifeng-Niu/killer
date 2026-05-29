@@ -1,99 +1,64 @@
 ---
 orientation: [creative]
 status: active
-started_at: 2026-05-26T13:58:12Z
-expedition_branch: null
+started_at: 2026-05-29T05:04:37Z
+expedition_branch: odyssey/20260528-222725
 baseline_metric: null
 best_metric: null
-total_waypoints: 11
+total_waypoints: 3
 consecutive_discards: 0
 ---
 
-# Mission: 给odysseus加上一个最完美的TUI
+# Mission: AGI-Level Orchestration — 三大编排突破点
 
 ## Goal
-给odysseus加上一个最完美的TUI
+从"单轮响应 + 工具调用"升级到"持久、有状态、元认知的执行引擎"
 
 ## Context
-Project type: typescript. Auto-detected guard: npm test 2>&1.
+Agent 自我诊断出 4 大编排差距，选择"聚焦一个突破点"策略，连续实现三个：
 
 ## Scope
 
 ### Modifiable
-- (auto — all files not in Read-Only)
+- `packages/odysseus-core/src/prefrontal/` — types, planner, executor
+- `packages/odysseus-app/src/orchestrator/agent.ts` — 中央编排器
 
 ### Read-Only (PROTECTED)
-- (none specified)
-
-## Metrics
-
-| Name | Unit | Measure Command | Direction |
-|------|------|----------------|-----------|
-| type_error_count | - | (auto-detected) | lower |
-
-## Guard
-```bash
-npm test 2>&1
-```
-
-## Termination
-- Task complete (all checks pass AND metric improved)
-- OR stuck (10 consecutive discards)
-- OR user interrupt (/odyssey-cancel)
-- No iteration limit — runs until done
+- 所有 TUI 组件（已完成动效任务）
+- API 层、CLI 层
 
 ## What's Been Tried
 
 ### Wins
-1. **ink 7 + React 19 TUI framework** — Split-pane layout: Chat + Sidebar + InputArea. 0 type errors, 1909 tests pass.
-2. **Full integration** — Boot greeting, consciousness stream (proactive suggestions), command system, streaming with Esc cancel.
-3. **Mode selection** — `--tui` (default) / `--cli` (classic readline) / `--api` flags.
-4. **23 commands** — Full command parity with readline CLI: /status /cells /goals /memory /emotions /persona /narrative /predictions /dream /think /evolve /spawn /delegate /diagnostics /health /metrics /sessions /save /load /mission /exit.
-5. **Animated spinner** — ink-spinner for thinking state, visual polish with Catppuccin color theme.
-6. **Graceful exit** — /exit saves session, shows farewell with emotion emoji, clean shutdown.
-7. **API key detection** — Auto-detects pasted keys (sk-, gsk_, AIza, JWT) and guides to /key command.
-8. **Input history** — ↑↓ arrow navigation through last 200 inputs, draft preservation.
-9. **Viewport-aware chat** — Estimates message height from terminal rows, auto-trims to keep input area visible.
-10. **/key command** — Save API key to ~/.odysseus/config.json from within TUI session.
-11. **Truncation indicator** — "↑ 还有 N 条更早的消息" when old messages are trimmed.
-12. **Code block language labels** — Shows ```python, ```typescript etc. as header above code blocks.
-13. **Tab completion** — Tab key auto-completes partial /commands.
-14. **Ctrl+C graceful shutdown** — Saves session + agent.shutdown() before exit.
-15. **Header message count** — Real-time message counter in header bar.
-16. **Demo mode indicator** — "体验模式" badge in header when running mock provider.
-17. **/find search** — Search message history by keyword, shows top 10 results with role + preview.
-18. **Error border** — Error messages rendered with bold red left border for visibility.
-19. **/retry and /clear** — Retry last message or clear chat display. /retry uses ref to avoid stale closure.
-20. **Response duration** — Shows elapsed time (ms/s) after agent completes a response.
-21. **Responsive sidebar** — Auto-hides sidebar when terminal width < 80 columns.
-22. **TUI unit tests** — 19 tests covering looksLikeApiKey (12), emotionToEmoji (2), estimateMessageLines (5). 1928 total tests pass.
-23. **Graceful shutdown fix** — startTUI returns ink Instance, main.ts uses waitUntilExit().then(shutdown) for proper cleanup.
-24. **Header status indicator** — Shows ● 思考中/输出中/错误 in header bar when agent is active, visible even when sidebar is hidden.
-25. **Code review fixes** — CRITICAL: consciousness event listener cleanup (use unsubscribe return). HIGH: /retry direct flow, AbortController leak prevention, try-catch in event handler.
 
-#### Session 3 — Cognitive Pipeline Deep Cuts (WP90-96)
+**WP1: 持久执行循环** (~15 行改动)
+- `executor.ts` `import()`: 有 pending steps 的 plan 刷新 `createdAt = Date.now()` 防止 24h 超时
+- `agent.ts` `processAutoContinue()`: 每步执行后调用 `saveSession()` 持久化到磁盘
+- `agent.ts` `boot()`: 检测恢复的 plans，设置 `hasResumedPlans = true`
+- 事件流: 创建 plan → 每步执行 + save → 重启 → boot 恢复 → 首次交互后 auto-continue 继续
 
-96. **Context Window Budget Optimizer** (WP90): Proportional token budget with keep/truncate/drop per section — 45 weights, MIN_SECTION_BUDGET=50
-97. **Next-Turn Intent Prediction** (WP91): 9x9 transition matrix + knowledge graph influence + flow signals → predicted intent with actions
-98. **Cross-Module Cognitive Feedback** (WP92): 13 interaction rules (amplify/suppress/trigger/conflict), synergy/conflict detection, health scoring
-99. **Adaptive Tool Chain Orchestration** (WP93): Intent→tool chain templates (9 categories), learned pattern adjustment, step-skipping
-100. **Conversation Momentum Tracking** (WP94): 5-dimension momentum (topic depth, info density, engagement, goal progress, composite) with pace advice
-101. **Adaptive Persona Calibration** (WP95): 5 expression dimensions from 6 signals — formality/verbosity/empathy/technicalDepth/proactivity
-102. **Proactive Knowledge Gap Detector** (WP96): Regex detection of unknown concepts, unresolved references, missing context — coverage scored, injected as KNOWLEDGE GAPS section
+**WP2: 层级分解** (~40 行改动)
+- `types.ts`: PlanStep 新增 `subPlanId?`, `isCompound?`；Plan 新增 `parentPlanId?`, `parentStepId?`
+- `planner.ts` `decomposeStep()`: 复合步骤分解为子计划
+- `executor.ts` `registerSubPlan()`: 注册子计划 + 标记父步骤；`isSubPlanCompleted()`, `getPlanDepth()`
+- `getNextAction()`: 自动钻入子计划；`reportStepResult()`: 子计划完成时自动完成父步骤
+- 深度上限 3：根(0) → 子(1) → 孙(2) → 不再分解(3)
+
+**WP3: 元认知监控** (~50 行改动)
+- `executor.ts` `replacePlan()`: 封装安全的 plan 替换
+- `agent.ts` 质量门控: 连续 N 步失败时不再只日志，执行实际恢复策略
+  - `decompose`: 分解失败步骤为子计划（回退到 replan）
+  - `replan`: 生成替代步骤替换当前计划
+- 两种策略都重置 `consecutiveFailures = 0` + 发射 consciousness 事件
 
 ### Dead Ends
-{None yet.}
+- 无（三步全部编译通过，无死胡同）
 
 ### Surprises
-- ink 7 worked seamlessly with ESM `"type": "module"` — just needed `"jsx": "react-jsx"` in tsconfig.
+- 基础设施 90% 已存在（export/import、saveSession 序列化、planData 持久化），只需要"接线"
+- PlanExecutor 的 `getActivePlans()` 有 24h autoAbandonTimeout，恢复后不刷新 createdAt 会立即丢弃 — 这是持久执行的最大陷阱
 
 ## Current Best
-- metric: 0 type errors (improved from baseline)
-- 1928 tests pass, TUI fully functional with 8 new files (7 components + 1 test)
-- 27 commands, 24 UX wins, responsive layout, Catppuccin theme
-- Graceful shutdown, input history, Tab completion, message search, retry, clear
-- Demo mode indicator, response duration, header status, error styling
-- Consciousness stream, proactive suggestions, boot greeting
-
-## Ideas Backlog
-{Auto-populated. Can be manually edited.}
+- 3/4 AGI 编排差距已修复
+- 剩余: 动态注意力分配（多子目标并行追踪 + 优先级调整）
+- 所有改动通过 `npx tsc --noEmit` 类型检查

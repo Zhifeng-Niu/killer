@@ -90,6 +90,10 @@ export interface PlanStep {
   };
   /** 执行结果（可选） */
   result?: StepResult;
+  /** 此步骤关联的子计划 ID（步骤需要进一步分解时） */
+  subPlanId?: string;
+  /** 步骤是否为复合步骤（需要分解） */
+  isCompound?: boolean;
 }
 
 /**
@@ -108,6 +112,10 @@ export interface Plan {
   estimatedDuration?: number;
   /** 创建时间 */
   createdAt: number;
+  /** 父计划 ID（子计划时指向父计划） */
+  parentPlanId?: string;
+  /** 父步骤 ID（子计划对应父计划中的哪个步骤） */
+  parentStepId?: string;
 }
 
 /**

@@ -94,6 +94,7 @@ export class PlanExecutor {
 
   /**
    * 获取下一个要执行的行动
+   * 如果下一个就绪步骤是复合步骤且有子计划，返回子计划的步骤。
    */
   getNextAction(planId: string): PlanStep | null {
     const plan = this.plans.get(planId);
@@ -106,7 +107,17 @@ export class PlanExecutor {
       return null;
     }
 
-    return readySteps[0];
+    const nextStep = readySteps[0];
+
+    // If compound step with active sub-plan, drill into sub-plan
+    if (nextStep.isCompound && nextStep.subPlanId) {
+      const subAction = this.getNextAction(nextStep.subPlanId);
+      if (subAction) return subAction;
+      // Sub-plan finished — fall through to return the compound step itself
+      // (it will be auto-completed by reportStepResult)
+    }
+
+    return nextStep;
   }
 
   /**
@@ -176,6 +187,35 @@ export class PlanExecutor {
     // 限制历史记录大小
     if (this.executionHistory.length > 1000) {
       this.executionHistory.shift();
+    }
+
+    // Hierarchical: if this plan is a sub-plan and all steps completed,
+    // auto-complete the parent step
+    const completedPlan = this.plans.get(planId);
+    if (completedPlan?.parentPlanId && completedPlan?.parentStepId) {
+      const allDone = completedPlan.steps.every(
+        s => s.status === 'completed' || s.status === 'skipped',
+      );
+      if (allDone) {
+        const parentPlan = this.plans.get(completedPlan.parentPlanId);
+        if (parentPlan) {
+          const parentStepIdx = parentPlan.steps.findIndex(
+            s => s.id === completedPlan.parentStepId,
+          );
+          if (parentStepIdx !== -1 && parentPlan.steps[parentStepIdx].status !== 'completed') {
+            const updatedSteps = [...parentPlan.steps];
+            updatedSteps[parentStepIdx] = {
+              ...updatedSteps[parentStepIdx],
+              status: 'completed',
+              result: { success: true, output: `Sub-plan ${planId} completed`, completedAt: Date.now() },
+            };
+            this.plans.set(completedPlan.parentPlanId, {
+              ...parentPlan,
+              steps: updatedSteps,
+            });
+          }
+        }
+      }
     }
   }
 
@@ -323,6 +363,65 @@ export class PlanExecutor {
   }
 
   /**
+   * 注册子计划（由 Planner.decomposeStep 创建）
+   * 同时更新父步骤的 subPlanId/isCompound 标记。
+   */
+  registerSubPlan(subPlan: Plan, parentPlanId: string, parentStepId: string): void {
+    subPlan.parentPlanId = parentPlanId;
+    subPlan.parentStepId = parentStepId;
+    this.plans.set(subPlan.id, subPlan);
+    this.goalToPlans.set(subPlan.goalId, subPlan.id);
+
+    // Mark parent step as compound
+    const parentPlan = this.plans.get(parentPlanId);
+    if (parentPlan) {
+      const stepIdx = parentPlan.steps.findIndex(s => s.id === parentStepId);
+      if (stepIdx !== -1) {
+        const updatedSteps = [...parentPlan.steps];
+        updatedSteps[stepIdx] = {
+          ...updatedSteps[stepIdx],
+          isCompound: true,
+          subPlanId: subPlan.id,
+        };
+        this.plans.set(parentPlanId, { ...parentPlan, steps: updatedSteps });
+      }
+    }
+  }
+
+  /**
+   * 检查子计划是否全部完成（用于推进复合步骤）
+   */
+  isSubPlanCompleted(subPlanId: string): boolean {
+    const subPlan = this.plans.get(subPlanId);
+    if (!subPlan) return true;
+    return subPlan.steps.every(
+      s => s.status === 'completed' || s.status === 'skipped',
+    );
+  }
+
+  /**
+   * 获取计划的层级深度（根计划为 0）
+   */
+  getPlanDepth(planId: string): number {
+    let depth = 0;
+    let current = this.plans.get(planId);
+    while (current?.parentPlanId) {
+      depth++;
+      current = this.plans.get(current.parentPlanId);
+    }
+    return depth;
+  }
+
+  /**
+   * 替换指定计划（由 replan 等恢复策略使用）
+   */
+  replacePlan(planId: string, plan: Plan): void {
+    if (this.plans.has(planId)) {
+      this.plans.set(planId, plan);
+    }
+  }
+
+  /**
    * 导出所有计划数据（用于持久化）
    */
   export(): {
@@ -346,7 +445,12 @@ export class PlanExecutor {
     this.executionHistory.length = 0;
 
     for (const [id, plan] of data.plans) {
-      this.plans.set(id, plan);
+      // Refresh createdAt for plans with pending steps so they don't
+      // immediately expire via autoAbandonTimeout after session restore
+      const hasPendingSteps = plan.steps.some(
+        s => s.status === 'ready' || s.status === 'executing',
+      );
+      this.plans.set(id, hasPendingSteps ? { ...plan, createdAt: Date.now() } : plan);
     }
     for (const [goalId, planId] of data.goalToPlans) {
       this.goalToPlans.set(goalId, planId);

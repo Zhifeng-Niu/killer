@@ -510,10 +510,24 @@ async function handleCommand(input: string, agent: OdysseusAgent): Promise<strin
     case 'model': {
       const current = agent.getModel();
       if (!args) return `Current: ${current}\nSwitch: /model <name>`;
-      if (agent.setModel(args.trim())) {
-        return `Model switched: ${current} → ${args.trim()}`;
+      const newModel = args.trim();
+      if (!agent.setModel(newModel)) {
+        return `Cannot switch model (provider does not support hot-swap). Current: ${current}`;
       }
-      return `Cannot switch model (provider does not support hot-swap). Current: ${current}`;
+      try {
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const os = await import('node:os');
+        const { loadConfig } = await import('../config/index.js');
+        const config = loadConfig();
+        (config.llm as { model: string }).model = newModel;
+        const dir = path.join(os.homedir(), '.odysseus');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ llm: config.llm }, null, 2), 'utf-8');
+        return `✓ Model: ${current} → ${newModel}（已保存，重启后生效）`;
+      } catch {
+        return `Model switched: ${current} → ${newModel}（内存生效，持久化失败）`;
+      }
     }
     case 'mode': {
       const cur = agent.toolPermissions.getDefaultPolicy();

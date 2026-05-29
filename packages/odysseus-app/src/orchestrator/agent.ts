@@ -441,6 +441,20 @@ export class OdysseusAgent implements IDriveSource {
       }
     });
 
+    // Resume active plans from previous session
+    const resumedPlans = this.planExecutor.getActivePlans();
+    if (resumedPlans.length > 0) {
+      const totalPending = resumedPlans.reduce(
+        (sum, p) => sum + p.steps.filter(s => s.status === 'ready').length, 0,
+      );
+      if (totalPending > 0) {
+        this.logger.info(
+          `Persistent plans: ${resumedPlans.length} active plan(s) with ${totalPending} pending steps — will resume on first interaction`,
+        );
+        this.hasResumedPlans = true;
+      }
+    }
+
     await this.hooks.emit('boot:complete');
   }
 
@@ -1677,6 +1691,7 @@ Examples:
   /** 自主执行连续计数器 */
   private autoContinueCount = 0;
   private consecutiveFailures = 0;
+  private hasResumedPlans = false;
   private maxAutoContinues = 200; // 可配置，默认 200（原 20）
   private static readonly INTERMEDIATE_SUMMARY_INTERVAL = 20;
   private static readonly MAX_CONSECUTIVE_FAILURES = 5;
@@ -1717,11 +1732,11 @@ Examples:
   /**
    * 自主执行循环：检查未完成的 plan steps，自动入队执行
    */
-  private checkAndAutoContinue(
+  private async checkAndAutoContinue(
     channel: string,
     onToken?: (token: string) => void,
     onStatus?: (status: string) => void,
-  ): void {
+  ): Promise<void> {
     if (this.autoContinueCount >= this.maxAutoContinues) return;
     if (this.inputQueue.length > 0) return;
 
@@ -1742,14 +1757,32 @@ Examples:
 
     // 找到第一个有 pending step 的 plan
     for (const plan of activePlans) {
-      const nextStep = this.planExecutor.getNextAction(plan.id);
+      let nextStep = this.planExecutor.getNextAction(plan.id);
       if (!nextStep) continue;
+
+      // Auto-decompose compound steps that haven't been decomposed yet
+      if (nextStep.isCompound && !nextStep.subPlanId && this.planExecutor.getPlanDepth(plan.id) < 3) {
+        try {
+          const goal = { id: plan.goalId, description: nextStep.description, priority: 0.5, status: 'planning' as const, createdAt: Date.now() };
+          const subPlan = await this.planner.decomposeStep(plan, nextStep, goal);
+          this.planExecutor.registerSubPlan(subPlan, plan.id, nextStep.id);
+          this.logger.info(`Hierarchical decompose: step "${nextStep.description}" → sub-plan ${subPlan.id} (${subPlan.steps.length} steps)`);
+          // Re-fetch next action — now it should drill into sub-plan
+          nextStep = this.planExecutor.getNextAction(plan.id);
+          if (!nextStep) continue;
+        } catch {
+          // Fall through — execute the compound step as-is
+        }
+      }
 
       this.autoContinueCount++;
 
-      const autoInput = `[AUTO-CONTINUE] Plan "${plan.goalId}" step ${nextStep.order + 1}/${plan.steps.length}: ${nextStep.description}`;
+      const depth = this.planExecutor.getPlanDepth(plan.id);
+      const depthPrefix = depth > 0 ? `${'└'.repeat(depth)} ` : '';
+      const stepDesc = nextStep!.description;
+      const autoInput = `[AUTO-CONTINUE] ${depthPrefix}Plan "${plan.goalId}" step ${nextStep!.order + 1}/${plan.steps.length}: ${stepDesc}`;
 
-      onStatus?.(`Auto-continue: ${nextStep.description.slice(0, 40)}...`);
+      onStatus?.(`Auto-continue: ${stepDesc.slice(0, 40)}...`);
 
       // 入队自主输入，复用现有队列机制
       this.inputQueue.push({
@@ -1760,7 +1793,7 @@ Examples:
         onToken,
       });
 
-      this.logger.info(`Auto-continue #${this.autoContinueCount}: "${nextStep.description}"`);
+      this.logger.info(`Auto-continue #${this.autoContinueCount}: "${stepDesc}"`);
       return; // 只入队一个 step，避免一次性全部排队
     }
   }
@@ -1857,6 +1890,9 @@ Examples:
       this.consecutiveFailures++;
     }
 
+    // Persist plan state to disk after each auto-continue step
+    this.saveSession();
+
     // 质量门控：连续 N 步失败时暂停，发射告警
     if (this.consecutiveFailures >= OdysseusAgent.MAX_CONSECUTIVE_FAILURES) {
       this.logger.warn(`Quality gate: ${this.consecutiveFailures} consecutive failures — pausing auto-continue`);
@@ -1871,15 +1907,54 @@ Examples:
       });
 
       // 策略恢复：根据 StepVerifier 建议自动采取行动
-      if (verification.suggestedStrategy === 'replan' || verification.suggestedStrategy === 'decompose') {
-        this.deliveryReport?.recordDecision(`Quality gate triggered ${verification.suggestedStrategy} after ${this.consecutiveFailures} failures`);
-        this.logger.info(`Auto-recovery: triggering ${verification.suggestedStrategy} for plan ${goalId}`);
+      if (verification.suggestedStrategy === 'decompose') {
+        this.deliveryReport?.recordDecision(`Quality gate: decomposing failing step after ${this.consecutiveFailures} failures`);
+        this.logger.info(`Meta-cognitive recovery: decomposing step in plan ${goalId}`);
+        // Find the current plan and try hierarchical decomposition
+        const activePlans = this.planExecutor.getActivePlans();
+        const currentPlan = activePlans.find(p => p.goalId === goalId);
+        if (currentPlan) {
+          const failingStep = currentPlan.steps.find(s => s.status === 'ready' || s.status === 'executing');
+          if (failingStep && !failingStep.isCompound && this.planExecutor.getPlanDepth(currentPlan.id) < 3) {
+            try {
+              const goal = { id: goalId, description: failingStep.description, priority: 0.5, status: 'planning' as const, createdAt: Date.now() };
+              const subPlan = await this.planner.decomposeStep(currentPlan, failingStep, goal);
+              this.planExecutor.registerSubPlan(subPlan, currentPlan.id, failingStep.id);
+              this.logger.info(`Decomposed failing step → sub-plan ${subPlan.id} (${subPlan.steps.length} steps)`);
+              this.consecutiveFailures = 0;
+            } catch {
+              this.logger.warn('Decompose recovery failed — falling back to replan');
+              const updatedPlan = this.planner.replan(currentPlan, failingStep.id);
+              this.planExecutor.replacePlan(currentPlan.id, updatedPlan);
+              this.consecutiveFailures = 0;
+            }
+          }
+        }
         this.consciousness.emit({
           type: 'execution.log',
           source: 'prefrontal',
-          data: { phase: 'auto-recovery', strategy: verification.suggestedStrategy, goalId },
+          data: { phase: 'meta-cognitive-recovery', strategy: 'decompose', goalId },
         });
-        // 重置计数器，允许继续尝试（新计划/分解后的步骤）
+      } else if (verification.suggestedStrategy === 'replan') {
+        this.deliveryReport?.recordDecision(`Quality gate: replanning after ${this.consecutiveFailures} failures`);
+        const activePlans = this.planExecutor.getActivePlans();
+        const currentPlan = activePlans.find(p => p.goalId === goalId);
+        if (currentPlan) {
+          const failingStep = currentPlan.steps.find(s => s.status === 'ready');
+          if (failingStep) {
+            const updatedPlan = this.planner.replan(currentPlan, failingStep.id);
+            this.planExecutor.replacePlan(currentPlan.id, updatedPlan);
+            this.logger.info(`Replanned: ${updatedPlan.steps.length} new steps`);
+          }
+        }
+        this.consecutiveFailures = 0;
+        this.consciousness.emit({
+          type: 'execution.log',
+          source: 'prefrontal',
+          data: { phase: 'meta-cognitive-recovery', strategy: 'replan', goalId },
+        });
+      } else {
+        this.deliveryReport?.recordDecision(`Quality gate triggered ${verification.suggestedStrategy} after ${this.consecutiveFailures} failures`);
         this.consecutiveFailures = 0;
       }
 
@@ -3299,6 +3374,19 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     if (!content.startsWith('[AUTO-CONTINUE]')) {
       this.autoContinueCount = 0;
       this.consecutiveFailures = 0;
+
+      // Acknowledge resumed plans from previous session
+      if (this.hasResumedPlans) {
+        this.hasResumedPlans = false;
+        const activePlans = this.planExecutor.getActivePlans();
+        if (activePlans.length > 0) {
+          const summaries = activePlans.map(p => {
+            const done = p.steps.filter(s => s.status === 'completed').length;
+            return `"${p.goalId}" (${done}/${p.steps.length} done)`;
+          });
+          this.logger.info(`Resuming plans: ${summaries.join(', ')}`);
+        }
+      }
     }
 
     // Concurrency guard: queue if already processing

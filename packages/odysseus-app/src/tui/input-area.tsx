@@ -14,7 +14,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Box, Text, useInput, useStdout } from 'ink';
 import TextInput from 'ink-text-input';
 import {
-  colors, breathFrames, moonFrames, waveFrames, contextBar, formatTokens, lerpColor,
+  colors, borderFlowFrames, moonFrames, waveFrames24, contextBar, formatTokens, lerpColor,
 } from './theme.js';
 
 const MAX_HISTORY = 200;
@@ -140,10 +140,10 @@ export const InputArea = React.memo(function InputArea({
     const timers: ReturnType<typeof setInterval>[] = [];
 
     if (agentStatus === 'thinking') {
-      timers.push(setInterval(() => setBorderFrame(f => (f + 1) % breathFrames.length), 200));
+      timers.push(setInterval(() => setBorderFrame(f => (f + 1) % borderFlowFrames.length), 100));
       timers.push(setInterval(() => setIndicatorFrame(f => (f + 1) % moonFrames.length), 150));
     } else if (agentStatus === 'streaming') {
-      timers.push(setInterval(() => setIndicatorFrame(f => (f + 1) % waveFrames.length), 100));
+      timers.push(setInterval(() => setIndicatorFrame(f => (f + 1) % waveFrames24.length), 60));
     }
 
     if (isFlashingError) {
@@ -165,14 +165,14 @@ export const InputArea = React.memo(function InputArea({
   const borderColor = isFlashingError
     ? errorFadeFrames[errorFrame]
     : agentStatus === 'thinking'
-      ? breathFrames[borderFrame]
+      ? borderFlowFrames[borderFrame]
       : colors.border;
 
   // 左侧指示器
   const indicator = agentStatus === 'thinking'
     ? moonFrames[indicatorFrame]
     : agentStatus === 'streaming'
-      ? waveFrames[indicatorFrame]
+      ? waveFrames24[indicatorFrame]
       : '●';
 
   const indicatorColor = (agentStatus === 'thinking' || agentStatus === 'streaming')

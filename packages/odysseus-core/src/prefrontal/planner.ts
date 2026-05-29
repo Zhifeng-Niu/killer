@@ -567,4 +567,33 @@ export class Planner {
       return depStep?.status === 'completed' || depStep?.status === 'skipped';
     });
   }
+
+  /**
+   * 层级分解：将一个复合步骤分解为子计划
+   * 复合步骤标记为 isCompound，关联 subPlanId。
+   * 子计划通过 parentPlanId/parentStepId 回指父计划。
+   */
+  async decomposeStep(
+    parentPlan: Plan,
+    step: PlanStep,
+    goal: Goal,
+  ): Promise<Plan> {
+    const subGoal: Goal = {
+      id: generateId('goal'),
+      description: step.description,
+      priority: goal.priority,
+      parentGoalId: goal.id,
+      status: 'planning',
+      createdAt: Date.now(),
+    };
+
+    const subPlan = await this.createPlan(subGoal);
+    subPlan.parentPlanId = parentPlan.id;
+    subPlan.parentStepId = step.id;
+
+    step.isCompound = true;
+    step.subPlanId = subPlan.id;
+
+    return subPlan;
+  }
 }

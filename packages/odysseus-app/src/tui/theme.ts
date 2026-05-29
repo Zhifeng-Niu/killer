@@ -105,16 +105,98 @@ export const thinkFrames = [
   { ch: '◒', col: colors.purpleDim },
 ] as const;
 
+// ── 流动引擎：正弦驱动的帧序列生成 ──
+
+function sineWaveFrames(chars: readonly string[], count: number): string[] {
+  const len = chars.length;
+  return Array.from({ length: count }, (_, i) => {
+    const idx = Math.round((Math.sin(i * Math.PI * 2 / count) * 0.5 + 0.5) * (len - 1));
+    return chars[Math.min(idx, len - 1)];
+  });
+}
+
+function sineColorFrames(palette: string[], count: number): string[] {
+  return Array.from({ length: count }, (_, i) => {
+    const t = Math.sin(i * Math.PI * 2 / count) * 0.5 + 0.5;
+    const idx = t * (palette.length - 1);
+    const lo = Math.floor(idx);
+    const hi = Math.min(lo + 1, palette.length - 1);
+    return lerpColor(palette[lo], palette[hi], idx - lo);
+  });
+}
+
+const BLOCKS_FULL = [' ', '░', '▒', '▓', '█'] as const;
+
+// 波形指示器：24 帧正弦，8 级方块
+export const waveFrames24 = sineWaveFrames([...BLOCKS_8], 24);
+export const waveFrames12 = sineWaveFrames(BLOCKS_FULL, 12);
 export const waveFrames = ['▊', '▋', '▊', '▌'] as const;
 
-export const breathFrames = [
-  colors.border,
-  colors.purpleDim,
-  colors.purple,
-  colors.purpleGlow,
-  colors.purple,
-  colors.purpleDim,
-] as const;
+// 流光尾迹：16 帧彗星尾，从暗到亮渐变脉冲
+export const streamFlowFrames: Array<{ ch: string; col: string }> = Array.from(
+  { length: 16 }, (_, i) => {
+    const t = Math.sin(i * Math.PI / 15);
+    const blockIdx = Math.round(t * (BLOCKS_8.length - 1));
+    const colorT = t;
+    return {
+      ch: BLOCKS_8[Math.min(blockIdx, BLOCKS_8.length - 1)],
+      col: lerpColor(colors.purpleDim, colors.purpleBright, colorT),
+    };
+  },
+);
+
+// 思考涟漪：7 字符宽 × 24 帧，相位偏移制造波传播
+export const rippleFrames = Array.from({ length: 24 }, (_, frame) => {
+  const phase = frame * Math.PI * 2 / 24;
+  return Array.from({ length: 7 }, (_, pos) => {
+    const offset = pos * 0.6;
+    const val = Math.sin(phase - offset) * 0.5 + 0.5;
+    const idx = Math.round(val * (BLOCKS_FULL.length - 1));
+    const colorVal = Math.sin(phase - offset + 0.3) * 0.5 + 0.5;
+    return {
+      ch: BLOCKS_FULL[Math.min(idx, BLOCKS_FULL.length - 1)],
+      color: lerpColor(colors.purpleDim, colors.purpleBright, colorVal),
+    };
+  });
+});
+
+// 空状态环境流：36 帧 × 30 列，密度+色彩双轴流动
+export const ambientFlowFrames: Array<{ bar: string; colors: string[] }> = Array.from(
+  { length: 36 }, (_, frame) => {
+    const barChars: string[] = [];
+    const barColors: string[] = [];
+    for (let col = 0; col < 30; col++) {
+      const phase = (frame + col) * Math.PI * 2 / 30;
+      const val = Math.sin(phase) * 0.5 + 0.5;
+      const idx = Math.round(val * (SHADE_4.length - 1));
+      barChars.push(SHADE_4[Math.min(idx, SHADE_4.length - 1)]);
+      barColors.push(lerpColor(colors.purpleDim, colors.purple, val));
+    }
+    return { bar: barChars.join(''), colors: barColors };
+  },
+);
+
+// 分隔线流动：24 帧 × 16 列，密度扫描
+export const dividerFlowFrames = Array.from({ length: 24 }, (_, frame) => {
+  return Array.from({ length: 16 }, (_, col) => {
+    const phase = (frame - col * 0.5) * Math.PI * 2 / 24;
+    const val = Math.sin(phase) * 0.5 + 0.5;
+    const idx = Math.round(val * (SHADE_4.length - 1));
+    return SHADE_4[Math.min(idx, SHADE_4.length - 1)];
+  }).join('');
+});
+
+// 呼吸色变：24 帧正弦平滑
+export const breathFrames = sineColorFrames(
+  [colors.border, colors.purpleDim, colors.purple, colors.purpleGlow, colors.purple, colors.purpleDim, colors.border],
+  24,
+);
+
+// 输入边框流光：32 帧，光点沿边框移动
+export const borderFlowFrames = sineColorFrames(
+  [colors.border, colors.border, colors.purpleDim, colors.purple, colors.purpleGlow, colors.purple, colors.purpleDim, colors.border],
+  32,
+);
 
 export const errorFlashFrames = [
   colors.error,

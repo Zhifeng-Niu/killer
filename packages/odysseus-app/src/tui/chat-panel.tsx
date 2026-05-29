@@ -8,7 +8,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useStdout } from 'ink';
-import { colors, box, icons, thinkFrames, waveFrames, roleColors } from './theme.js';
+import { colors, box, icons, thinkFrames, streamFlowFrames, rippleFrames, ambientFlowFrames, dividerFlowFrames, roleColors } from './theme.js';
 
 export interface ChatMessage {
   id: string;
@@ -408,12 +408,24 @@ function renderTable(rows: string[], keyBase: number): React.ReactNode {
 // ── 空状态 ──
 
 function EmptyState() {
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setFrame(f => (f + 1) % ambientFlowFrames.length), 100);
+    return () => clearInterval(timer);
+  }, []);
+
+  const flow = ambientFlowFrames[frame];
   return (
     <Box flexDirection="column" paddingY={2} marginLeft={2}>
       <Text color={colors.purple} bold>  ◈  O D Y S S E U S</Text>
       <Text color={colors.secondary}>     Autonomous Agent Framework</Text>
       <Text> </Text>
-      <Text color={colors.purpleDim}>  ▓▓▒▒░░░░░░░░░░░░░░░░░░░</Text>
+      <Box marginLeft={2}>
+        {flow.bar.split('').map((ch, i) => (
+          <Text key={i} color={flow.colors[i]}>{ch}</Text>
+        ))}
+      </Box>
       <Text> </Text>
       <Text color={colors.text}>  type anything to start</Text>
       <Text> </Text>
@@ -457,22 +469,37 @@ const MessageBubble = React.memo(function MessageBubble({ message }: { message: 
 
 function ThinkingIndicator() {
   const [frame, setFrame] = useState(0);
-  const [dots, setDots] = useState(0);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setFrame(f => (f + 1) % thinkFrames.length);
-      setDots(d => (d + 1) % 4);
-    }, 200);
+    const timer = setInterval(() => setFrame(f => (f + 1) % rippleFrames.length), 80);
     return () => clearInterval(timer);
   }, []);
 
-  const current = thinkFrames[frame];
-  const dotStr = '.'.repeat(dots);
+  const ripple = rippleFrames[frame];
   return (
     <Box marginLeft={1} marginTop={1}>
-      <Text color={current.col}>{current.ch} </Text>
-      <Text color={colors.secondary} italic>{`thinking${dotStr}`}</Text>
+      {ripple.map((r, i) => (
+        <Text key={i} color={r.color}>{r.ch}</Text>
+      ))}
+      <Text color={colors.secondary} italic> thinking</Text>
+    </Box>
+  );
+}
+
+// ── 分隔线流动 ──
+
+function FlowDivider() {
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setFrame(f => (f + 1) % dividerFlowFrames.length), 100);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <Box marginLeft={1}>
+      <Text color={colors.purple}>{box.hBold}</Text>
+      <Text color={colors.purpleDim}>{dividerFlowFrames[frame]}</Text>
     </Box>
   );
 }
@@ -483,11 +510,12 @@ function StreamingCursor() {
   const [frame, setFrame] = useState(0);
 
   useEffect(() => {
-    const timer = setInterval(() => setFrame(f => (f + 1) % waveFrames.length), 120);
+    const timer = setInterval(() => setFrame(f => (f + 1) % streamFlowFrames.length), 80);
     return () => clearInterval(timer);
   }, []);
 
-  return <Text color={colors.purpleBright}>{waveFrames[frame]}</Text>;
+  const current = streamFlowFrames[frame];
+  return <Text color={current.col}>{current.ch}</Text>;
 }
 
 // ── 主面板 ──
@@ -520,12 +548,7 @@ export const ChatPanel = React.memo(function ChatPanel({ messages, isThinking }:
           const showDivider = prevMsg != null && prevMsg.role === 'user' && msg.role === 'agent';
           return (
             <React.Fragment key={msg.id}>
-              {showDivider && (
-                <Box marginLeft={1}>
-                  <Text color={colors.purple}>{box.hBold}</Text>
-                  <Text color={colors.purpleDim}>{'▓▒░'}</Text>
-                </Box>
-              )}
+              {showDivider && <FlowDivider />}
               <MessageBubble message={msg} />
             </React.Fragment>
           );
