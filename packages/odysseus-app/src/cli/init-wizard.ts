@@ -168,7 +168,7 @@ async function handleKeyPaste(
 /**
  * 运行交互式配置向导 — 消费级傻瓜版
  */
-export async function runInitWizard(manual?: boolean): Promise<void> {
+export async function runInitWizard(): Promise<void> {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -200,8 +200,7 @@ export async function runInitWizard(manual?: boolean): Promise<void> {
     }
 
     // ── 智能检测：扫描 env 中已有的 key ──
-    // manual=true 时跳过自动检测，强制进入手动选择流程
-    const detectedKeys = manual ? [] : detectAvailableKeys();
+    const detectedKeys = detectAvailableKeys();
 
     if (detectedKeys.length === 1) {
       // 单 key 零交互 — 自动保存

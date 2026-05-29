@@ -154,7 +154,7 @@ Examples:
 /**
  * 解析命令行参数
  */
-function parseArgs(): { debug: boolean; help: boolean; api: boolean; port: number; init: boolean; daemon: boolean; daemonStop: boolean; daemonStatus: boolean; fresh: boolean; tui: boolean; cli: boolean; manual: boolean } {
+function parseArgs(): { debug: boolean; help: boolean; api: boolean; port: number; init: boolean; daemon: boolean; daemonStop: boolean; daemonStatus: boolean; fresh: boolean; tui: boolean; cli: boolean } {
   const args = process.argv.slice(2);
   const debug = args.includes('--debug') || args.includes('-d');
   const help = args.includes('--help') || args.includes('-h');
@@ -166,7 +166,6 @@ function parseArgs(): { debug: boolean; help: boolean; api: boolean; port: numbe
   const fresh = args.includes('--fresh') || args.includes('-f');
   const tui = args.includes('--tui');
   const cli = args.includes('--cli');
-  const manual = args.includes('--manual');
 
   // Parse --port
   let port = 3000;
@@ -175,7 +174,7 @@ function parseArgs(): { debug: boolean; help: boolean; api: boolean; port: numbe
     port = parseInt(args[portIdx + 1], 10) || 3000;
   }
 
-  return { debug, help, api, port, init, daemon, daemonStop, daemonStatus, fresh, tui, cli, manual };
+  return { debug, help, api, port, init, daemon, daemonStop, daemonStatus, fresh, tui, cli };
 }
 
 /**
@@ -316,7 +315,7 @@ async function main(): Promise<void> {
     // 静默加载，不打印到用户（除非 debug 模式）
   }
 
-  const { debug, help, api, port, init, daemon, daemonStop, daemonStatus, fresh, tui, cli, manual } = parseArgs();
+  const { debug, help, api, port, init, daemon, daemonStop, daemonStatus, fresh, tui, cli } = parseArgs();
 
   if (help) {
     showHelp();
@@ -324,7 +323,7 @@ async function main(): Promise<void> {
   }
 
   if (init) {
-    await runInitWizard(manual);
+    await runInitWizard();
     process.exit(0);
   }
 
