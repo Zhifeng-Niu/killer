@@ -3877,58 +3877,46 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
    * - 使用 API 原生的 finish_reason: "tool_calls" 信号
    */
   /**
-   * 检测用户消息是否包含行动意图
-   * "继续", "开始", "按你的想法来", "go ahead" 等
-   */
-  private isActionIntent(input: string): boolean {
-    const t = input.trim().toLowerCase();
-    const triggers = [
-      '继续', '开始', '执行', '做吧', '来吧', '按你的', '推进',
-      'go', 'do it', 'start', 'begin', 'execute', 'run', 'proceed',
-      'make it', 'go ahead', '按你', '自己的想法', '自主',
-    ];
-    // 短指令型消息
-    if (t.length < 40 && triggers.some(k => t.includes(k))) return true;
-    // 有活跃 plan 且有 pending steps
-    if (this.planExecutor.getActivePlans().some(p => p.steps.some(s => s.status === 'ready'))) return true;
-    return false;
-  }
-
-  /**
    * Phase 1 纯文本后，如果 LLM 描述了行动意图但不调工具，
    * 强制 follow-up 让它真正执行。
-   * 返回新的 response（含工具调用），或 null 表示不需要桥接。
+   *
+   * 不用关键词匹配 — 只看两个结构信号：
+   * 1. 有活跃 plan（plan 系统已捕获意图）
+   * 2. Phase 1 响应本身像行动计划（有步骤列表 / 序列结构 / 足够长）
    */
   private async tryBridgeToExecution(
     phase1Response: string,
-    userInput: string,
+    _userInput: string,
     systemContext: string,
     onToken?: (token: string) => void,
     onStatus?: (status: string) => void,
   ): Promise<string | null> {
-    // 不桥接的条件：用户消息是纯对话（非行动意图）且没有活跃 plan
-    const userWantsAction = this.isActionIntent(userInput);
     const hasActivePlan = this.planExecutor.getActivePlans().some(
       p => p.steps.some(s => s.status === 'ready'),
     );
 
-    // 检查 Phase 1 响应是否包含行动描述语言
-    const actionPatterns = /(?:先|接下来|我要|I'll|first|next|then|plan to|going to|步骤|需要先|will do|会.*做|should|let me)/i;
-    const responseDescribesAction = actionPatterns.test(phase1Response);
+    // 响应结构信号：有序列表、步骤序列、或足够的行动描述长度
+    const hasStepStructure = /^\s*\d+[.)]\s/m.test(phase1Response)  // "1. xxx" 或 "1) xxx"
+      || /^[•\-–]\s/m.test(phase1Response)                           // bullet list
+      || phase1Response.length > 150;                                 // 非简短回复
 
-    if (!userWantsAction && !hasActivePlan && !responseDescribesAction) {
+    if (!hasActivePlan && !hasStepStructure) {
       return null; // 纯对话，不需要桥接
+    }
+
+    // 极短回复（< 50 字符）即使是列表也不桥接 — 如 "好，继续。"
+    if (phase1Response.trim().length < 50 && !hasActivePlan) {
+      return null;
     }
 
     onStatus?.('Executing planned actions...');
 
-    // 构建 follow-up prompt，明确要求使用工具
     const bridgePrompt = [
-      `The user wants you to ACT, not just plan.`,
-      `You said: "${phase1Response.slice(0, 500)}"`,
+      `You described a plan but didn't execute it. Here's what you said:`,
+      `"${phase1Response.slice(0, 800)}"`,
       '',
       'Now EXECUTE your first step using tools.',
-      'Use [TOOL: name](params) format to call tools.',
+      'Use [TOOL: name](params) format to call tools immediately.',
       'Do NOT describe what you will do — actually call the tools now.',
     ].join('\n');
 
