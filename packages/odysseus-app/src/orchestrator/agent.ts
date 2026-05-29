@@ -1287,6 +1287,12 @@ Examples:
       }
     }
 
+    // Configure sandbox mode from env (strict | standard | open)
+    const sandboxMode = (process.env.ODYSSEUS_SANDBOX ?? 'strict') as import('@odysseus/core').SandboxMode;
+    const { ExecuteShellTool } = await import('@odysseus/core');
+    ExecuteShellTool.sandboxMode = sandboxMode;
+    this.logger.info(`Sandbox mode: ${sandboxMode}`);
+
     // 自动加载插件
     await this.loadPlugins();
 

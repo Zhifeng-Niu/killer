@@ -8,7 +8,7 @@ import { promises as fs } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { resolve, normalize } from 'path';
-import type { Tool, ToolResult } from './tool-executor.js';
+import type { Tool, ToolResult, SandboxMode } from './tool-executor.js';
 
 const execAsync = promisify(exec);
 
@@ -270,33 +270,48 @@ export class ExecuteShellTool implements Tool {
   name = 'execute_shell';
   description = 'Execute a shell command (sandboxed — dangerous commands blocked)';
 
-  /** 危险命令模式 — 匹配到则拒绝执行 */
-  private static readonly BLOCKED_PATTERNS: RegExp[] = [
+  /** 当前沙箱模式 */
+  static sandboxMode: SandboxMode = 'strict';
+
+  /** 系统破坏性命令 — 所有模式下都阻止 */
+  private static readonly DESTRUCTIVE_PATTERNS: RegExp[] = [
     /\brm\s+-rf\s+[\/~]/i,          // rm -rf / or rm -rf ~
     /\brm\s+-rf\s+\.\s*$/i,         // rm -rf .
+    /\bmkfs/i,                       // mkfs
+    /\bformat\s+[a-z]:/i,           // format drive
+    />\s*\/dev\//i,                  // redirect to /dev/
+    /\bshutdown/i,                   // shutdown
+    /\breboot/i,                     // reboot
+    /\bhalt/i,                       // halt
+    /\binit\s+[06]/i,               // init 0/6
+    /\bkill\s+-9\s+1\b/i,           // kill -9 1 (init)
+  ];
+
+  /** strict 模式额外阻止的非破坏性限制 */
+  private static readonly STRICT_ONLY_PATTERNS: RegExp[] = [
     /\bsudo\s+/i,                    // sudo
     /\bchmod\s+[0-7]*777/i,         // chmod 777
     /\bchown\s+/i,                   // chown
     /\bdd\s+/i,                      // dd (disk operations)
-    /\bmkfs/i,                       // mkfs
-    /\bformat\s+[a-z]:/i,           // format drive
-    />\s*\/dev\//i,                  // redirect to /dev/
     /\bcurl\s+.*\|\s*sh/i,          // curl | sh
     /\bwget\s+.*\|\s*sh/i,          // wget | sh
     /\beval\s+/i,                    // eval
     /\bexec\s+/i,                    // exec
     /\bsource\s+\/etc\//i,           // source /etc/*
-    /\bshutdown/i,                   // shutdown
-    /\breboot/i,                     // reboot
-    /\bhalt/i,                       // halt
-    /\binit\s+[06]/i,               // init 0/6
     /\bpasswd/i,                     // passwd
     /\buseradd/i,                    // useradd
     /\buserdel/i,                    // userdel
-    /\bkill\s+-9\s+1\b/i,           // kill -9 1 (init)
     /\bmkfifo/i,                     // mkfifo
     /\bnc\s+-/i,                     // netcat listener
   ];
+
+  /** 获取当前模式下的阻止列表 */
+  private static getBlockedPatterns(): RegExp[] {
+    if (ExecuteShellTool.sandboxMode === 'open') {
+      return ExecuteShellTool.DESTRUCTIVE_PATTERNS;
+    }
+    return [...ExecuteShellTool.DESTRUCTIVE_PATTERNS, ...ExecuteShellTool.STRICT_ONLY_PATTERNS];
+  }
 
   async execute(params: unknown): Promise<ToolResult> {
     if (typeof params !== 'object' || params === null) {
@@ -309,8 +324,8 @@ export class ExecuteShellTool implements Tool {
       return { success: false, error: 'Command required' };
     }
 
-    // 安全检查：拒绝危险命令
-    for (const pattern of ExecuteShellTool.BLOCKED_PATTERNS) {
+    // 安全检查：根据沙箱模式拒绝命令
+    for (const pattern of ExecuteShellTool.getBlockedPatterns()) {
       if (pattern.test(command)) {
         return {
           success: false,

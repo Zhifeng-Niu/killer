@@ -12,7 +12,7 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import type { Tool, ToolResult } from './tool-executor.js';
+import type { Tool, ToolResult, SandboxMode } from './tool-executor.js';
 import { ToolExecutor } from './tool-executor.js';
 
 // ── Types ──
@@ -89,23 +89,36 @@ export default {
  * 3. name 只允许 [a-z0-9_]
  * 4. execute 必须是 async function
  */
-export function validateToolCode(code: string): { valid: boolean; error?: string } {
+export function validateToolCode(code: string, sandboxMode: SandboxMode = 'strict'): { valid: boolean; error?: string } {
   if (!code || code.trim().length < 20) {
     return { valid: false, error: 'Code too short (minimum 20 characters)' };
   }
 
-  // 检查是否有危险模式
-  const dangerousPatterns = [
-    /require\s*\(\s*['"]child_process['"]\s*\)/,
-    /require\s*\(\s*['"]fs['"]\s*\)/,
+  // 始终阻止的模式（所有模式）
+  const alwaysBlocked = [
     /process\.exit/,
     /eval\s*\(/,
     /Function\s*\(/,
-    /import\s+.*from\s+['"]child_process['"]/,
   ];
-  for (const pattern of dangerousPatterns) {
+
+  for (const pattern of alwaysBlocked) {
     if (pattern.test(code)) {
-      return { valid: false, error: `Dangerous pattern detected: ${pattern.source}. Dynamic tools cannot access child_process, fs, process.exit, eval, or Function constructor directly.` };
+      return { valid: false, error: `Dangerous pattern detected: ${pattern.source}. Dynamic tools cannot use process.exit, eval, or Function constructor.` };
+    }
+  }
+
+  // strict 模式额外阻止 fs 和 child_process
+  if (sandboxMode === 'strict') {
+    const strictBlocked = [
+      /require\s*\(\s*['"]child_process['"]\s*\)/,
+      /require\s*\(\s*['"]fs['"]\s*\)/,
+      /import\s+.*from\s+['"]child_process['"]/,
+      /import\s+.*from\s+['"]fs['"]/,
+    ];
+    for (const pattern of strictBlocked) {
+      if (pattern.test(code)) {
+        return { valid: false, error: `Dangerous pattern detected: ${pattern.source}. Dynamic tools cannot access child_process or fs in strict sandbox mode.` };
+      }
     }
   }
 

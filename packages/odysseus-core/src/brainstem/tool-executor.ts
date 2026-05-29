@@ -5,6 +5,15 @@
  */
 
 /**
+ * 沙箱模式
+ *
+ * strict: 当前默认 — 多层防护，blocklist 完整生效
+ * standard: 放松 — 移除 eval/exec/curl 等非破坏性限制
+ * open: 最小限制 — 只保留系统破坏性命令（rm -rf /、mkfs、shutdown）
+ */
+export type SandboxMode = 'strict' | 'standard' | 'open';
+
+/**
  * 工具执行进度
  */
 export type ToolProgress = {

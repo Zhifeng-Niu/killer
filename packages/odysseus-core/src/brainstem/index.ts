@@ -41,6 +41,7 @@ export type {
   ToolProgressCallback,
   BatchToolCall,
   BatchToolResult,
+  SandboxMode,
 } from './tool-executor.js';
 
 export type {
