@@ -488,7 +488,11 @@ export const ChatPanel = React.memo(function ChatPanel({ messages, isThinking }:
   const { stdout } = useStdout();
   const termHeight = stdout?.rows ?? 24;
 
-  const maxVisible = Math.max(Math.floor((termHeight - 8) / 2), 8);
+  // 留空：状态栏(1) + 上下文条(1) + 输入框(3) + 快捷键提示(1) + 余量(2) = 8行
+  // 每条消息约占 2-3 行（role 行 + 至少一行内容），保守按 2.5 行估算
+  const reservedLines = 8;
+  const avgMsgLines = 3;
+  const maxVisible = Math.max(Math.floor((termHeight - reservedLines) / avgMsgLines), 5);
   const visible = messages.length > maxVisible ? messages.slice(-maxVisible) : messages;
   const trimmed = messages.length - visible.length;
   const isEmpty = messages.length === 0 && !isThinking;

@@ -79,9 +79,9 @@ const COMMAND_NAMES = COMMANDS.map(c => c.name);
 const CATEGORY_COLORS: Record<string, string> = {
   core: colors.purple,
   memory: colors.cyan,
-  cognitive: colors.amber,
-  config: colors.secondary,
-  system: colors.separator,
+  cognitive: colors.gold,
+  config: colors.purpleBright,
+  system: colors.secondary,
 };
 
 // ── Props ──
@@ -275,7 +275,7 @@ export const InputArea = React.memo(function InputArea({
                 <Text color={isFirst ? colors.text : colors.secondary} bold={isFirst}>
                   {cmd.name.padEnd(14)}
                 </Text>
-                <Text color={isFirst ? catColor : colors.bg}> {cmd.description}</Text>
+                <Text color={isFirst ? catColor : colors.separator}> {cmd.description}</Text>
               </Box>
             );
           })}
@@ -301,9 +301,9 @@ export const InputArea = React.memo(function InputArea({
         )}
       </Box>
 
-      {/* 键盘提示 — 深灰，几乎看不见但存在 */}
+      {/* 键盘提示 */}
       <Box marginLeft={1}>
-        <Text color={colors.bg}>  ↑↓ history · Tab complete · Esc cancel · /help</Text>
+        <Text color={colors.separator}>  ↑↓ history · Tab complete · Esc cancel · /help</Text>
       </Box>
     </Box>
   );
