@@ -13,7 +13,7 @@ import type { OdysseusAgent } from '../orchestrator/agent.js';
 interface HeaderProps {
   model: string;
   agent: OdysseusAgent;
-  uptime: number;
+  bootTime: number;
   messageCount: number;
 }
 
@@ -31,13 +31,14 @@ function emotionToEmoji(emotion: string): string {
 export const Header = React.memo(function Header({
   model,
   agent,
-  uptime,
+  bootTime,
   messageCount,
 }: HeaderProps) {
   const { stdout } = useStdout();
   const termCols = stdout?.columns ?? 80;
   const [tick, setTick] = useState(0);
 
+  // 自管理 30s tick：更新 emotion + uptime，不触发父组件
   useEffect(() => {
     const timer = setInterval(() => setTick(t => t + 1), 30000);
     return () => clearInterval(timer);
@@ -49,7 +50,7 @@ export const Header = React.memo(function Header({
   } catch { /* boot 期间 persona 可能未就绪 */ }
 
   const modelShort = model.length > 24 ? model.slice(0, 22) + '…' : model;
-  const uptimeStr = formatDuration(uptime);
+  const uptimeStr = formatDuration(Date.now() - bootTime);
   const mood = emotionToEmoji(emotion);
 
   const left = `${mood} ${modelShort}`;

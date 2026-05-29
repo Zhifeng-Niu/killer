@@ -67,12 +67,15 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
     }
   }, [agent]);
 
-  // ── Consciousness stream — 主动建议 ──
+  // ── Consciousness stream — 主动建议（idle 时静默，避免跳动） ──
+  const lastUserActivityRef = useRef(Date.now());
   useEffect(() => {
     const unsubscribe = agent.consciousness.on('action', (event: unknown) => {
       try {
         const ev = event as { type?: string; data?: { type?: string; content?: string } };
         if (ev.type === 'proactive.suggestion' && ev.data?.content) {
+          // idle 超过 2 分钟时不注入建议，避免触发重渲染导致跳动
+          if (Date.now() - lastUserActivityRef.current > 120_000) return;
           const prefix = ev.data.type === 'suggestion' ? '💡' : ev.data.type === 'insight' ? '🔮' : '📌';
           appendMessage(createMessage('system', `${prefix} ${ev.data!.content}`));
         }
@@ -146,6 +149,8 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
   // ── 提交处理 ──
 
   const handleSubmit = useCallback(async (rawInput: string) => {
+    lastUserActivityRef.current = Date.now();
+
     if (rawInput === '/clear') {
       replaceMessages([]);
       return;
@@ -278,10 +283,8 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
       }
     } finally {
       abortRef.current = null;
-      if (agentStatus !== 'error') {
-        setIsThinking(false);
-        setAgentStatus('idle');
-      }
+      setIsThinking(false);
+      setAgentStatus('idle');
       setStatusDetail('');
     }
   }, [agent]);
@@ -294,7 +297,7 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
       <Header
         model={agent.getModel?.() ?? ''}
         agent={agent}
-        uptime={Date.now() - bootTimeRef.current}
+        bootTime={bootTimeRef.current}
         messageCount={messages.length}
       />
       <InputArea
