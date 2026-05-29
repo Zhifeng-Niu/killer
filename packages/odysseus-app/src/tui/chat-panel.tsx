@@ -81,6 +81,11 @@ function highlightTokens(text: string, startKey: number): React.ReactNode[] {
     'class', 'import', 'export', 'from', 'async', 'await', 'try', 'catch',
     'throw', 'new', 'this', 'typeof', 'interface', 'type', 'extends',
     'implements', 'null', 'undefined', 'true', 'false', 'def', 'self', 'print',
+    'switch', 'case', 'break', 'continue', 'default', 'yield', 'delete',
+    'enum', 'namespace', 'abstract', 'private', 'protected', 'public',
+    'static', 'readonly', 'override', 'as', 'is', 'in', 'of',
+    'fn', 'mut', 'pub', 'use', 'mod', 'struct', 'impl', 'trait', 'match',
+    'func', 'package', 'go', 'chan', 'select', 'defer', 'range', 'map',
   ]);
   const results: React.ReactNode[] = [];
   const tokens = text.split(/(\b)/);
@@ -89,7 +94,7 @@ function highlightTokens(text: string, startKey: number): React.ReactNode[] {
     if (keywords.has(token)) {
       results.push(<Text key={`kw-${ki++}`} color={colors.purple}>{token}</Text>);
     } else if (/^\d+(\.\d+)?$/.test(token)) {
-      results.push(<Text key={`num-${ki++}`} color={colors.amber}>{token}</Text>);
+      results.push(<Text key={`num-${ki++}`} color={colors.gold}>{token}</Text>);
     } else if (/^["'`]([^"'`]|\\.)*["'`]$/.test(token)) {
       results.push(<Text key={`str-${ki++}`} color={colors.cyan}>{token}</Text>);
     } else {
