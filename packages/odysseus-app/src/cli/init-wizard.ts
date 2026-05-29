@@ -394,10 +394,10 @@ function detectExistingConfig(): { provider: string; apiKey: string; source: str
     const content = fs.readFileSync(envPath, 'utf-8');
     const providerMatch = content.match(/^ODYSSEUS_LLM_PROVIDER=(.+)$/m);
     const keyMatch = content.match(/^(?:DEEPSEEK|GLM|MINIMAX|DASHSCOPE|MOONSHOT|BAICHUAN|YI|SILICONFLOW|VOLCENGINE|OPENROUTER|OPENAI|ANTHROPIC|GOOGLE|KILLER)_API_KEY=(.+)$/m);
-    if (providerMatch) {
+    if (providerMatch?.[1]) {
       return {
         provider: providerMatch[1].trim(),
-        apiKey: keyMatch ? keyMatch[2].trim() : '',
+        apiKey: keyMatch?.[2]?.trim() ?? '',
         source: '.env 文件',
       };
     }
