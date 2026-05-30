@@ -1,18 +1,18 @@
 ---
 orientation: [production]
 status: active
-started_at: 2026-05-30T03:52:47Z
-expedition_branch: odyssey/20260530-115247
+started_at: 2026-05-30T10:27:52Z
+expedition_branch: odyssey/20260530-182752
 baseline_metric: null
 best_metric: null
 total_waypoints: 0
 consecutive_discards: 0
 ---
 
-# Mission: Odysseus v2 OTP supervisor + 遗留缺口补全
+# Mission: 深化类脑智能内部协同 + DeepSeek/GLM/MiniMax/Kimi 深度适配
 
 ## Goal
-Odysseus v2 OTP supervisor + 遗留缺口补全
+深化类脑智能内部协同 + DeepSeek/GLM/MiniMax/Kimi 深度适配
 
 ## Context
 Project type: typescript. Auto-detected guard: npm test 2>&1.
