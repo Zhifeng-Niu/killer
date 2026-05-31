@@ -1,18 +1,18 @@
 ---
-orientation: [production]
+orientation: [engineer]
 status: active
-started_at: 2026-05-30T10:27:52Z
-expedition_branch: odyssey/20260530-182752
+started_at: 2026-05-31T03:36:03Z
+expedition_branch: odyssey/20260531-113603
 baseline_metric: null
 best_metric: null
 total_waypoints: 0
 consecutive_discards: 0
 ---
 
-# Mission: 深化类脑智能内部协同 + DeepSeek/GLM/MiniMax/Kimi 深度适配
+# Mission: smart-context-memory-split: 智能截断+可检索记忆库+子agent重载编排
 
 ## Goal
-深化类脑智能内部协同 + DeepSeek/GLM/MiniMax/Kimi 深度适配
+smart-context-memory-split: 智能截断+可检索记忆库+子agent重载编排
 
 ## Context
 Project type: typescript. Auto-detected guard: npm test 2>&1.
