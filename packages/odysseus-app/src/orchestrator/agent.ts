@@ -126,6 +126,7 @@ import { initOdysseusDir } from '../config/types.js';
 import { SkillManager, type SkillExecutionResult } from '../skills/manager.js';
 import { SessionManager, type SessionSnapshot } from '../session/index.js';
 import { Logger } from '../log/index.js';
+import { PeriodicMemoryGuard, trimArray, trimAgentState } from './memory-guard.js';
 
 /**
  * 生成唯一 ID
@@ -1167,13 +1168,14 @@ Examples:
       await this.sessionManager.save(snapshot);
     });
 
-    // 任务委派器
+    // 任务委派器（传入 recallStore 实现重载精炼）
     const primeColumnId: ColumnId = { id: 'prime', type: ColumnRole.Prime, instance: 0 };
     this.taskDelegate = new TaskDelegate(
       this.synapse,
       this.config.llm,
       primeColumnId,
       this.config.debugLogging ? (msg: string) => this.logger.info(msg) : undefined,
+      this.contextWindow.recallStore,
     );
 
     // 工具权限管理
@@ -1532,6 +1534,8 @@ Examples:
     this.brainstem.on('actionExecuted', (state: LoopState) => {
       if (isMockMode) return;
       if (!this.processing) return;
+      // TUI 模式下工具链动画已覆盖 — 跳过 raw action 输出避免打乱渲染
+      if (this.cliChannel?.muted) return;
       if (state.currentAction) {
         const payload = state.currentAction.payload as { tool?: string } | undefined;
         const isNoop = state.currentAction.type === 'tool_call' && (!payload?.tool || payload.tool === 'noop');
@@ -2021,7 +2025,7 @@ Examples:
    * 而非暴力 slice 丢弃。
    */
   private trimHistory(): void {
-    const SOFT_LIMIT = 400; // ~200 轮对话
+    const SOFT_LIMIT = 200; // ~100 轮对话（从 400 降低，防止内存膨胀）
     if (this.conversationHistory.length <= SOFT_LIMIT) return;
 
     // 将旧消息交给 ContextWindowManager 做智能摘要
@@ -2051,6 +2055,14 @@ Examples:
     // 保留最近消息 + ContextWindowManager 管理的摘要会注入到 prompt 构建中
     this.conversationHistory = recent;
     this.logger.info(`History trimmed: ${older.length} old messages → ContextWindowManager summary`);
+
+    // 同步裁剪元数据数组（防止长期运行内存膨胀）
+    this.responseTimes = trimArray(this.responseTimes, 200);
+    this.recentTopics = trimArray(this.recentTopics, 50);
+    this.intentHistory = trimArray(this.intentHistory, 100);
+    this.rhythmSamples = trimArray(this.rhythmSamples, 200);
+    this.recentResponses = trimArray(this.recentResponses, 50);
+    this.recentToolResults = trimArray(this.recentToolResults, 100);
   }
 
   /**

@@ -3,16 +3,19 @@
  *
  * 智能管理对话上下文窗口，确保在 token 限制内保留最重要的信息。
  *
- * 策略：
+ * 策略（v2 — 智能截断 + 可检索记忆库）：
  * 1. 最近 N 轮保持完整
- * 2. 超出部分提取摘要（LLM 驱动）
- * 3. 持久事实存储到 facts 列表
- * 4. 工具调用结果截断
- * 5. 根据对话阶段动态调整预算分配
+ * 2. 超出部分使用 SmartContextTruncator 智能截断（保留头尾，中间存入记忆库）
+ * 3. 工具调用结果只保留最新，旧结果移入可检索记忆库
+ * 4. 摘要由 LLM 驱动（带回退），持久事实独立存储
+ * 5. 被截断内容通过 recall ID 保持可回溯性
+ * 6. 根据对话阶段动态调整预算分配
  */
 
 import type { LLMProvider } from '@odysseus/core';
 import { scoreTurnImportance } from './background-tasks.js';
+import { SmartContextTruncator, type SmartTruncatorConfig } from './smart-truncator.js';
+import { RecallableMemoryStore, type RecallableStoreConfig } from './recallable-store.js';
 
 /**
  * 对话消息
@@ -37,6 +40,10 @@ export interface ContextWindowConfig {
   maxFacts: number;
   /** 工具结果截断长度 */
   maxToolResultChars: number;
+  /** 智能截断配置 */
+  truncator?: Partial<SmartTruncatorConfig>;
+  /** 可检索记忆库配置 */
+  recallStore?: Partial<RecallableStoreConfig>;
 }
 
 /**
@@ -91,13 +98,17 @@ const DEFAULT_CONTEXT_CONFIG: ContextWindowConfig = {
 };
 
 /**
- * 上下文窗口管理器
+ * 上下文窗口管理器（v2 — 智能截断 + 可检索记忆库）
  */
 export class ContextWindowManager {
   private config: ContextWindowConfig;
   private facts: string[] = [];
   private summary: string = '';
   private llm: LLMProvider | null = null;
+
+  // v2: 智能截断 + 可检索记忆库
+  readonly truncator: SmartContextTruncator;
+  readonly recallStore: RecallableMemoryStore;
 
   // 摘要熔断器：连续失败超过阈值后停止尝试 LLM 摘要
   private consecutiveSummaryFailures = 0;
@@ -109,6 +120,13 @@ export class ContextWindowManager {
 
   constructor(config?: Partial<ContextWindowConfig>) {
     this.config = { ...DEFAULT_CONTEXT_CONFIG, ...config };
+    this.truncator = new SmartContextTruncator({
+      headChars: this.config.maxMessageChars > 200 ? 100 : 50,
+      tailChars: this.config.maxMessageChars > 200 ? 100 : 50,
+      maxToolResultChars: this.config.maxToolResultChars,
+      ...this.config.truncator,
+    });
+    this.recallStore = new RecallableMemoryStore(this.config.recallStore);
   }
 
   /**
@@ -142,10 +160,10 @@ export class ContextWindowManager {
   }
 
   /**
-   * 管理对话历史（同步接口）
+   * 管理对话历史（同步接口 — v2 智能截断版）
    *
    * 接收完整历史，返回裁剪后适合 LLM 输入的历史。
-   * 使用已有的摘要（由 backgroundSummarize 异步更新）。
+   * 被截断的内容自动存入 RecallableMemoryStore。
    */
   manage(messages: ContextMessage[]): ContextMessage[] {
     const result: ContextMessage[] = [];
@@ -158,8 +176,15 @@ export class ContextWindowManager {
     const conversationMessages = messages.filter(m => m.role !== 'system');
 
     if (conversationMessages.length <= this.config.maxFullTurns * 2) {
-      // 未超出限制 — 保留全部（截断单条）
-      result.push(...conversationMessages.map(m => this.truncateMessage(m)));
+      // 未超出限制 — 使用智能截断（工具结果优化 + 消息截断）
+      const { messages: truncated, allEvicted } = this.truncator.truncateMessages(
+        conversationMessages.map(m => ({ role: m.role, content: m.content })),
+      );
+      this.recallStore.storeBatch(allEvicted);
+      result.push(...truncated.map((m, i) => ({
+        ...conversationMessages[i],
+        content: m.content,
+      })));
     } else {
       // 超出限制 — 保留最近 N 轮 + 高重要性旧轮次 + 摘要其余
       const splitPoint = conversationMessages.length - this.config.maxFullTurns * 2;
@@ -175,6 +200,16 @@ export class ContextWindowManager {
           importantOlder.push(msg);
         } else {
           lowImportanceOlder.push(msg);
+        }
+      }
+
+      // 低重要性旧消息：智能截断后存入记忆库
+      for (const msg of lowImportanceOlder) {
+        const toolResult = this.truncator.truncateToolResults(msg.content);
+        this.recallStore.storeBatch(toolResult.evicted);
+        if (toolResult.truncated.length > this.config.maxMessageChars) {
+          const contentResult = this.truncator.truncateContent(toolResult.truncated);
+          this.recallStore.storeBatch(contentResult.evicted);
         }
       }
 
@@ -200,16 +235,34 @@ export class ContextWindowManager {
         });
       }
 
-      // 插入高重要性旧消息（保留关键决策和事实）
+      // 插入可检索记忆库摘要（让 LLM 知道可回溯内容）
+      const recallSummary = this.recallStore.getContextSummary(3);
+      if (recallSummary) {
+        result.push({ role: 'system', content: recallSummary });
+      }
+
+      // 插入高重要性旧消息（智能截断版）
       if (importantOlder.length > 0) {
+        const { messages: truncatedImportant, allEvicted: importantEvicted } =
+          this.truncator.truncateMessages(
+            importantOlder.slice(0, 4).map(m => ({ role: m.role, content: m.content.slice(0, 500) })),
+          );
+        this.recallStore.storeBatch(importantEvicted);
         result.push({
           role: 'system',
-          content: `[Important earlier context]\n${importantOlder.slice(0, 4).map(m => `${m.role}: ${m.content.slice(0, 300)}`).join('\n')}`,
+          content: `[Important earlier context]\n${truncatedImportant.map(m => `${m.role}: ${m.content}`).join('\n')}`,
         });
       }
 
-      // 最近消息完整保留
-      result.push(...recent.map(m => this.truncateMessage(m)));
+      // 最近消息：智能截断
+      const { messages: truncatedRecent, allEvicted: recentEvicted } = this.truncator.truncateMessages(
+        recent.map(m => ({ role: m.role, content: m.content })),
+      );
+      this.recallStore.storeBatch(recentEvicted);
+      result.push(...truncatedRecent.map((m, i) => ({
+        ...recent[i],
+        content: m.content,
+      })));
     }
 
     return result;
@@ -253,6 +306,30 @@ export class ContextWindowManager {
   }
 
   /**
+   * 回溯被截断的内容（按 recall ID）
+   */
+  recallContext(recallId: string): string | null {
+    const entry = this.recallStore.recall(recallId);
+    if (!entry) return null;
+    return entry.content;
+  }
+
+  /**
+   * 搜索记忆库中的截断内容
+   */
+  searchRecalledMemory(keyword: string, limit?: number): string[] {
+    const result = this.recallStore.search({ keyword, limit: limit ?? 5 });
+    return result.entries.map(e => `[${e.recallId}] (${e.source}) ${e.content.slice(0, 200)}...`);
+  }
+
+  /**
+   * 获取记忆库统计
+   */
+  getRecallStats() {
+    return this.recallStore.getStats();
+  }
+
+  /**
    * 重置状态
    */
   reset(): void {
@@ -260,6 +337,7 @@ export class ContextWindowManager {
     this.summary = '';
     this.consecutiveSummaryFailures = 0;
     this.summaryCircuitOpenUntil = 0;
+    this.recallStore.clear();
   }
 
   /**
@@ -284,36 +362,30 @@ export class ContextWindowManager {
   }
 
   /**
-   * 截断单条消息
+   * 截断单条消息（委托给 SmartTruncator + RecallableStore）
    */
   private truncateMessage(message: ContextMessage): ContextMessage {
-    let content = message.content;
+    const toolResult = this.truncator.truncateToolResults(message.content);
+    this.recallStore.storeBatch(toolResult.evicted);
 
-    // 截断工具调用结果
-    content = this.truncateToolResults(content);
+    let content = toolResult.truncated;
 
-    // 截断超长消息
     if (content.length > this.config.maxMessageChars) {
-      content = content.slice(0, this.config.maxMessageChars) + '\n...[truncated]';
+      const contentResult = this.truncator.truncateContent(content);
+      this.recallStore.storeBatch(contentResult.evicted);
+      content = contentResult.truncated;
     }
 
     return { ...message, content };
   }
 
   /**
-   * 截断工具调用结果块
+   * 截断工具调用结果块（委托给 SmartTruncator）
    */
   private truncateToolResults(content: string): string {
-    // 匹配 [Tool Result: ...]\n...\n 格式
-    return content.replace(
-      /\[Tool Result: (\w+)\]\n([\s\S]*?)(?=\n(?! )|$)/g,
-      (match, toolName, result) => {
-        if (result.length > this.config.maxToolResultChars) {
-          return `[Tool Result: ${toolName}]\n${result.slice(0, this.config.maxToolResultChars)}...[truncated]\n`;
-        }
-        return match;
-      },
-    );
+    const result = this.truncator.truncateToolResults(content);
+    this.recallStore.storeBatch(result.evicted);
+    return result.truncated;
   }
 
   /**

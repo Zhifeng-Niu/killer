@@ -21,6 +21,8 @@ export {
   rateLimitMiddleware,
 } from './middleware.js';
 export { ContextWindowManager, type ContextMessage, type ContextWindowConfig } from './context.js';
+export { SmartContextTruncator, type SmartTruncatorConfig, type TruncationResult, type EvictedContent } from './smart-truncator.js';
+export { RecallableMemoryStore, type RecallableStoreConfig, type RecallEntry, type RecallQuery, type RecallResult } from './recallable-store.js';
 export * from './tools.js';
 export * from './sensory-mapper.js';
 export { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
