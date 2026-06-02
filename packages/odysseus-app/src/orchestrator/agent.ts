@@ -116,6 +116,7 @@ import { LifecycleHooks, type LifecycleEvent, type LifecycleHandler, type Lifecy
 import { MiddlewarePipeline, type Middleware, type MiddlewareContext, sanitizeMiddleware, structuredLoggingMiddleware, metricsMiddleware, sensitiveDataFilterMiddleware } from './middleware.js';
 import { ContextWindowManager, type ContextMessage } from './context.js';
 import { buildSystemPrompt, type PromptBuilderDeps } from './prompt-builder.js';
+import { getProviderCapabilities } from '../llm/openai-compatible-provider.js';
 import { triggerAutoDream, triggerAutoEvolve, generateProactiveSuggestions, generateDailySummary, generateIdleCheckin, checkRelationshipMilestone, detectCommitments, checkPendingReminders, computeAttentionState, detectConversationalPhase, extractFactsFromMessage, storeExtractedFacts, detectGoalConflicts, consolidateMemories, getFailurePatterns, classifyFailure, recordFailure, generateTemporalContext, predictConversationFlow, evaluateResponseQuality, detectResponseRepetition, detectLengthSignal, updateLengthPreference, createDefaultLengthPreference, suggestToolPriority, monitorConversationHealth, detectMultiIntent, detectAmbiguity, buildGoalDependencyGraph, detectTopicTransition, decideAutonomousActions, classifyInteractionOutcome, suggestStrategyAdjustment, generateIntentPreloads, extractTopicSnapshot, formatTopicSnapshot, type TopicContextSnapshot, analyzeConversationRhythm, buildUserExpertiseProfile, mapEmotionToResponseStrategy, fusePerceptionSignals, verifyStrategyCoherence, adaptCognitiveParams, DEFAULT_COGNITIVE_TUNING, type CognitiveTuningParams, generateCognitiveStateSummary, generateResponseStrategyGuidance, AUTO_DREAM_INTERVAL, AUTO_EVOLVE_INTERVAL, AUTO_PROACTIVE_INTERVAL, DAILY_SUMMARY_INTERVAL, IDLE_CHECKIN_INTERVAL, createDefaultSectionWeights, recordActiveSections, updateSectionWeights, getSectionWeightOffset, exportSectionWeights, importSectionWeights, type SectionWeights, classifyIntent, extractIntentSummary, trackIntentEvolution, formatIntentEvolution, type IntentNode, type IntentEvolution, evaluateSignalUtilization, updateUtilizationStats, getUnderutilizedSections, createDefaultUtilizationStats, type UtilizationStats, createDefaultStyleEvolution, extractResponseFeatures, inferSatisfactionFromReply, updateStyleEvolution, generateStyleGuidance, type StyleEvolutionModel, type ResponseStyleFeatures, createEmptyKnowledgeGraph, extractEntitiesFromMessage, extractRelationsFromMessage, getTopEntities, formatKnowledgeSummary, type ConversationKnowledgeGraph, computeRepetitionScore, computeToolEfficiency, assessCognitiveFatigue, formatFatigueGuidance, type FatigueIndicators, type CognitiveFatigueState, classifyGapSeverity, extractLastTopic, extractPendingCommitments, generateGapRecoveryStrategy, formatGapRecoveryGuidance, type GapContext, extractLessonFromQuality, extractLessonFromToolFailure, recordLesson, getRelevantLessons, formatLessonsPrompt, updateRhythmProfile, createDefaultRhythmProfile, formatRhythmGuidance, type RhythmSample, type RhythmProfile, decomposeIntent, formatIntentDecomposition, type IntentDecomposition, createEmptySemanticNetwork, extractConceptsFromMessage, extractSemanticRelations, detectIsolatedConcepts, inferImplicitRelations, formatSemanticNetworkSummary, type SemanticMemoryNetwork, assessResponseTiming, formatTimingGuidance, type ResponseTimingAssessment, generateConversationSummary, formatConversationSummary, validateResponse, formatCorrectionResult, type CorrectionResult, allocateBudget, pruneByBudget, predictNextIntent, formatNextTurnPrediction, type NextTurnPrediction, analyzeCrossModuleFeedback, formatCognitiveFeedback, type CognitiveFeedbackAnalysis, generateToolChainSuggestion, formatToolChainSuggestion, type ToolChainSuggestion, mineToolPatterns, type ToolUsageRecord, analyzeConversationMomentum, formatMomentumState, type MomentumState, calibratePersona, formatPersonaCalibration, type PersonaCalibration, detectKnowledgeGaps, formatKnowledgeGapAnalysis, type KnowledgeGapAnalysis, assessIntentChainHealth, formatIntentChainHealth, type IntentChainHealth, computeConversationEnergy, formatConversationEnergy, type ConversationEnergy, suggestResponseStructure, formatResponseStructureGuidance } from './background-tasks.js';
 import { loadPlugins, registerPlugin as registerPluginExternal, unloadPlugin as unloadPluginExternal, type PluginLifecycleDeps } from './plugin-lifecycle.js';
 import { executeToolCalls as executeToolCallsFromResponse, type ResponseProcessorDeps } from './response-processor.js';
@@ -4792,12 +4793,32 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       conversationEnergy: this.computeConversationEnergyGuidance(),
       responseStructure: this.computeResponseStructure(),
       sectionWeightOffsets: exportSectionWeights(this.sectionWeights),
+      providerCapabilities: this.resolveProviderCapabilities() ?? undefined,
     });
 
     // 记录活跃 sections 用于后续权重学习
     const active = SECTION_PREFIXES.filter(p => result.includes(p));
     this.sectionWeights = recordActiveSections(this.sectionWeights, active);
     return result;
+  }
+
+  /** 从模型名推断 provider capabilities */
+  private resolveProviderCapabilities() {
+    const model = this.config.llm.getModel();
+    // 从模型名推断 provider
+    const providerMap: Record<string, string> = {
+      'deepseek-': 'deepseek',
+      'MiniMax': 'minimax', 'MiniMax-': 'minimax',
+      'GLM-': 'glm',
+      'qwen-': 'qwen',
+      'kimi-': 'moonshot', 'moonshot-': 'moonshot',
+    };
+    for (const [prefix, provider] of Object.entries(providerMap)) {
+      if (model.startsWith(prefix) || model.includes(prefix)) {
+        return getProviderCapabilities(provider);
+      }
+    }
+    return undefined;
   }
 
   private computeConversationalPhaseForPrompt() {

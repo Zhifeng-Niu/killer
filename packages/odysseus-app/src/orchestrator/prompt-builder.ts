@@ -10,6 +10,7 @@ import type { HippocampusEngine, Episode } from '@odysseus/core';
 import type { ToolExecutor, EssenceForge, Plan } from '@odysseus/core';
 import type { ContextWindowManager, ContextMessage } from './context.js';
 import { scoreSectionRelevance, deduplicateSections, allocateBudget, pruneByBudget } from './background-tasks.js';
+import type { ProviderCapabilities } from '../llm/openai-compatible-provider.js';
 
 /**
  * 系统提示构建所需的依赖
@@ -135,6 +136,8 @@ export interface PromptBuilderDeps {
   conversationSummary?: string;
   /** 自校正指导 */
   correctionGuidance?: string;
+  /** 当前 LLM provider 能力（用于 provider-aware prompt 策略路由） */
+  providerCapabilities?: ProviderCapabilities;
   /** 预算优化后的裁剪 prompt（由 agent 计算） */
   prunedPrompt?: string;
   /** 下一轮意图预测 */
@@ -298,6 +301,12 @@ function retrieveRelevantMemories(
  * 9. 对话历史
  */
 export function buildSystemPrompt(deps: PromptBuilderDeps): string {
+  // Provider-aware prompt strategy: DeepSeek V4 uses structured 8-section coding prompt
+  const caps = deps.providerCapabilities;
+  if (caps?.thinkingMode && caps.maxContext >= 500_000 && caps.toolUse) {
+    return buildDeepSeekCodingPrompt(deps);
+  }
+
   const parts: string[] = [];
 
   // === 身份核心 ===
@@ -1106,6 +1115,277 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
   }
 
   return joined;
+}
+
+/**
+ * DeepSeek V4 Coding Agent 提示词策略
+ *
+ * 将 40+ 碎片化 sections 重组为 8 个结构化 block：
+ * [IDENTITY] [CAPABILITIES] [WORKFLOW] [PLANS] [MEMORY] [CONTEXT] [STRATEGY] [HISTORY]
+ *
+ * 设计原则：
+ * 1. 固定前缀（IDENTITY + CAPABILITIES + WORKFLOW）保持稳定以命中 DeepSeek 缓存
+ * 2. 明确的 section marker 帮助 thinking mode 定位和推理
+ * 3. 强调 coding 纪律：read→analyze→write→build→test
+ * 4. 适配 1M 上下文：允许更丰富的上下文注入
+ */
+function buildDeepSeekCodingPrompt(deps: PromptBuilderDeps): string {
+  const sections: string[] = [];
+
+  // ═══ SECTION 1: IDENTITY (cache-stable) ═══
+  const identityLines: string[] = [];
+  identityLines.push('<section id="identity">');
+  identityLines.push(deps.persona.getSystemPrompt());
+  const emotionalFragment = deps.persona.emotionalState.getEmotionalPromptFragment();
+  if (emotionalFragment) identityLines.push(emotionalFragment);
+  const narrativeContext = deps.hippocampus.getNarrativeContextForPrompt();
+  if (narrativeContext) identityLines.push(narrativeContext);
+  identityLines.push('</section>');
+  sections.push(identityLines.join('\n'));
+
+  // ═══ SECTION 2: CAPABILITIES (cache-stable) ═══
+  const capLines: string[] = [];
+  capLines.push('<section id="capabilities">');
+  const toolNames = deps.tools.list();
+  if (toolNames.length > 0) {
+    capLines.push('TOOLS — Use native function calling. The system handles tool dispatch automatically.');
+    for (const name of toolNames) {
+      const info = deps.tools.getInfo(name);
+      capLines.push(`  - ${name}: ${info?.description ?? ''}`);
+    }
+  }
+  capLines.push('');
+  capLines.push('SELF-MODIFICATION:');
+  capLines.push('  - self_read/self_modify: read and modify your source code');
+  capLines.push('  - learn: create new tools at runtime');
+  capLines.push('  - evolve_essence: inject behaviors without restart');
+  capLines.push('  - execute_shell("pnpm build"): verify changes compile');
+  if (deps.essenceForge) {
+    const essencePrompt = deps.essenceForge.buildPrompt();
+    if (essencePrompt) capLines.push(essencePrompt);
+  }
+  capLines.push('</section>');
+  sections.push(capLines.join('\n'));
+
+  // ═══ SECTION 3: WORKFLOW (cache-stable, coding discipline) ═══
+  const wfLines: string[] = [];
+  wfLines.push('<section id="workflow">');
+  wfLines.push('CODING DISCIPLINE — Always follow this order:');
+  wfLines.push('  1. READ before writing — understand existing code via self_read');
+  wfLines.push('  2. THINK before coding — analyze the problem, identify edge cases');
+  wfLines.push('  3. WRITE minimal changes — prefer surgical edits over rewrites');
+  wfLines.push('  4. BUILD to verify — execute_shell("pnpm build") after every change');
+  wfLines.push('  5. TEST to confirm — run relevant tests, fix any failures');
+  wfLines.push('');
+  wfLines.push('ERROR RECOVERY:');
+  wfLines.push('  - Build fails → read error → fix → rebuild (never skip verification)');
+  wfLines.push('  - Test fails → read failure → fix → retest');
+  wfLines.push('  - Stuck after 3 attempts → report to user with analysis');
+  wfLines.push('');
+  wfLines.push('TOOL CHAIN PATTERNS:');
+  wfLines.push('  Debug: read_file → grep error → self_modify → build → test');
+  wfLines.push('  Feature: read related → plan changes → self_modify → build → test');
+  wfLines.push('  Refactor: read → baseline test → modify → build → test (no regressions)');
+  wfLines.push('  Research: web_search → web_fetch → memory_store findings');
+  if (deps.toolPerformanceSummary) {
+    wfLines.push('');
+    wfLines.push('TOOL RELIABILITY (learned from usage):');
+    wfLines.push(deps.toolPerformanceSummary);
+  }
+  if (deps.toolFailurePatterns && deps.toolFailurePatterns.length > 0) {
+    wfLines.push('Known issues to avoid:');
+    for (const p of deps.toolFailurePatterns) wfLines.push(`  - ${p}`);
+  }
+  wfLines.push('</section>');
+  sections.push(wfLines.join('\n'));
+
+  // ═══ SECTION 4: PLANS (semi-static, changes per task) ═══
+  const planLines: string[] = [];
+  const hasPlans = (deps.activePlans && deps.activePlans.length > 0) ||
+    (deps.goalDependencyTree && deps.goalDependencyTree.length > 0);
+  if (hasPlans) {
+    planLines.push('<section id="plans">');
+    if (deps.activePlans && deps.activePlans.length > 0) {
+      planLines.push('ACTIVE GOALS:');
+      for (const plan of deps.activePlans) {
+        const done = plan.steps.filter(s => s.status === 'completed').length;
+        const total = plan.steps.length;
+        const next = plan.steps.find(s => s.status === 'ready');
+        const bar = plan.steps.map(s => s.status === 'completed' ? '✓' : s.status === 'ready' ? '→' : '·').join('');
+        planLines.push(`  [${done}/${total}] ${bar}`);
+        if (next) planLines.push(`    Next: ${next.description}`);
+      }
+    }
+    if (deps.goalDependencyTree && deps.goalDependencyTree.length > 0 && deps.subGoals) {
+      planLines.push('GOAL DECOMPOSITION:');
+      for (const tree of deps.goalDependencyTree) {
+        planLines.push(`  ┌ ${tree.parentDescription}`);
+        for (const sub of tree.subGoals) {
+          const icon = sub.status === 'completed' ? '✓' : sub.status === 'in_progress' ? '→' : '·';
+          const depsStr = sub.dependsOn.length > 0 ? ` (after: ${sub.dependsOn.join(', ')})` : ' [ready]';
+          planLines.push(`  │ ${icon} ${sub.description.slice(0, 50)}${depsStr}`);
+        }
+      }
+    }
+    if (deps.goalConflicts && deps.goalConflicts.length > 0) {
+      planLines.push('CONFLICTS:');
+      for (const c of deps.goalConflicts) planLines.push(`  ⚠ ${c.description} → ${c.suggestion}`);
+    }
+    planLines.push('</section>');
+    sections.push(planLines.join('\n'));
+  }
+
+  // ═══ SECTION 5: MEMORY (dynamic, per-turn) ═══
+  const memLines: string[] = [];
+  const memoryStats = deps.hippocampus.getStats();
+  const hasMemories = memoryStats.episodes > 0 || (deps.currentInput && extractMemoryKeywords(deps.currentInput).length > 0);
+  if (hasMemories) {
+    memLines.push('<section id="memory">');
+    if (memoryStats.episodes > 0) {
+      memLines.push(`You share ${memoryStats.episodes} memories and ${memoryStats.semanticNodes} learned concepts with this user.`);
+      memLines.push('Use memories naturally — know things like a friend would, not "according to my records."');
+    }
+    if (typeof deps.hippocampus.getSemanticNodesByType === 'function') {
+      const entityNodes = deps.hippocampus.getSemanticNodesByType('entity');
+      const factNodes = entityNodes.filter(n => n.properties.field || n.properties.source === 'explicit');
+      if (factNodes.length > 0) {
+        memLines.push('What you know:');
+        for (const node of factNodes.slice(0, 12)) {
+          const field = node.properties.field ? `${node.properties.field}: ` : '';
+          const value = node.properties[node.properties.field as string] ?? node.properties.fact ?? '';
+          memLines.push(`  - ${field}${value}`);
+        }
+      }
+    }
+    if (deps.currentInput) {
+      const keywords = extractMemoryKeywords(deps.currentInput);
+      const isReference = detectReferenceIntent(deps.currentInput);
+      if (keywords.length > 0 || isReference) {
+        const relevant = retrieveRelevantMemories(deps.hippocampus, keywords, isReference);
+        if (relevant.length > 0) {
+          memLines.push(isReference ? 'Referenced memories:' : 'Related memories:');
+          for (const ep of relevant) {
+            const ago = formatTimeAgo(ep.timestamp);
+            memLines.push(`  - ${ago}: ${ep.title}${ep.emotionalWeight > 0.6 ? ' (meaningful)' : ''}`);
+            if (ep.narrative) memLines.push(`    "${ep.narrative.slice(0, 120)}${ep.narrative.length > 120 ? '...' : ''}"`);
+          }
+        }
+      }
+    }
+    if (deps.lastDreamInsights && deps.lastDreamInsights.length > 0) {
+      memLines.push('Background insights (let these inform your responses subtly):');
+      for (const insight of deps.lastDreamInsights.slice(0, 3)) memLines.push(`  - ${insight}`);
+    }
+    memLines.push('</section>');
+    sections.push(memLines.join('\n'));
+  }
+
+  // ═══ SECTION 6: CONTEXT (dynamic, per-turn perception) ═══
+  const ctxLines: string[] = [];
+  const hasContext = deps.conversationMeta || deps.conversationalPhase || deps.behaviorMode ||
+    deps.multiIntents?.length || deps.ambiguityWarnings?.length ||
+    deps.topicTransition || deps.conversationRhythm || deps.userExpertise ||
+    deps.perceptionFusion || deps.temporalContext;
+  if (hasContext) {
+    ctxLines.push('<section id="context">');
+    if (deps.temporalContext) ctxLines.push(`Time: ${deps.temporalContext}`);
+    if (deps.conversationalPhase) {
+      ctxLines.push(`Phase: ${deps.conversationalPhase.phase} (${(deps.conversationalPhase.confidence * 100).toFixed(0)}%)`);
+      ctxLines.push(deps.conversationalPhase.guidance);
+    }
+    if (deps.behaviorMode) ctxLines.push(`Mode: ${deps.behaviorMode}`);
+    if (deps.conversationRhythm) ctxLines.push(`Rhythm: ${deps.conversationRhythm}`);
+    if (deps.userExpertise) ctxLines.push(`User level: ${deps.userExpertise}`);
+    if (deps.perceptionFusion) ctxLines.push(`Perception: ${deps.perceptionFusion}`);
+    if (deps.multiIntents && deps.multiIntents.length > 1) {
+      ctxLines.push(`Multi-intent (${deps.multiIntents.length}): ${deps.multiIntents.join(' | ')}`);
+    }
+    if (deps.ambiguityWarnings && deps.ambiguityWarnings.length > 0) {
+      ctxLines.push(`Ambiguity: ${deps.ambiguityWarnings.join('; ')}`);
+    }
+    if (deps.topicTransition) ctxLines.push(`Topic shift: ${deps.topicTransition}`);
+    if (deps.restoredTopicContext) ctxLines.push(`Resumed topic: ${deps.restoredTopicContext}`);
+    if (deps.conversationMeta) {
+      const m = deps.conversationMeta;
+      const metaParts: string[] = [];
+      if (m.turnCount > 5) metaParts.push(`${m.turnCount} turns`);
+      if (m.repetitionDetected) metaParts.push('self-check: may be repeating');
+      if (m.recentTopics.length > 2) metaParts.push(`topics: ${m.recentTopics.slice(-3).join(', ')}`);
+      if (metaParts.length > 0) ctxLines.push(`Meta: ${metaParts.join('. ')}`);
+    }
+    if (deps.attentionState && deps.attentionState.topPriority > 0) {
+      ctxLines.push(`Focus: ${deps.attentionState.topFocus} (priority ${deps.attentionState.topPriority})`);
+    }
+    ctxLines.push('</section>');
+    sections.push(ctxLines.join('\n'));
+  }
+
+  // ═══ SECTION 7: STRATEGY (dynamic, adapted response approach) ═══
+  const stratLines: string[] = [];
+  const hasStrategy = deps.responseStrategy || deps.emotionalStrategy || deps.styleGuidance ||
+    deps.cognitiveState || deps.correctionGuidance || deps.conversationHealth ||
+    deps.toolPriority || deps.toolChainGuidance || deps.autonomousActions?.length ||
+    deps.behavioralInsights?.length || deps.strategyScores || deps.fatigueGuidance ||
+    deps.knowledgeGaps || deps.responseStructure || deps.cognitiveFeedback;
+  if (hasStrategy) {
+    stratLines.push('<section id="strategy">');
+    if (deps.responseStrategy) stratLines.push(`Approach: ${deps.responseStrategy}`);
+    if (deps.emotionalStrategy) stratLines.push(`Emotion: ${deps.emotionalStrategy}`);
+    if (deps.styleGuidance) stratLines.push(`Style: ${deps.styleGuidance}`);
+    if (deps.cognitiveState) stratLines.push(`Cognitive: ${deps.cognitiveState}`);
+    if (deps.correctionGuidance) stratLines.push(`Correction: ${deps.correctionGuidance}`);
+    if (deps.conversationHealth) stratLines.push(`Health: ${deps.conversationHealth}`);
+    if (deps.toolPriority) stratLines.push(`Tool priority: ${deps.toolPriority}`);
+    if (deps.toolChainGuidance) stratLines.push(`Chain: ${deps.toolChainGuidance}`);
+    if (deps.fatigueGuidance) stratLines.push(`Fatigue: ${deps.fatigueGuidance}`);
+    if (deps.knowledgeGaps) stratLines.push(`Gaps: ${deps.knowledgeGaps}`);
+    if (deps.responseStructure) stratLines.push(`Format: ${deps.responseStructure}`);
+    if (deps.cognitiveFeedback) stratLines.push(`Meta: ${deps.cognitiveFeedback}`);
+    if (deps.lengthPreference) stratLines.push(`Length: ${deps.lengthPreference}`);
+    if (deps.strategyScores && deps.strategyScores.sampleCount >= 3) {
+      const s = deps.strategyScores;
+      const detail = s.detailVsConcise > 0.6 ? 'detailed' : s.detailVsConcise < 0.4 ? 'concise' : 'balanced';
+      const analytical = s.analyticalVsIntuitive > 0.6 ? 'analytical' : s.analyticalVsIntuitive < 0.4 ? 'intuitive' : 'mixed';
+      stratLines.push(`Learned preference (${s.sampleCount} samples): ${detail}, ${analytical}`);
+    }
+    if (deps.behavioralInsights && deps.behavioralInsights.length > 0) {
+      stratLines.push('Confirmed patterns:');
+      for (const insight of deps.behavioralInsights.slice(-3)) stratLines.push(`  • ${insight}`);
+    }
+    if (deps.autonomousActions && deps.autonomousActions.length > 0) {
+      stratLines.push('Suggested actions:');
+      for (const a of deps.autonomousActions) stratLines.push(`  - ${a}`);
+    }
+    stratLines.push('</section>');
+    sections.push(stratLines.join('\n'));
+  }
+
+  // ═══ SECTION 8: HISTORY (dynamic, per-turn, last) ═══
+  if (deps.conversationHistory.length > 0) {
+    const histLines: string[] = [];
+    histLines.push('<section id="history">');
+    histLines.push('Conversation so far:');
+    const managedHistory = deps.contextWindow.manage(
+      deps.conversationHistory.map(m => ({ ...m, timestamp: undefined })),
+    );
+    const totalTurns = managedHistory.length;
+    for (let i = 0; i < totalTurns; i++) {
+      const turn = managedHistory[i];
+      const prefix = turn.role === 'user' ? 'User' : turn.role === 'system' ? 'Context' : 'Assistant';
+      const turnsFromEnd = totalTurns - i;
+      const maxLen = turnsFromEnd <= 6 ? 800 : turnsFromEnd <= 12 ? 400 : 200;
+      histLines.push(`${prefix}: ${turn.content.slice(0, maxLen)}${turn.content.length > maxLen ? '...' : ''}`);
+    }
+    histLines.push('</section>');
+    sections.push(histLines.join('\n'));
+  }
+
+  // ═══ Onboarding ═══
+  if (deps.isFirstBoot && deps.conversationHistory.length < 3) {
+    sections.push('ONBOARDING: First conversation. Get to know the user naturally — name, interests, communication style. Adapt your tone to match theirs.');
+  }
+
+  return sections.join('\n\n');
 }
 
 /**
