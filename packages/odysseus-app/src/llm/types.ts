@@ -39,4 +39,8 @@ export interface LLMProviderConfig {
   temperature?: number;
   /** 通信协议（可选，双协议服务商使用） */
   protocol?: LLMProtocol;
+  /** 思维模式（DeepSeek V4、GLM-5 等支持） */
+  thinkingMode?: boolean;
+  /** 推理深度（当 thinkingMode 为 true 时有效） */
+  reasoningEffort?: 'high' | 'max';
 }

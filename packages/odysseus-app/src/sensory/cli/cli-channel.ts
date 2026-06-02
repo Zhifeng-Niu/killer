@@ -53,12 +53,18 @@ export interface CLIChannelConfig {
  */
 export class CLIChannel extends BaseSensoryChannel {
   private readonly output: Writable;
+  private _muted = false;
 
   constructor(config: CLIChannelConfig = {}) {
     super(SensoryChannel.CLI);
 
     this.output = config.output ?? process.stdout;
   }
+
+  /** TUI 模式下静音 — ink 接管 stdout，直接写会打乱渲染 */
+  mute(): void { this._muted = true; }
+  unmute(): void { this._muted = false; }
+  get muted(): boolean { return this._muted; }
 
   /**
    * 启动 CLI 渠道
@@ -81,6 +87,7 @@ export class CLIChannel extends BaseSensoryChannel {
    * 发送消息到 CLI
    */
   async send(message: ChannelMessage): Promise<void> {
+    if (this._muted) return;
     const formatted = this.formatMessage(message);
     this.output.write(formatted + '\n');
     this.recordActivity();
