@@ -12,6 +12,10 @@ export interface LLMCompletion {
   model: string;
   tokensUsed?: number;
   finishReason?: 'stop' | 'length' | 'tool_calls' | 'error';
+  /** 缓存命中 token 数（DeepSeek/Gemini 等支持 prefix caching 的 provider） */
+  cacheHitTokens?: number;
+  /** 缓存未命中 token 数 */
+  cacheMissTokens?: number;
 }
 
 /**

@@ -3828,10 +3828,12 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
             const result = await this.config.llm.complete(input, systemContext);
             response = result.content;
             onToken(response);
+            this.trackCacheStats(result as any);
           }
         } else {
           const result = await this.config.llm.complete(input, systemContext);
           response = result.content;
+          this.trackCacheStats(result as any);
         }
 
         await this.hooks.emit('llm:response', { responseLength: response.length, attempt });
@@ -3855,6 +3857,20 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
     // 不可达，但 TypeScript 需要
     throw new Error('LLM retry exhausted');
+  }
+
+  /** 追踪缓存命中统计（DeepSeek 50x 缓存折扣优化） */
+  private cacheStats = { hits: 0, misses: 0, totalCalls: 0 };
+  private trackCacheStats(result: { cacheHitTokens?: number; cacheMissTokens?: number }): void {
+    this.cacheStats.totalCalls++;
+    if (result.cacheHitTokens != null) {
+      this.cacheStats.hits += result.cacheHitTokens;
+      this.cacheStats.misses += result.cacheMissTokens ?? 0;
+      const hitRate = this.cacheStats.hits + this.cacheStats.misses > 0
+        ? ((this.cacheStats.hits / (this.cacheStats.hits + this.cacheStats.misses)) * 100).toFixed(0)
+        : '0';
+      this.logger.debug(`Cache stats: ${hitRate}% hit rate (${result.cacheHitTokens} hit, ${result.cacheMissTokens ?? 0} miss this call)`);
+    }
   }
 
   private async executeToolCallsFromResponse(

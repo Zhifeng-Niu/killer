@@ -1389,6 +1389,27 @@ function buildDeepSeekCodingPrompt(deps: PromptBuilderDeps): string {
 }
 
 /**
+ * 获取 DeepSeek 缓存稳定的 prompt 前缀指纹
+ *
+ * DeepSeek 使用 prefix-based 缓存——如果 prompt 开头不变，前缀命中缓存。
+ * 前 3 个 section（IDENTITY, CAPABILITIES, WORKFLOW）在会话中几乎不变，
+ * 是理想的缓存锚点。返回其哈希用于缓存命中率追踪。
+ */
+export function getCacheStableFingerprint(deps: PromptBuilderDeps): string {
+  const stable: string[] = [];
+  stable.push(deps.persona.getSystemPrompt().slice(0, 200));
+  const toolNames = deps.tools.list();
+  stable.push(toolNames.join(','));
+  // 简单指纹：不引入 crypto 依赖
+  const raw = stable.join('|');
+  let hash = 0;
+  for (let i = 0; i < raw.length; i++) {
+    hash = ((hash << 5) - hash + raw.charCodeAt(i)) | 0;
+  }
+  return `fp:${hash.toString(36)}`;
+}
+
+/**
  * 格式化"多长时间以前"
  */
 function formatTimeAgo(timestamp: number): string {

@@ -341,6 +341,10 @@ interface ChatChoice {
 interface ChatUsage {
   prompt_tokens: number;
   completion_tokens: number;
+  /** DeepSeek/GGemini: 缓存命中的 prompt tokens */
+  prompt_cache_hit_tokens?: number;
+  /** DeepSeek: 缓存未命中的 prompt tokens */
+  prompt_cache_miss_tokens?: number;
 }
 
 interface ChatResponse {
@@ -423,6 +427,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
       model: data.model || this.model,
       tokensUsed,
       finishReason: choice?.finish_reason === 'length' ? 'length' : 'stop',
+      ...(data.usage?.prompt_cache_hit_tokens != null && { cacheHitTokens: data.usage.prompt_cache_hit_tokens }),
+      ...(data.usage?.prompt_cache_miss_tokens != null && { cacheMissTokens: data.usage.prompt_cache_miss_tokens }),
     };
   }
 
@@ -643,6 +649,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
       finishReason,
       ...(toolCalls && toolCalls.length > 0 && { toolCalls }),
       ...(reasoningContent && { reasoningContent }),
+      ...(data.usage?.prompt_cache_hit_tokens != null && { cacheHitTokens: data.usage.prompt_cache_hit_tokens }),
+      ...(data.usage?.prompt_cache_miss_tokens != null && { cacheMissTokens: data.usage.prompt_cache_miss_tokens }),
     };
   }
 
