@@ -19,7 +19,7 @@ import type {
   RelationshipNarrative,
 } from './types.js';
 import { MemoryLayer } from './types.js';
-import { AssociationEngine } from './association.js';
+import { AssociationEngine, semanticSearch } from './association.js';
 import { DreamEngine } from './dreaming.js';
 import type { DreamResult, CounterfactualBranch } from './dreaming.js';
 import { NarrativeSynthesisEngine } from './narrative-synthesis.js';
@@ -33,7 +33,10 @@ import {
   DEFAULT_FORGETTING_CONFIG,
   type ForgettingConfig,
   applyForgettingCurve,
+  calculateInformationDensity,
+  adjustStabilityByDensity,
 } from './forgetting.js';
+import type { IStorage } from '../storage/types.js';
 
 /**
  * 梦境周期结果（与 DreamEngine.DreamResult 兼容）
@@ -133,11 +136,17 @@ export class HippocampusEngine {
   // === 定时器 ===
   private dreamTimer: ReturnType<typeof setInterval> | null = null;
   private decayTimer: ReturnType<typeof setInterval> | null = null;
+  private autoSaveTimer: ReturnType<typeof setInterval> | null = null;
 
   // === 事件监听器 ===
   private eventListeners: Map<string, Array<(data: unknown) => void>>;
 
-  constructor(config: MemoryConfig = DEFAULT_MEMORY_CONFIG) {
+  // === 持久化存储 ===
+  private storage: IStorage | null = null;
+  private dirty: boolean = false;
+  private storageReady: boolean = false;
+
+  constructor(config: MemoryConfig = DEFAULT_MEMORY_CONFIG, storage?: IStorage) {
     this.config = config;
     this.episodicStore = new Map();
     this.semanticGraph = new Map();
@@ -162,6 +171,131 @@ export class HippocampusEngine {
 
     // 启动自动维护
     this.startMaintenance();
+
+    // 如果提供了存储，绑定并加载已有记忆
+    if (storage) {
+      this.attachStorage(storage);
+    }
+  }
+
+  // === 持久化 ===
+
+  /**
+   * 绑定持久化存储层
+   *
+   * 绑定后会自动：
+   * 1. 从存储加载已有记忆到内存
+   * 2. 每次写操作同步写入存储（write-through）
+   * 3. 定期自动保存（防丢失）
+   */
+  async attachStorage(storage: IStorage): Promise<void> {
+    this.storage = storage;
+    await storage.initialize();
+    this.storageReady = true;
+
+    // 从存储加载已有记忆
+    const episodes = await storage.episodes.loadAll();
+    for (const ep of episodes) {
+      this.episodicStore.set(ep.id, ep);
+    }
+
+    const nodes = await storage.semantic.loadAll();
+    for (const node of nodes) {
+      this.semanticGraph.set(node.id, node);
+    }
+
+    const prospective = await storage.prospective.loadAll();
+    for (const p of prospective) {
+      this.prospectiveStore.set(p.id, p);
+    }
+
+    // 启动自动保存（每30秒检查dirty标记）
+    this.autoSaveTimer = setInterval(() => this.autoSave(), 30_000);
+
+    this.emit('storageAttached', {
+      episodesLoaded: episodes.length,
+      semanticLoaded: nodes.length,
+      prospectiveLoaded: prospective.length,
+    });
+  }
+
+  /**
+   * 分离持久化存储层
+   */
+  async detachStorage(): Promise<void> {
+    if (this.autoSaveTimer) {
+      clearInterval(this.autoSaveTimer);
+      this.autoSaveTimer = null;
+    }
+    // 最终保存
+    await this.flushToStorage();
+    if (this.storage) {
+      await this.storage.close();
+    }
+    this.storage = null;
+    this.storageReady = false;
+  }
+
+  /**
+   * 标记为dirty（有未保存的数据）
+   */
+  private markDirty(): void {
+    this.dirty = true;
+  }
+
+  /**
+   * 自动保存（仅在dirty时执行）
+   */
+  private async autoSave(): Promise<void> {
+    if (this.dirty) {
+      await this.flushToStorage();
+    }
+  }
+
+  /**
+   * 强制将所有内存数据flush到存储层
+   */
+  async flushToStorage(): Promise<void> {
+    if (!this.storage || !this.storageReady) return;
+
+    try {
+      for (const episode of this.episodicStore.values()) {
+        await this.storage.episodes.save(episode);
+      }
+      for (const node of this.semanticGraph.values()) {
+        await this.storage.semantic.save(node);
+      }
+      for (const p of this.prospectiveStore.values()) {
+        await this.storage.prospective.save(p);
+      }
+      this.dirty = false;
+    } catch (err) {
+      this.emit('error', { source: 'flushToStorage', error: err });
+    }
+  }
+
+  private async persistEpisode(episode: Episode): Promise<void> {
+    if (this.storage && this.storageReady) {
+      try { await this.storage.episodes.save(episode); } catch (err) { this.emit('error', { source: 'persistEpisode', error: err }); }
+    }
+  }
+
+  private async persistSemanticNode(node: SemanticNode): Promise<void> {
+    if (this.storage && this.storageReady) {
+      try { await this.storage.semantic.save(node); } catch (err) { this.emit('error', { source: 'persistSemanticNode', error: err }); }
+    }
+  }
+
+  private async removePersistedEpisode(id: string): Promise<void> {
+    if (this.storage && this.storageReady) {
+      try { await this.storage.episodes.delete(id); } catch (err) { this.emit('error', { source: 'removePersistedEpisode', error: err }); }
+    }
+  }
+
+  private async removePersistedSemanticNode(id: string): Promise<void> {
+    if (this.storage && this.storageReady) {
+      try { await this.storage.semantic.delete(id); } catch (err) { this.emit('error', { source: 'removePersistedSemanticNode', error: err }); }
+    }
   }
 
   // === 工作记忆 ===
@@ -204,6 +338,10 @@ export class HippocampusEngine {
   addToContext(item: string): void {
     if (!this.workingMemory.activeContext.includes(item)) {
       this.workingMemory.activeContext.push(item);
+      // 容量保护：activeContext 不超过 100 项
+      if (this.workingMemory.activeContext.length > 100) {
+        this.workingMemory.activeContext.shift();
+      }
       this.emit('contextAdded', { item });
     }
   }
@@ -238,19 +376,47 @@ export class HippocampusEngine {
   // === 情节记忆 ===
 
   /**
-   * 存储情节记忆
+   * 存储情节记忆（含信息密度评估）
+   *
+   * 存储时自动评估narrative的信息密度：
+   * - 高密度内容 → 更高的初始稳定性（保护有价值记忆）
+   * - 低密度内容 → 更低的初始稳定性（自然加速遗忘）
    */
   storeEpisode(episode: Omit<Episode, 'id' | 'timestamp'>): Episode {
     const now = Date.now();
+    const baseStability = episode.decayRate ?? this.config.forgetting.defaultStability;
+
+    // 信息熵密度评估 → 调整初始稳定性
+    let adjustedStability = baseStability;
+    if (this.config.forgetting.entropyDecayEnabled && episode.narrative) {
+      const density = calculateInformationDensity(episode.narrative);
+      adjustedStability = adjustStabilityByDensity(baseStability, density, this.config.forgetting);
+    }
+
     const newEpisode: Episode = {
       ...episode,
       id: `ep_${now}_${Math.random().toString(36).substring(2, 9)}`,
       timestamp: now,
-      decayRate: episode.decayRate ?? this.config.forgetting.defaultStability,
+      decayRate: adjustedStability,
       accessCount: 0,
     };
 
     this.episodicStore.set(newEpisode.id, newEpisode);
+
+    // 容量保护：超过上限时淘汰最旧的休眠记忆
+    const EPISODIC_CAP = 5000;
+    if (this.episodicStore.size > EPISODIC_CAP) {
+      let oldest: { id: string; ts: number } | null = null;
+      for (const [id, ep] of this.episodicStore) {
+        if (!oldest || ep.timestamp < oldest.ts) {
+          oldest = { id, ts: ep.timestamp };
+        }
+      }
+      if (oldest) this.episodicStore.delete(oldest.id);
+    }
+
+    this.markDirty();
+    this.persistEpisode(newEpisode); // write-through (fire-and-forget)
     this.emit('episodeStored', newEpisode);
 
     return newEpisode;
@@ -268,6 +434,8 @@ export class HippocampusEngine {
     const now = Date.now();
     const updated = reinforce(episode, now, this.config.forgetting);
     this.episodicStore.set(id, updated);
+    this.markDirty();
+    this.persistEpisode(updated); // write-through reinforce
 
     return updated;
   }
@@ -303,6 +471,8 @@ export class HippocampusEngine {
   deleteEpisode(id: string): boolean {
     const deleted = this.episodicStore.delete(id);
     if (deleted) {
+      this.markDirty();
+      this.removePersistedEpisode(id); // write-through delete
       this.emit('episodeDeleted', { id });
     }
     return deleted;
@@ -321,6 +491,21 @@ export class HippocampusEngine {
     };
 
     this.semanticGraph.set(newNode.id, newNode);
+
+    // 容量保护：语义图超过上限时淘汰最少连接的节点
+    const SEMANTIC_CAP = 3000;
+    if (this.semanticGraph.size > SEMANTIC_CAP) {
+      let leastConnected: { id: string; rels: number } | null = null;
+      for (const [id, n] of this.semanticGraph) {
+        if (!leastConnected || n.relations.length < leastConnected.rels) {
+          leastConnected = { id, rels: n.relations.length };
+        }
+      }
+      if (leastConnected) this.semanticGraph.delete(leastConnected.id);
+    }
+
+    this.markDirty();
+    this.persistSemanticNode(newNode); // write-through
     this.emit('semanticNodeAdded', newNode);
 
     return newNode;
@@ -349,18 +534,18 @@ export class HippocampusEngine {
       throw new Error(`Source node not found: ${from}`);
     }
 
-    // 检查是否已存在相同关系
     const existingRelation = fromNode.relations.find(
       (r) => r.to === to && r.type === type
     );
 
     if (existingRelation) {
-      // 更新权重
       existingRelation.weight = weight;
     } else {
       fromNode.relations.push({ to, type, weight });
     }
 
+    this.markDirty();
+    this.persistSemanticNode(fromNode); // write-through relation update
     this.emit('relationAdded', { from, to, type, weight });
   }
 
@@ -368,13 +553,14 @@ export class HippocampusEngine {
    * 删除语义节点
    */
   deleteSemanticNode(id: string): boolean {
-    // 删除所有指向该节点的关系
     for (const node of this.semanticGraph.values()) {
       node.relations = node.relations.filter((r) => r.to !== id);
     }
 
     const deleted = this.semanticGraph.delete(id);
     if (deleted) {
+      this.markDirty();
+      this.removePersistedSemanticNode(id); // write-through delete
       this.emit('semanticNodeDeleted', { id });
     }
     return deleted;
@@ -424,6 +610,32 @@ export class HippocampusEngine {
       episodes,
       relevanceScore,
     };
+  }
+
+  /**
+   * 语义搜索（TF-IDF + 余弦相似度）
+   *
+   * 当没有明确的语义图谱节点时，直接对 episode narrative 做语义匹配。
+   * 这是 associativeRecall 的补充——适合"模糊回忆"场景。
+   *
+   * @param queryText - 查询文本
+   * @param limit - 返回数量上限
+   * @param threshold - 最低相似度阈值
+   * @returns 按语义相似度排序的 episode 列表
+   */
+  semanticRecall(queryText: string, limit: number = 10, threshold: number = 0.15): Episode[] {
+    const candidates = Array.from(this.episodicStore.values()).map(ep => ({
+      id: ep.id,
+      // 搜索范围：narrative + title + tags
+      text: `${ep.narrative || ''} ${ep.title || ''} ${ep.tags.join(' ')}`,
+    }));
+
+    const results = semanticSearch(queryText, candidates, limit, threshold);
+
+    return results.map(r => {
+      const episode = this.episodicStore.get(r.id);
+      return episode!;
+    }).filter(Boolean);
   }
 
   /**
@@ -502,6 +714,11 @@ export class HippocampusEngine {
     };
 
     this.prospectiveStore.set(newItem.id, newItem);
+    this.markDirty();
+    // write-through persist
+    if (this.storage && this.storageReady) {
+      this.storage.prospective.save(newItem).catch(() => {});
+    }
     this.emit('prospectiveAdded', newItem);
 
     return newItem;
@@ -532,6 +749,10 @@ export class HippocampusEngine {
     const memory = this.prospectiveStore.get(id);
     if (memory) {
       memory.completed = true;
+      this.markDirty();
+      if (this.storage && this.storageReady) {
+        this.storage.prospective.save(memory).catch(() => {});
+      }
       this.emit('prospectiveCompleted', memory);
       return true;
     }
@@ -542,7 +763,14 @@ export class HippocampusEngine {
    * 删除前瞻记忆
    */
   deleteProspective(id: string): boolean {
-    return this.prospectiveStore.delete(id);
+    const deleted = this.prospectiveStore.delete(id);
+    if (deleted) {
+      this.markDirty();
+      if (this.storage && this.storageReady) {
+        this.storage.prospective.delete(id).catch(() => {});
+      }
+    }
+    return deleted;
   }
 
   // === 自传体叙事 ===
@@ -739,7 +967,11 @@ export class HippocampusEngine {
   // === 维护操作 ===
 
   /**
-   * 应用遗忘曲线
+   * 应用遗忘曲线 + 淘汰已死亡记忆
+   *
+   * 链路：Decay → Evict
+   * 先衰减所有 episode 的 emotionalWeight，
+   * 然后删除 retention ≈ 0 的真正死亡记忆（不是标记 dormant）。
    */
   applyDecay(): void {
     const now = Date.now();
@@ -751,7 +983,33 @@ export class HippocampusEngine {
       this.episodicStore.set(episode.id, episode);
     }
 
-    this.emit('decayApplied', { count: episodes.length });
+    // Evict: 删除 retention 降至近零的 episode（真正遗忘，不是标记）
+    let evicted = 0;
+    for (const [id, episode] of this.episodicStore) {
+      if (episode.tags.includes('dormant')) {
+        const retention = calculateRetention(episode.decayRate, now - episode.timestamp);
+        if (retention < 0.01) {
+          this.episodicStore.delete(id);
+          this.removePersistedEpisode(id);
+          evicted++;
+        }
+      }
+    }
+
+    // Prune: 清除孤立的语义节点（无 relation 且不被任何活跃 episode 引用）
+    let pruned = 0;
+    const activeAssociations = new Set(
+      Array.from(this.episodicStore.values()).flatMap(e => e.associations),
+    );
+    for (const [id, node] of this.semanticGraph) {
+      if (node.relations.length === 0 && node.strength < 0.05 && !activeAssociations.has(id)) {
+        this.semanticGraph.delete(id);
+        this.removePersistedSemanticNode(id);
+        pruned++;
+      }
+    }
+
+    this.emit('decayApplied', { count: episodes.length, evicted, pruned });
   }
 
   /**
@@ -790,6 +1048,60 @@ export class HippocampusEngine {
     }
 
     return result;
+  }
+
+  /**
+   * 统一压缩策略 — 释放长期运行累积的内存
+   *
+   * 三级压缩：
+   * 1. 休眠淘汰：retention < 0.05 的情景记忆直接删除
+   * 2. 语义裁剪：无连接的孤立语义节点删除
+   * 3. 过期前瞻：已完成/过期的 prospective 记忆清理
+   */
+  compact(): { episodesRemoved: number; nodesRemoved: number; prospectiveRemoved: number } {
+    const now = Date.now();
+    let episodesRemoved = 0;
+    let nodesRemoved = 0;
+    let prospectiveRemoved = 0;
+
+    // Level 1: 休眠情景记忆淘汰（阈值从 0.01 提高到 0.05）
+    for (const [id, ep] of this.episodicStore) {
+      const retention = calculateRetention(ep.decayRate, now - ep.timestamp);
+      if (retention < 0.05) {
+        this.episodicStore.delete(id);
+        episodesRemoved++;
+      }
+    }
+
+    // Level 2: 孤立语义节点清理（无关联且超过 1 小时）
+    for (const [id, node] of this.semanticGraph) {
+      if (node.relations.length === 0 && (now - (node.id.includes('_') ? parseInt(node.id.split('_')[1]) || 0 : 0)) > 3_600_000) {
+        this.semanticGraph.delete(id);
+        nodesRemoved++;
+      }
+    }
+
+    // Level 3: 过期前瞻记忆清理
+    for (const [id, p] of this.prospectiveStore) {
+      if (p.completed || p.triggerTime < now) {
+        this.prospectiveStore.delete(id);
+        prospectiveRemoved++;
+      }
+    }
+
+    // 程序记忆裁剪：保留最近 200 条
+    if (this.proceduralStore.size > 200) {
+      const sorted = [...this.proceduralStore.entries()]
+        .sort((a, b) => (b[1].lastUsed || 0) - (a[1].lastUsed || 0));
+      this.proceduralStore = new Map(sorted.slice(0, 200));
+    }
+
+    if (episodesRemoved + nodesRemoved + prospectiveRemoved > 0) {
+      this.markDirty();
+      this.emit('compacted', { episodesRemoved, nodesRemoved, prospectiveRemoved });
+    }
+
+    return { episodesRemoved, nodesRemoved, prospectiveRemoved };
   }
 
   /**
@@ -891,10 +1203,10 @@ export class HippocampusEngine {
   }
 
   /**
-   * 梦境中的叙事合成
+   * 梦境中的叙事合成 + 旧章节压实
    *
-   * 从近期 episodes 中提取主题和情感基调，
-   * 如果有足够的素材则合成新章节
+   * 链路：Narrative → Compact
+   * 合成新章节后，将旧章节合并为摘要，防止 chapters 无限增长。
    */
   private dreamSynthesizeNarrative(): boolean {
     const recentEpisodes = this.getRecentEpisodes(20);
@@ -928,6 +1240,35 @@ export class HippocampusEngine {
     // 渐进演化身份声明
     if (result.identityStatement !== this.narrative.identityStatement) {
       this.updateIdentityStatement(result.identityStatement);
+      updated = true;
+    }
+
+    // Compact: 保留最近 10 章，更早的合并为摘要章节
+    const MAX_ACTIVE_CHAPTERS = 10;
+    if (this.narrative.chapters.length > MAX_ACTIVE_CHAPTERS) {
+      const oldChapters = this.narrative.chapters.slice(0, -MAX_ACTIVE_CHAPTERS);
+      const recentChapters = this.narrative.chapters.slice(-MAX_ACTIVE_CHAPTERS);
+
+      const mergedSummary = oldChapters
+        .map(c => c.title)
+        .join('; ');
+
+      const compacted: NarrativeChapter = {
+        id: `chapter_compact_${Date.now()}`,
+        title: `Earlier: ${oldChapters.length} chapters merged`,
+        summary: mergedSummary,
+        startTime: oldChapters[0]?.startTime ?? Date.now(),
+        endTime: oldChapters[oldChapters.length - 1]?.endTime ?? Date.now(),
+        keyEpisodes: oldChapters.flatMap(c => c.keyEpisodes).slice(-5),
+        emotionalTone: 'retrospective',
+        significance: 0.3,
+      };
+
+      this.narrative = {
+        ...this.narrative,
+        chapters: [compacted, ...recentChapters],
+        lastUpdated: Date.now(),
+      };
       updated = true;
     }
 
@@ -989,6 +1330,8 @@ export class HippocampusEngine {
   /**
    * 触发事件
    */
+  private emitting = false;
+
   private emit(event: string, data: unknown): void {
     const listeners = this.eventListeners.get(event);
     if (listeners) {
@@ -996,8 +1339,20 @@ export class HippocampusEngine {
         try {
           callback(data);
         } catch (err) {
-          // 防止回调错误影响主流程
-          this.emit('error', { source: 'eventCallback', error: err });
+          // 防止递归：error handler 自身抛异常时不再递归 emit
+          if (!this.emitting) {
+            this.emitting = true;
+            try {
+              const errListeners = this.eventListeners.get('error');
+              if (errListeners) {
+                for (const cb of errListeners) {
+                  try { cb({ source: 'eventCallback', error: err }); } catch { /* 递归底线 */ }
+                }
+              }
+            } finally {
+              this.emitting = false;
+            }
+          }
         }
       }
     }
