@@ -6,7 +6,7 @@ expedition_branch: odyssey/20260603-004715
 baseline_metric: "build: pass, type_error_count: 0"
 best_metric: null
 total_waypoints: 12
-completed_waypoints: 3
+completed_waypoints: 7
 consecutive_discards: 0
 ---
 
@@ -18,7 +18,7 @@ consecutive_discards: 0
 ## What's Been Tried
 
 ### Wins
-{Auto-updated by engine.}
+- **WP7**: WorkflowEngine — 分阶段并行编排 + TG-aware task termination + adversarial review + /workflow 命令集成
 
 ### Dead Ends
 {None.}
@@ -50,7 +50,7 @@ consecutive_discards: 0
 
 ## Current Best
 - metric: build: pass, type_error_count: 0
-- 0/12 waypoints complete
+- 7/12 waypoints complete
 
 ## Ideas Backlog
 - Claude Code 的 auto memory 跨会话学习

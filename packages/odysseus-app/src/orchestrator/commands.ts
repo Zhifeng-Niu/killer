@@ -26,6 +26,7 @@ const COMMAND_NAMES = [
   'plugins', 'plugin-unload', 'init',
   'narrative', 'predictions', 'emotions',
   'health', 'diagnostics', 'broadcast', 'report',
+  'workflow',
   'stop', 'exit',
 ] as const;
 
@@ -69,6 +70,7 @@ interface CommandHandlerDeps {
   getSynapseInfo?: () => { cells: Array<{ id: string; type: string; status: string }>; edges: Array<[string, string]> };
   initConfigDir?: () => string;
   shutdown?: () => Promise<void>;
+  executeWorkflow?: (definition: import('./workflow-engine.js').WorkflowDefinition) => Promise<import('./workflow-engine.js').WorkflowResult>;
 }
 
 /**
@@ -127,6 +129,7 @@ export class CommandHandler {
       getSynapseInfo: deps.getSynapseInfo,
       initConfigDir: deps.initConfigDir,
       shutdown: deps.shutdown,
+      executeWorkflow: deps.executeWorkflow,
     };
   }
 
@@ -182,6 +185,7 @@ export class CommandHandler {
       case 'diagnostics': this.handleDiagnosticsCommand(); return true;
       case 'broadcast': this.handleBroadcastCommand(); return true;
       case 'report':    this.handleReportCommand(); return true;
+      case 'workflow':  this.handleWorkflowCommand(args); return true;
       case 'stop':      this.handleStopCommand(); return true;
       case 'exit':      this.handleStopCommand(); return true;
       default:          return false;
@@ -930,6 +934,66 @@ export class CommandHandler {
     if (this.ext.shutdown) {
       this.ext.shutdown().catch(() => {});
     }
+  }
+
+  private async handleWorkflowCommand(args: string[] | undefined): Promise<void> {
+    if (!this.ext.executeWorkflow) {
+      this.outputManager.sendResult('Workflow engine not available.');
+      return;
+    }
+
+    const subCommand = args?.[0];
+
+    if (!subCommand || subCommand === 'help') {
+      this.outputManager.sendResult(
+        'Usage:\n' +
+        '  /workflow run <JSON>  — Execute a workflow definition\n' +
+        '  /workflow example     — Show an example workflow\n' +
+        '  /workflow help        — Show this help'
+      );
+      return;
+    }
+
+    if (subCommand === 'example') {
+      const example = {
+        name: 'code-review-pipeline',
+        phases: [
+          { name: 'analyze', tasks: [
+            { id: 'security', prompt: 'Review code for security vulnerabilities' },
+            { id: 'performance', prompt: 'Review code for performance issues' },
+          ]},
+          { name: 'report', tasks: [
+            { id: 'summary', prompt: 'Combine all review findings into a prioritized report', adversarialReview: true },
+          ]},
+        ],
+      };
+      this.outputManager.sendResult(`Example workflow:\n${JSON.stringify(example, null, 2)}`);
+      return;
+    }
+
+    if (subCommand === 'run') {
+      const jsonStr = args?.slice(1).join(' ');
+      if (!jsonStr) {
+        this.outputManager.sendResult('Usage: /workflow run <JSON workflow definition>');
+        return;
+      }
+      try {
+        const definition = JSON.parse(jsonStr);
+        this.outputManager.sendResult(`Starting workflow "${definition.name || 'unnamed'}"...`);
+        const result = await this.ext.executeWorkflow(definition);
+        this.outputManager.sendResult(
+          `Workflow "${result.workflowName}" ${result.success ? 'completed' : 'finished with issues'}\n` +
+          `Phases: ${result.phases.length} | Duration: ${(result.totalDurationMs / 1000).toFixed(1)}s | Tokens: ${result.totalTokensUsed}\n` +
+          `Avg TG: ${(result.averageTG * 100).toFixed(0)}%\n\n` +
+          `${result.aggregatedOutput.slice(0, 2000)}${result.aggregatedOutput.length > 2000 ? '\n...(truncated)' : ''}`
+        );
+      } catch (err) {
+        this.outputManager.sendResult(`Workflow error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+
+    this.outputManager.sendResult(`Unknown workflow sub-command: ${subCommand}. Use /workflow help.`);
   }
 }
 

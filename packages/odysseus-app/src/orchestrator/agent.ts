@@ -129,6 +129,7 @@ import { SessionManager, type SessionSnapshot } from '../session/index.js';
 import { Logger } from '../log/index.js';
 import { PeriodicMemoryGuard, trimArray, trimAgentState } from './memory-guard.js';
 import { TokenEfficiencyTracker, type LLMCallRecord, type ToolCallRecord, type EfficiencyReport } from './token-efficiency.js';
+import { WorkflowEngine, type TaskExecutor, type WorkflowDefinition, type WorkflowResult } from './workflow-engine.js';
 
 /**
  * 生成唯一 ID
@@ -199,6 +200,7 @@ export class OdysseusAgent implements IDriveSource {
   readonly hooks: LifecycleHooks = new LifecycleHooks();
   readonly middleware: MiddlewarePipeline = new MiddlewarePipeline();
   readonly contextWindow: ContextWindowManager = new ContextWindowManager();
+  private workflowEngine!: WorkflowEngine;
 
   // 对话上下文（工作记忆窗口）— 无硬上限，由 ContextWindowManager 智能裁剪
   private conversationHistory: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }> = [];
@@ -1256,6 +1258,7 @@ Examples:
       },
       initConfigDir: () => initOdysseusDir(),
       shutdown: () => this.shutdown(),
+      executeWorkflow: (def) => this.executeWorkflow(def),
     });
   }
 
@@ -1509,6 +1512,12 @@ Examples:
 
     // Scheduled Task Runner — 定时任务调度
     this.scheduledRunner = new ScheduledTaskRunner();
+
+    // Workflow Engine — 分阶段并行编排
+    this.workflowEngine = new WorkflowEngine(
+      { executeTask: (prompt, options) => this.executeWorkflowTask(prompt, options) },
+      (event, payload) => { this.hooks.emit(event as import('./hooks.js').LifecycleEvent, payload); },
+    );
   }
 
   private wireModules(): void {
@@ -4431,6 +4440,93 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     await this.hooks.emit('delegate:complete', { task, cellsUsed: result.totalCellsUsed, durationMs: result.durationMs });
 
     return result;
+  }
+
+  /**
+   * 执行 workflow 定义（分阶段并行编排）
+   */
+  async executeWorkflow(workflow: WorkflowDefinition): Promise<WorkflowResult> {
+    this.logger.info(`Starting workflow "${workflow.name}" with ${workflow.phases.length} phases`);
+    await this.hooks.emit('cycle:start', { input: `[workflow] ${workflow.name}` });
+    const result = await this.workflowEngine.execute(workflow);
+    this.logger.info(`Workflow "${workflow.name}" completed: ${result.success ? 'success' : 'partial'}, ${result.totalDurationMs}ms`);
+    return result;
+  }
+
+  /**
+   * TaskExecutor 实现 — workflow 中的每个子任务通过此方法执行
+   *
+   * 复用 LLM 调用 + 工具执行管道，但独立于主对话流（不写入 conversationHistory）
+   */
+  private async executeWorkflowTask(
+    prompt: string,
+    options?: { allowedTools?: string[]; maxTurns?: number },
+  ): Promise<{ output: string; tokensUsed?: number; tgScore?: number }> {
+    const systemContext = this.buildSystemPrompt(prompt);
+    const provider = this.config.llm;
+    const maxTurns = options?.maxTurns ?? 10;
+
+    let output: string;
+    let totalTokens = 0;
+    const startTime = Date.now();
+
+    // 使用原生 function calling 循环（如果有工具限制则过滤）
+    const tools = options?.allowedTools
+      ? this.buildToolDefinitions().filter(t => options.allowedTools!.includes(t.function.name))
+      : this.buildToolDefinitions();
+
+    const supportsNative = 'completeWithTools' in provider
+      && typeof (provider as unknown as Record<string, unknown>).completeWithTools === 'function';
+
+    if (supportsNative && tools.length > 0) {
+      const messages: ChatMessage[] = [
+        { role: 'system', content: systemContext },
+        { role: 'user', content: prompt },
+      ];
+
+      let round = 0;
+      let lastResponse = '';
+      while (round < maxTurns) {
+        round++;
+        try {
+          const result = await (provider as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>).completeWithTools(messages, tools);
+          const resp = result as { content: string; toolCalls?: ToolCall[]; tokensUsed?: number };
+          totalTokens += resp.tokensUsed ?? 0;
+
+          if (!resp.toolCalls || resp.toolCalls.length === 0) {
+            lastResponse = resp.content;
+            break;
+          }
+
+          // 执行工具调用
+          const toolOutputs: string[] = [];
+          for (const tc of resp.toolCalls) {
+            try {
+              const execResult = await this.tools.execute(tc.function.name, tc.function.arguments);
+              toolOutputs.push(`[${tc.function.name}]: ${typeof execResult === 'string' ? execResult : JSON.stringify(execResult)}`);
+            } catch (err) {
+              toolOutputs.push(`[${tc.function.name}] ERROR: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+
+          messages.push({ role: 'assistant', content: resp.content });
+          messages.push({ role: 'user', content: `Tool results:\n${toolOutputs.join('\n')}` });
+          lastResponse = resp.content;
+        } catch (err) {
+          this.logger.warn(`Workflow task LLM error in round ${round}: ${err instanceof Error ? err.message : String(err)}`);
+          break;
+        }
+      }
+      output = lastResponse;
+    } else {
+      // Fallback: 简单 complete 调用
+      output = await this.callLLMWithRetry(prompt, systemContext);
+    }
+
+    const durationMs = Date.now() - startTime;
+    const tgScore = totalTokens > 0 ? output.length / totalTokens : 1;
+
+    return { output, tokensUsed: totalTokens, tgScore };
   }
 
   /**
