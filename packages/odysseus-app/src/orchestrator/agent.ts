@@ -3402,6 +3402,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     if (!content.startsWith('[AUTO-CONTINUE]')) {
       this.autoContinueCount = 0;
       this.consecutiveFailures = 0;
+      // 重置效率追踪器（新对话轮次开始）
+      this.efficiencyTracker.reset();
 
       // Acknowledge resumed plans from previous session
       if (this.hasResumedPlans) {
