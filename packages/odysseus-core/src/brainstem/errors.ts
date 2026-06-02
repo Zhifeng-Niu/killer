@@ -1,0 +1,84 @@
+/**
+ * Structured Error Hierarchy
+ *
+ * Custom error classes for the Odysseus Agent Framework.
+ * Enables structured error handling, classification, and recovery.
+ */
+
+/**
+ * Base error class for all Killer framework errors
+ */
+export class OdysseusError extends Error {
+  public readonly code: string;
+  public readonly recoverable: boolean;
+  public readonly timestamp: number;
+
+  constructor(message: string, code: string, recoverable = true) {
+    super(message);
+    this.name = 'OdysseusError';
+    this.code = code;
+    this.recoverable = recoverable;
+    this.timestamp = Date.now();
+  }
+}
+
+/**
+ * Validation error — input failed validation
+ */
+export class ValidationError extends OdysseusError {
+  public readonly field: string;
+
+  constructor(message: string, field: string) {
+    super(message, 'VALIDATION_ERROR', true);
+    this.name = 'ValidationError';
+    this.field = field;
+  }
+}
+
+/**
+ * LLM provider error — API call failure
+ */
+export class LLMError extends OdysseusError {
+  public readonly provider: string;
+  public readonly statusCode?: number;
+
+  constructor(message: string, provider: string, statusCode?: number) {
+    super(message, 'LLM_ERROR', statusCode === undefined || statusCode < 500);
+    this.name = 'LLMError';
+    this.provider = provider;
+    this.statusCode = statusCode;
+  }
+}
+
+/**
+ * API error — HTTP endpoint error
+ */
+export class APIError extends OdysseusError {
+  public readonly statusCode: number;
+
+  constructor(message: string, statusCode: number) {
+    super(message, 'API_ERROR', statusCode < 500);
+    this.name = 'APIError';
+    this.statusCode = statusCode;
+  }
+}
+
+/**
+ * Tool execution error
+ */
+export class ToolError extends OdysseusError {
+  public readonly toolName: string;
+
+  constructor(message: string, toolName: string) {
+    super(message, 'TOOL_ERROR', true);
+    this.name = 'ToolError';
+    this.toolName = toolName;
+  }
+}
+
+/**
+ * Type guard: check if an error is a OdysseusError
+ */
+export function isOdysseusError(error: unknown): error is OdysseusError {
+  return error instanceof OdysseusError;
+}

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 /**
- * Bundle @killer/app into a self-contained CLI.
+ * Bundle @odysseus/app into a self-contained CLI.
  *
- * Inlines @killer/core so users only install one package.
+ * Inlines @odysseus/core so users only install one package.
  * better-sqlite3 is kept external (native addon — optional).
  */
 
@@ -14,7 +14,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, '..');
-const pkgRoot = join(projectRoot, 'packages', 'killer-app');
+const pkgRoot = join(projectRoot, 'packages', 'odysseus-app');
 
 const pkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8'));
 
@@ -33,7 +33,7 @@ const externalDeps = [
   'node:*',
 ];
 
-console.log('  Bundling @killer/app → dist/cli.js ...');
+console.log('  Bundling @odysseus/app → dist/cli.js ...');
 
 await build({
   entryPoints: [entry],
@@ -42,7 +42,7 @@ await build({
   target: 'node20',
   format: 'esm',
   outfile,
-  // @killer/core is NOT external — it gets inlined
+  // @odysseus/core is NOT external — it gets inlined
   external: externalDeps,
   banner: {
     js: '#!/usr/bin/env node',
@@ -63,9 +63,9 @@ await build({
   minify: false,
   // Resolve .js extensions for ESM
   resolveExtensions: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.json'],
-  // Alias @killer/core to its source so esbuild can resolve it
+  // Alias @odysseus/core to its source so esbuild can resolve it
   alias: {
-    '@killer/core': join(projectRoot, 'packages', 'killer-core', 'src', 'index.ts'),
+    '@odysseus/core': join(projectRoot, 'packages', 'odysseus-core', 'src', 'index.ts'),
   },
   logLevel: 'info',
 });

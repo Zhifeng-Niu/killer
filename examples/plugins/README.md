@@ -5,17 +5,17 @@ Plugins extend Killer Agent with custom tools and commands.
 ## Structure
 
 ```
-.killer/plugins/
+.odysseus/plugins/
 └── my-plugin/
     └── index.js    # Plugin entry point (must be compiled JS)
 ```
 
 ## Creating a Plugin
 
-A plugin implements the `KillerPlugin` interface:
+A plugin implements the `OdysseusPlugin` interface:
 
 ```typescript
-import type { PluginContext, KillerPlugin, PluginManifest } from '@killer/app';
+import type { PluginContext, OdysseusPlugin, PluginManifest } from '@odysseus/app';
 
 const manifest: PluginManifest = {
   name: 'my-plugin',
@@ -39,7 +39,7 @@ async function init(context: PluginContext): Promise<void> {
   });
 }
 
-const plugin: KillerPlugin = { manifest, init };
+const plugin: OdysseusPlugin = { manifest, init };
 export default plugin;
 ```
 
@@ -87,8 +87,8 @@ logger.error('Something failed', error);
 ## Loading
 
 Plugins are auto-loaded from:
-1. `.killer/plugins/` (project-level)
-2. `~/.killer/plugins/` (user-level)
+1. `.odysseus/plugins/` (project-level)
+2. `~/.odysseus/plugins/` (user-level)
 
 Or registered programmatically:
 

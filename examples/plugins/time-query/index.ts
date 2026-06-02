@@ -6,12 +6,12 @@
  * - A "/time" CLI command for quick time access
  *
  * Usage:
- *   1. Compile this file to JS: npx tsc examples/plugins/time-query/index.ts --outDir .killer/plugins/time-query --module ES2020 --moduleResolution node
- *   2. Or copy the compiled JS to .killer/plugins/time-query/index.js
+ *   1. Compile this file to JS: npx tsc examples/plugins/time-query/index.ts --outDir .odysseus/plugins/time-query --module ES2020 --moduleResolution node
+ *   2. Or copy the compiled JS to .odysseus/plugins/time-query/index.js
  *   3. The plugin loads automatically on agent boot
  */
 
-import type { PluginContext, KillerPlugin, PluginManifest } from '../../packages/killer-app/src/plugins/types.js';
+import type { PluginContext, OdysseusPlugin, PluginManifest } from '../../packages/odysseus-app/src/plugins/types.js';
 
 export const manifest: PluginManifest = {
   name: 'time-query',
@@ -75,6 +75,6 @@ function formatRelative(date: Date): string {
   return `${days[date.getDay()]} ${period}, ${date.toLocaleTimeString()}`;
 }
 
-// Export as KillerPlugin
-const timeQueryPlugin: KillerPlugin = { manifest, init };
+// Export as OdysseusPlugin
+const timeQueryPlugin: OdysseusPlugin = { manifest, init };
 export default timeQueryPlugin;

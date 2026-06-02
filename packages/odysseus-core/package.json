@@ -1,0 +1,49 @@
+{
+  "name": "@odysseus/core",
+  "version": "0.1.0",
+  "description": "Core kernel for Odysseus Agent — brainstem loop, hippocampus memory (Ebbinghaus forgetting), cortex evolution, synapse column communication, and tool execution",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "keywords": [
+    "agent",
+    "agi",
+    "brain",
+    "brainstem",
+    "cognitive",
+    "evolution",
+    "hippocampus",
+    "kernel",
+    "memory",
+    "tool-execution"
+  ],
+  "author": "Zhifeng Niu",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zhifeng-Niu/odysseus.git",
+    "directory": "packages/odysseus-core"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "vitest": "^1.0.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.9.0"
+  }
+}

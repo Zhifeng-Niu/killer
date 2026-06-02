@@ -15,12 +15,12 @@ function run(cmd, args, cwd) {
   return execFileSync(cmd, args, { stdio: 'inherit', cwd: join(__dirname, cwd) });
 }
 
-// Step 1: Build killer-core
-console.log('Building @killer/core...');
-run('npx', ['tsc'], 'packages/killer-core');
+// Step 1: Build odysseus-core
+console.log('Building @odysseus/core...');
+run('npx', ['tsc'], 'packages/odysseus-core');
 
-// Step 2: Build killer-app
-console.log('Building @killer/app...');
-run('pnpm', ['run', 'build'], 'packages/killer-app');
+// Step 2: Build odysseus-app
+console.log('Building @odysseus/app...');
+run('pnpm', ['run', 'build'], 'packages/odysseus-app');
 
 console.log('Build complete.');
