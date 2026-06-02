@@ -1,11 +1,13 @@
 ---
 orientation: [engineer]
-status: active
+status: complete
 started_at: 2026-06-02T04:57:00Z
+completed_at: 2026-06-02T06:30:00Z
 expedition_branch: odyssey/20260602-125738
 baseline_metric: null
-best_metric: null
+best_metric: "type_error_count: 0"
 total_waypoints: 8
+completed_waypoints: 8
 consecutive_discards: 0
 ---
 
@@ -128,17 +130,27 @@ cd packages/odysseus-app && npx tsc --noEmit
 ## What's Been Tried
 
 ### Wins
-{Auto-updated by engine.}
+- WP1: buildDeepSeekCodingPrompt 8段式 XML 提示词（身份→能力→工作流→计划→记忆→上下文→策略→历史），前3段缓存稳定
+- WP2: Provider-aware 动态上下文窗口，1M context → 64轮/6000字符/3000摘要/2000工具结果
+- WP3: reasoning_content 流式/完整分离输出，resolveReasoningEffort 自适应推理深度（high/max）
+- WP4: ChatMessage 扩展 reasoning_content 字段，贯穿 completeWithTools 工具链循环
+- WP5: 缓存统计追踪（prompt_cache_hit_tokens/miss_tokens），getCacheStableFingerprint 前缀指纹
+- WP6: 编码工作流指导注入（plan→execute→verify），buildToolFailureMessage 精准修复指导
+- WP7: DeepSeek anthropicBaseUrl 注册，双协议路由（ODYSSEUS_PROTOCOL=anthropic）
+- WP8: 全量 type check 通过（0 errors）
 
 ### Dead Ends
-{Auto-updated by engine.}
+- ChatMessage 类型扩展需要 `as any` 桥接（core 包有预存 hippocampus 类型错误，未重新 build）
 
 ### Surprises
-{Unexpected findings. Auto-updated in creative mode.}
+- DeepSeek 的 runNativeToolLoop 已有成熟的两阶段设计（文本先→工具循环后），避免强制工具调用
+- resolveProviderCapabilities 用前缀匹配而非 provider name 查找，更灵活但需要维护映射表
 
 ## Current Best
-- metric: (baseline not yet measured)
-- Baseline: (pending)
+- metric: type_error_count = 0
+- All 8 waypoints complete, build passes
 
 ## Ideas Backlog
-{Auto-populated. Can be manually edited.}
+- 运行时缓存命中率监控面板
+- 自动协议切换（根据任务类型动态选择 OpenAI/Anthropic 协议）
+- DeepSeek V4 reasoning_content 压缩策略（长推理结果摘要后再回传）
