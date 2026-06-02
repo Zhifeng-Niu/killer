@@ -3866,11 +3866,35 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     if (result.cacheHitTokens != null) {
       this.cacheStats.hits += result.cacheHitTokens;
       this.cacheStats.misses += result.cacheMissTokens ?? 0;
-      const hitRate = this.cacheStats.hits + this.cacheStats.misses > 0
-        ? ((this.cacheStats.hits / (this.cacheStats.hits + this.cacheStats.misses)) * 100).toFixed(0)
-        : '0';
-      this.logger.debug(`Cache stats: ${hitRate}% hit rate (${result.cacheHitTokens} hit, ${result.cacheMissTokens ?? 0} miss this call)`);
+      const total = this.cacheStats.hits + this.cacheStats.misses;
+      const hitRate = total > 0 ? this.cacheStats.hits / total : 0;
+      this.logger.debug(`Cache stats: ${(hitRate * 100).toFixed(0)}% hit rate (${result.cacheHitTokens} hit, ${result.cacheMissTokens ?? 0} miss this call)`);
+      // 缓存感知上下文预算调整（DeepSeek 50x 缓存折扣优化）
+      if (total > 0) {
+        this.contextWindow.updateCacheBudget(hitRate);
+      }
     }
+  }
+
+  /**
+   * 根据 provider 能力和工具类型动态计算结果截断限制
+   *
+   * DeepSeek 1M 上下文：编码工具（build/test/read）完整保留，其他放宽到 32K
+   * 短上下文 provider：保守截断 8000 字符
+   */
+  private getToolResultLimit(toolName: string): number {
+    const caps = this.resolveProviderCapabilities();
+    const isLongContext = caps && caps.maxContext >= 500_000;
+    const isCodingTool = /build|test|compile|read|exec|shell|self_read|file/i.test(toolName);
+
+    if (isLongContext) {
+      // 编码工具：完整保留（DeepSeek 1M 上下文足够）
+      if (isCodingTool) return 64_000;
+      // 其他工具：放宽到 32K
+      return 32_000;
+    }
+    // 短上下文 provider：保守限制
+    return 8_000;
   }
 
   /**
@@ -4197,8 +4221,10 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
             ? (typeof batchResult.result.data === 'string' ? batchResult.result.data : JSON.stringify(batchResult.result.data))
             : this.buildToolFailureMessage(toolName, batchResult.result.error ?? 'unknown', round);
 
-          const truncated = resultStr.length > 8000
-            ? resultStr.slice(0, 8000) + '\n...[truncated]'
+          // Provider-aware 截断：长上下文 provider 允许更多工具结果
+          const maxResultChars = this.getToolResultLimit(toolName);
+          const truncated = resultStr.length > maxResultChars
+            ? resultStr.slice(0, maxResultChars) + '\n...[truncated]'
             : resultStr;
 
           messages.push({
@@ -4848,9 +4874,10 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
   }
 
   /** 从模型名推断 provider capabilities */
+  private lastResolvedModel: string | null = null;
+
   private resolveProviderCapabilities() {
     const model = this.config.llm.getModel();
-    // 从模型名推断 provider
     const providerMap: Record<string, string> = {
       'deepseek-': 'deepseek',
       'MiniMax': 'minimax', 'MiniMax-': 'minimax',
@@ -4860,9 +4887,18 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     };
     for (const [prefix, provider] of Object.entries(providerMap)) {
       if (model.startsWith(prefix) || model.includes(prefix)) {
+        if (this.lastResolvedModel !== null && this.lastResolvedModel !== model) {
+          const caps = getProviderCapabilities(provider);
+          if (caps) {
+            this.contextWindow.setProviderCapabilities(caps);
+            this.logger.info(`Model changed: ${this.lastResolvedModel} → ${model}, recalibrated context`);
+          }
+        }
+        this.lastResolvedModel = model;
         return getProviderCapabilities(provider);
       }
     }
+    this.lastResolvedModel = model;
     return undefined;
   }
 

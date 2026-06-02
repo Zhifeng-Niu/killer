@@ -119,6 +119,13 @@ export class ContextWindowManager {
   private static readonly MAX_CONSECUTIVE_FAILURES = 3;
   private static readonly CIRCUIT_RESET_MS = 60_000; // 1 分钟后重试
 
+  // 缓存感知预算：追踪最近 5 次调用的缓存命中率
+  private cacheHitHistory: number[] = [];
+  private static readonly CACHE_HISTORY_SIZE = 5;
+  private static readonly CACHE_HIGH_THRESHOLD = 0.8;
+  // 基础配置（provider 设定的，缓存调整基于此）
+  private baseConfig: ContextWindowConfig | null = null;
+
   constructor(config?: Partial<ContextWindowConfig>) {
     this.config = { ...DEFAULT_CONTEXT_CONFIG, ...config };
     this.truncator = new SmartContextTruncator({
@@ -152,18 +159,20 @@ export class ContextWindowManager {
     const historyBudget = Math.floor(estimatedChars * 0.6);
 
     if (caps.maxContext >= 500_000) {
-      // 长上下文 provider（DeepSeek V4, GLM-5, Gemini）
-      this.config = {
+      // 长上下文 provider（DeepSeek V4, GLM-5, Gemini）— 激进分配
+      const longConfig: ContextWindowConfig = {
         ...this.config,
-        maxFullTurns: Math.min(Math.floor(historyBudget / 1000), 64),
-        maxMessageChars: Math.min(6000, Math.floor(promptBudget / 8)),
-        maxSummaryChars: 3000,
-        maxFacts: 50,
-        maxToolResultChars: 2000,
+        maxFullTurns: Math.min(Math.floor(historyBudget / 500), 128),
+        maxMessageChars: Math.min(12000, Math.floor(promptBudget / 4)),
+        maxSummaryChars: 6000,
+        maxFacts: 80,
+        maxToolResultChars: 8000,
       };
+      this.config = longConfig;
+      this.baseConfig = { ...longConfig };
     } else if (caps.maxContext >= 128_000) {
       // 中等上下文 provider
-      this.config = {
+      const midConfig: ContextWindowConfig = {
         ...this.config,
         maxFullTurns: 20,
         maxMessageChars: 4000,
@@ -171,8 +180,40 @@ export class ContextWindowManager {
         maxFacts: 40,
         maxToolResultChars: 1200,
       };
+      this.config = midConfig;
+      this.baseConfig = { ...midConfig };
     }
     // 短上下文 provider 使用默认值（不调整）
+  }
+
+  /**
+   * 缓存感知预算调整
+   *
+   * DeepSeek 缓存命中率 >80% 时放宽截断（缓存命中成本仅 1/50）。
+   * 调整幅度为基础值的 1.5x。低命中率时回归 baseConfig。
+   */
+  updateCacheBudget(hitRate: number): void {
+    this.cacheHitHistory.push(hitRate);
+    if (this.cacheHitHistory.length > ContextWindowManager.CACHE_HISTORY_SIZE) {
+      this.cacheHitHistory.shift();
+    }
+
+    if (!this.baseConfig) return;
+
+    const avgHitRate = this.cacheHitHistory.reduce((a, b) => a + b, 0) / this.cacheHitHistory.length;
+
+    if (avgHitRate >= ContextWindowManager.CACHE_HIGH_THRESHOLD) {
+      // 高缓存命中：放宽预算 1.5x
+      this.config = {
+        ...this.config,
+        maxFullTurns: Math.min(Math.floor(this.baseConfig.maxFullTurns * 1.5), 192),
+        maxMessageChars: Math.min(Math.floor(this.baseConfig.maxMessageChars * 1.5), 18000),
+        maxToolResultChars: Math.min(Math.floor(this.baseConfig.maxToolResultChars * 1.5), 16000),
+      };
+    } else {
+      // 低缓存命中：回归基础预算
+      this.config = { ...this.baseConfig };
+    }
   }
 
   /**
