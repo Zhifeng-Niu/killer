@@ -130,6 +130,7 @@ import { Logger } from '../log/index.js';
 import { PeriodicMemoryGuard, trimArray, trimAgentState } from './memory-guard.js';
 import { TokenEfficiencyTracker, type LLMCallRecord, type ToolCallRecord, type EfficiencyReport } from './token-efficiency.js';
 import { WorkflowEngine, type TaskExecutor, type WorkflowDefinition, type WorkflowResult } from './workflow-engine.js';
+import { WorkflowStore } from './workflow-store.js';
 
 /**
  * 生成唯一 ID
@@ -201,6 +202,7 @@ export class OdysseusAgent implements IDriveSource {
   readonly middleware: MiddlewarePipeline = new MiddlewarePipeline();
   readonly contextWindow: ContextWindowManager = new ContextWindowManager();
   private workflowEngine!: WorkflowEngine;
+  private workflowStore!: WorkflowStore;
 
   // 对话上下文（工作记忆窗口）— 无硬上限，由 ContextWindowManager 智能裁剪
   private conversationHistory: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }> = [];
@@ -1259,6 +1261,7 @@ Examples:
       initConfigDir: () => initOdysseusDir(),
       shutdown: () => this.shutdown(),
       executeWorkflow: (def) => this.executeWorkflow(def),
+      getWorkflowStore: () => this.workflowStore,
     });
   }
 
@@ -1518,6 +1521,7 @@ Examples:
       { executeTask: (prompt, options) => this.executeWorkflowTask(prompt, options) },
       (event, payload) => { this.hooks.emit(event as import('./hooks.js').LifecycleEvent, payload); },
     );
+    this.workflowStore = new WorkflowStore(this.sessionDir);
   }
 
   private wireModules(): void {
@@ -4450,7 +4454,24 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     await this.hooks.emit('cycle:start', { input: `[workflow] ${workflow.name}` });
     const result = await this.workflowEngine.execute(workflow);
     this.logger.info(`Workflow "${workflow.name}" completed: ${result.success ? 'success' : 'partial'}, ${result.totalDurationMs}ms`);
+
+    // 自动保存成功的 workflow
+    if (result.success) {
+      try {
+        this.workflowStore.save(workflow, result);
+      } catch {
+        // 持久化失败不影响结果返回
+      }
+    }
+
     return result;
+  }
+
+  /**
+   * 获取 WorkflowStore（供命令使用）
+   */
+  getWorkflowStore(): WorkflowStore {
+    return this.workflowStore;
   }
 
   /**

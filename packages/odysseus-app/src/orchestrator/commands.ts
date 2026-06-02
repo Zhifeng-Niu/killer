@@ -71,6 +71,7 @@ interface CommandHandlerDeps {
   initConfigDir?: () => string;
   shutdown?: () => Promise<void>;
   executeWorkflow?: (definition: import('./workflow-engine.js').WorkflowDefinition) => Promise<import('./workflow-engine.js').WorkflowResult>;
+  getWorkflowStore?: () => import('./workflow-store.js').WorkflowStore;
 }
 
 /**
@@ -130,6 +131,7 @@ export class CommandHandler {
       initConfigDir: deps.initConfigDir,
       shutdown: deps.shutdown,
       executeWorkflow: deps.executeWorkflow,
+      getWorkflowStore: deps.getWorkflowStore,
     };
   }
 
@@ -947,9 +949,12 @@ export class CommandHandler {
     if (!subCommand || subCommand === 'help') {
       this.outputManager.sendResult(
         'Usage:\n' +
-        '  /workflow run <JSON>  — Execute a workflow definition\n' +
-        '  /workflow example     — Show an example workflow\n' +
-        '  /workflow help        — Show this help'
+        '  /workflow run <name|JSON>  — Execute a saved workflow or JSON definition\n' +
+        '  /workflow list             — List saved workflows\n' +
+        '  /workflow save <JSON>      — Save a workflow definition\n' +
+        '  /workflow delete <name>    — Delete a saved workflow\n' +
+        '  /workflow example          — Show an example workflow\n' +
+        '  /workflow help             — Show this help'
       );
       return;
     }
@@ -957,13 +962,14 @@ export class CommandHandler {
     if (subCommand === 'example') {
       const example = {
         name: 'code-review-pipeline',
+        description: 'Parallel security + performance review with synthesis',
         phases: [
           { name: 'analyze', tasks: [
             { id: 'security', prompt: 'Review code for security vulnerabilities' },
             { id: 'performance', prompt: 'Review code for performance issues' },
           ]},
-          { name: 'report', tasks: [
-            { id: 'summary', prompt: 'Combine all review findings into a prioritized report', adversarialReview: true },
+          { name: 'synthesize', tasks: [
+            { id: 'summary', prompt: 'Based on {{last}}, combine all review findings into a prioritized report', adversarialReview: true },
           ]},
         ],
       };
@@ -971,14 +977,89 @@ export class CommandHandler {
       return;
     }
 
-    if (subCommand === 'run') {
+    if (subCommand === 'list') {
+      const store = this.ext.getWorkflowStore?.();
+      if (!store) {
+        this.outputManager.sendResult('Workflow store not available.');
+        return;
+      }
+      const workflows = store.list();
+      if (workflows.length === 0) {
+        this.outputManager.sendResult('No saved workflows. Use /workflow save <JSON> to create one.');
+        return;
+      }
+      const lines = workflows.map(w =>
+        `  ${w.name}${w.description ? ` — ${w.description}` : ''} (saved: ${w.savedAt.slice(0, 10)}${w.lastRun ? `, last run: ${w.lastRun.slice(0, 10)}` : ''})`
+      );
+      this.outputManager.sendResult(`Saved workflows (${workflows.length}):\n${lines.join('\n')}`);
+      return;
+    }
+
+    if (subCommand === 'save') {
+      const store = this.ext.getWorkflowStore?.();
+      if (!store) {
+        this.outputManager.sendResult('Workflow store not available.');
+        return;
+      }
       const jsonStr = args?.slice(1).join(' ');
       if (!jsonStr) {
-        this.outputManager.sendResult('Usage: /workflow run <JSON workflow definition>');
+        this.outputManager.sendResult('Usage: /workflow save <JSON workflow definition>');
         return;
       }
       try {
         const definition = JSON.parse(jsonStr);
+        const saved = store.save(definition);
+        this.outputManager.sendResult(`Workflow "${saved.name}" saved successfully.`);
+      } catch (err) {
+        this.outputManager.sendResult(`Save error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+
+    if (subCommand === 'delete') {
+      const store = this.ext.getWorkflowStore?.();
+      if (!store) {
+        this.outputManager.sendResult('Workflow store not available.');
+        return;
+      }
+      const name = args?.[1];
+      if (!name) {
+        this.outputManager.sendResult('Usage: /workflow delete <name>');
+        return;
+      }
+      const deleted = store.delete(name);
+      this.outputManager.sendResult(deleted ? `Workflow "${name}" deleted.` : `Workflow "${name}" not found.`);
+      return;
+    }
+
+    if (subCommand === 'run') {
+      const runArg = args?.slice(1).join(' ');
+      if (!runArg) {
+        this.outputManager.sendResult('Usage: /workflow run <name|JSON>');
+        return;
+      }
+
+      let definition;
+      // 先尝试按名称加载已保存的 workflow
+      const store = this.ext.getWorkflowStore?.();
+      if (store) {
+        const saved = store.load(runArg);
+        if (saved) {
+          definition = saved.definition;
+        }
+      }
+
+      // 如果不是已保存的名称，尝试解析为 JSON
+      if (!definition) {
+        try {
+          definition = JSON.parse(runArg);
+        } catch {
+          this.outputManager.sendResult(`Workflow "${runArg}" not found and not valid JSON.`);
+          return;
+        }
+      }
+
+      try {
         this.outputManager.sendResult(`Starting workflow "${definition.name || 'unnamed'}"...`);
         const result = await this.ext.executeWorkflow(definition);
         this.outputManager.sendResult(
