@@ -1147,6 +1147,10 @@ Examples:
     // 上下文窗口绑定 LLM 用于智能摘要
     this.contextWindow.bindLLM(this.config.llm);
 
+    // 根据 provider 能力动态调整上下文预算
+    const caps = this.resolveProviderCapabilities();
+    if (caps) this.contextWindow.setProviderCapabilities(caps);
+
     // 感官路由器
     this.sensoryRouter = new SensoryRouter();
     this.cliChannel = new CLIChannel();

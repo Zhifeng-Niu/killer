@@ -16,6 +16,7 @@ import type { LLMProvider } from '@odysseus/core';
 import { scoreTurnImportance } from './background-tasks.js';
 import { SmartContextTruncator, type SmartTruncatorConfig } from './smart-truncator.js';
 import { RecallableMemoryStore, type RecallableStoreConfig } from './recallable-store.js';
+import type { ProviderCapabilities } from '../llm/openai-compatible-provider.js';
 
 /**
  * 对话消息
@@ -134,6 +135,44 @@ export class ContextWindowManager {
    */
   bindLLM(llm: LLMProvider): void {
     this.llm = llm;
+  }
+
+  /**
+   * 根据 provider 能力动态调整上下文预算
+   *
+   * DeepSeek V4 有 1M token 上下文，默认的 24K 字符限制过于保守。
+   * 按 ~4 chars/token 估算，1M tokens ≈ 4M chars。
+   * 分配策略：系统 prompt 20%，对话历史 60%，工具结果 20%。
+   */
+  setProviderCapabilities(caps: ProviderCapabilities): void {
+    const estimatedChars = caps.maxContext * 3.5;
+    // 系统提示预算（20%）
+    const promptBudget = Math.floor(estimatedChars * 0.2);
+    // 对话历史预算（60%）
+    const historyBudget = Math.floor(estimatedChars * 0.6);
+
+    if (caps.maxContext >= 500_000) {
+      // 长上下文 provider（DeepSeek V4, GLM-5, Gemini）
+      this.config = {
+        ...this.config,
+        maxFullTurns: Math.min(Math.floor(historyBudget / 1000), 64),
+        maxMessageChars: Math.min(6000, Math.floor(promptBudget / 8)),
+        maxSummaryChars: 3000,
+        maxFacts: 50,
+        maxToolResultChars: 2000,
+      };
+    } else if (caps.maxContext >= 128_000) {
+      // 中等上下文 provider
+      this.config = {
+        ...this.config,
+        maxFullTurns: 20,
+        maxMessageChars: 4000,
+        maxSummaryChars: 2000,
+        maxFacts: 40,
+        maxToolResultChars: 1200,
+      };
+    }
+    // 短上下文 provider 使用默认值（不调整）
   }
 
   /**
