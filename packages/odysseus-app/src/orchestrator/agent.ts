@@ -1229,6 +1229,7 @@ Examples:
       denyToolAction: (name) => this.toolPermissions.deny(name),
       confirmToolAction: (name) => this.toolPermissions.deny(name),
       getHealthReport: () => MetricsCollector.getInstance().healthCheck(),
+      getEfficiencyReport: () => this.efficiencyTracker.getRecordCount() > 0 ? this.efficiencyTracker.generateReport() : null,
       getMetricsSnapshot: () => MetricsCollector.getInstance().snapshot(),
       getNarrative: () => this.hippocampus.getNarrative(),
       getPredictions: () => this.persona.getPredictions(),
