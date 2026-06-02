@@ -3866,10 +3866,13 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     if (result.cacheHitTokens != null) {
       this.cacheStats.hits += result.cacheHitTokens;
       this.cacheStats.misses += result.cacheMissTokens ?? 0;
-      const hitRate = this.cacheStats.hits + this.cacheStats.misses > 0
-        ? ((this.cacheStats.hits / (this.cacheStats.hits + this.cacheStats.misses)) * 100).toFixed(0)
-        : '0';
-      this.logger.debug(`Cache stats: ${hitRate}% hit rate (${result.cacheHitTokens} hit, ${result.cacheMissTokens ?? 0} miss this call)`);
+      const total = this.cacheStats.hits + this.cacheStats.misses;
+      const hitRate = total > 0 ? this.cacheStats.hits / total : 0;
+      this.logger.debug(`Cache stats: ${(hitRate * 100).toFixed(0)}% hit rate (${result.cacheHitTokens} hit, ${result.cacheMissTokens ?? 0} miss this call)`);
+      // 缓存感知上下文预算调整（DeepSeek 50x 缓存折扣优化）
+      if (total > 0) {
+        this.contextWindow.updateCacheBudget(hitRate);
+      }
     }
   }
 
