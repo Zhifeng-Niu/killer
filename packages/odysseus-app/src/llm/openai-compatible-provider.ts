@@ -117,6 +117,8 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     description: 'DeepSeek',
     keyPrefix: 'sk-',
     helpUrl: 'https://platform.deepseek.com/api_keys',
+    anthropicBaseUrl: 'https://api.deepseek.com/anthropic/v1/messages',
+    anthropicModels: ['deepseek-v4-flash', 'deepseek-v4-pro'],
     capabilities: {
       maxContext: 1_000_000,
       maxOutput: 384_000,
@@ -125,7 +127,7 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
       streaming: true,
       vision: false,
       jsonMode: true,
-      features: ['thinking-mode', 'reasoning-effort', 'strict-tool-calling', 'ultra-long-context', 'cache-discount'],
+      features: ['thinking-mode', 'reasoning-effort', 'strict-tool-calling', 'ultra-long-context', 'cache-discount', 'anthropic-compatible'],
     },
   },
   qwen: {
