@@ -1,43 +1,119 @@
 ---
 orientation: [engineer]
 status: active
-started_at: 2026-05-28T04:00:00Z
-expedition_branch: odyssey/20260528-112859
-baseline_metric: 2465
-best_metric: 2465
-total_waypoints: 3
+started_at: 2026-06-02T04:57:00Z
+expedition_branch: odyssey/20260602-125738
+baseline_metric: null
+best_metric: null
+total_waypoints: 8
 consecutive_discards: 0
 ---
 
-# Mission: AGI 自主规划引擎 — 从用户意图到自动执行
+# Mission: DeepSeek V4 全栈优化 — 打造完美 Coding Agent
 
 ## Goal
-让 Agent 能自动识别多步骤任务、自主创建结构化计划并开始执行，无需用户手动触发 /plan。这是从"工具驱动"到"意图驱动"的关键跨越。
+从提示词、长流程工作流、编排、上下文管理，全面为 DeepSeek-v4-flash/v4-pro 做优化适配。
+使 Odysseus 在 DeepSeek 后端下成为顶级的自主 Coding Agent。
 
 ## Context
-Project type: typescript. Auto-detected guard: npx tsc --noEmit 2>&1 | wc -l.
+DeepSeek V4 系列模型特性（来自官方 API 文档 2026-06-02）：
+- 1M 上下文窗口，最大 384K 输出
+- 原生 thinking mode（reasoning_content 分离）
+- reasoning_effort: high/max（自适应推理深度）
+- 原生 function calling（128 工具上限）
+- 缓存命中价仅 ¥0.02/M tokens（未命中 ¥1），应最大化缓存利用率
+- 同时支持 OpenAI 和 Anthropic 协议
+- DSML 格式工具调用已实现（response-processor.ts）
 
-基于已完成的自住执行引擎（WP100-WP7），agent 已能通过 checkAndAutoContinue 循环自动执行 plan steps。但当前缺少自动 plan 创建能力——用户说"帮我调研 X 并写个报告"，agent 需要手动 /plan 才能分解为步骤。
-
-关键 gap：processInput → processInputCore 流程中没有"自动检测复杂任务 → 创建 plan → 触发 auto-continue"的路径。
+当前代码已实现基础 DeepSeek 适配（provider 注册、thinking mode、DSML 解析），
+但缺少针对 Coding Agent 场景的深度优化。
 
 ## Scope
 
 ### Modifiable
-- packages/odysseus-app/src/orchestrator/ (agent, prompt-builder, response-processor)
-- packages/odysseus-core/src/prefrontal/ (planner, plan-executor, executor)
-- packages/odysseus-app/src/__tests__/
+- packages/odysseus-app/src/llm/ (provider 层)
+- packages/odysseus-app/src/orchestrator/ (编排、提示词、上下文)
+- packages/odysseus-core/src/brainstem/ (工具系统)
+- packages/odysseus-app/src/__tests__/ (测试)
 
 ### Read-Only (PROTECTED)
 - packages/odysseus-app/src/tui/ (TUI 组件不改动)
 - packages/odysseus-app/src/api/ (API 端点不改动)
+- packages/odysseus-app/src/persona/ (Persona 引擎不改动)
+
+## Waypoints
+
+### WP1: DeepSeek-native 提示词策略
+**文件**: `src/orchestrator/prompt-builder.ts`
+为 DeepSeek V4 设计专用提示词策略：
+- 添加 `buildDeepSeekCodingPrompt()` 函数，针对 coding 场景精简提示词
+- 将 40+ 个分散 section 合并为结构化的 8 段式 prompt（身份→能力→工具→计划→记忆→上下文→策略→历史）
+- 添加 DeepSeek 特定的思维链引导指令（"先分析再执行"模式）
+- 基于 provider capabilities 动态选择 prompt 策略
+
+### WP2: 动态上下文窗口管理
+**文件**: `src/orchestrator/context.ts`, `src/orchestrator/prompt-builder.ts`
+突破固定 24K 限制，实现 provider-aware 上下文管理：
+- 从 ProviderCapabilities.maxContext 动态计算可用 prompt 空间
+- DeepSeek 1M 上下文 → 允许 80K+ 系统 prompt
+- 实现缓存友好型 prompt 结构：固定前缀 + 变量后缀（最大化 DeepSeek 缓存命中率）
+- 历史消息按 token 计量而非字符数
+
+### WP3: Thinking Mode 深度集成
+**文件**: `src/llm/openai-compatible-provider.ts`, `src/orchestrator/agent.ts`
+完善 reasoning_content 的全生命周期管理：
+- 流式输出分离：先 yield reasoning_content（显示为思考过程），再 yield content
+- 多轮对话中正确传递 reasoning_content（工具调用场景必须回传）
+- 自适应 reasoning_effort：简单问答用 high，复杂 coding/debugging 用 max
+- 非侵入式思考内容展示（不混入正式响应）
+
+### WP4: 原生 Function Calling 优先路由
+**文件**: `src/orchestrator/agent.ts`, `src/orchestrator/response-processor.ts`
+DeepSeek V4 支持原生 function calling，应优先使用：
+- 检测 provider 支持 native tool calling 时，跳过 regex 文本解析
+- 将 `completeWithTools()` 的结果直接传入工具执行管线
+- 保留 DSML 和文本格式作为 fallback
+- 工具调用结果格式化为标准的 tool message
+
+### WP5: 缓存优化策略
+**文件**: `src/llm/openai-compatible-provider.ts`, `src/orchestrator/prompt-builder.ts`
+利用 DeepSeek 的 50 倍缓存折扣：
+- 将系统 prompt 分为"固定前缀"（身份、工具定义、能力）和"变量后缀"（对话历史、情感状态）
+- 固定前缀保持不变以命中缓存，变量后缀追加在末尾
+- 工具定义独立缓存（不随每轮变化）
+- 实现 prompt fingerprint 校验（检测缓存命中率）
+
+### WP6: 长流程 Coding 工作流编排
+**文件**: `src/orchestrator/agent.ts`
+优化 DeepSeek 在 coding agent 场景下的多步骤执行：
+- 实现"规划-执行-验证"三阶段 coding workflow
+- 工具链编排：read → analyze → modify → build → test 循环
+- 错误恢复：build 失败自动回退到 read+fix 循环
+- 上下文压缩：长工具链中间结果智能摘要，保持核心上下文不丢失
+
+### WP7: 双协议智能路由
+**文件**: `src/llm/factory.ts`, `src/llm/openai-compatible-provider.ts`
+利用 DeepSeek 的 Anthropic 兼容端点：
+- 注册 DeepSeek 的 anthropicBaseUrl: `https://api.deepseek.com/anthropic`
+- 工具密集型任务自动路由到 Anthropic 协议（更好的 tool calling）
+- 简单对话保持 OpenAI 协议
+- 添加 DeepSeek 模型名映射规则
+
+### WP8: 集成验证 + Provider Profile 更新
+**文件**: 所有改动文件 + 测试
+确保所有优化协同工作：
+- 更新 DeepSeek provider preset（添加 anthropicBaseUrl、更新模型列表）
+- 端到端测试：DeepSeek V4 全流程（thinking → tool call → multi-turn → cache）
+- 验证 type check 通过
+- 更新 CLAUDE.md 文档
 
 ## Metrics
 
 | Name | Unit | Measure Command | Direction |
 |------|------|----------------|-----------|
 | type_error_count | - | cd packages/odysseus-app && npx tsc --noEmit 2>&1 \| wc -l | lower |
-| test_count | - | npx vitest run 2>&1 \| grep "Tests" | higher |
+| prompt_efficiency | % | (cached_prefix_chars / total_prompt_chars) * 100 | higher |
+| tool_call_accuracy | - | test suite | higher |
 
 ## Guard
 ```bash
@@ -45,34 +121,24 @@ cd packages/odysseus-app && npx tsc --noEmit
 ```
 
 ## Termination
-- Task complete (auto-plan creation fully functional end-to-end)
+- Task complete (all waypoints done AND build passes AND tests pass)
 - OR stuck (10 consecutive discards)
 - OR user interrupt (/odyssey-cancel)
-- No iteration limit — runs until done
 
 ## What's Been Tried
 
 ### Wins
-1. **WP8 — Complex intent detection** (detectComplexIntent): 4-category scoring to auto-detect multi-step tasks
-2. **WP9 — Intelligent step decomposition**: LLM prompt produces tool-oriented steps with [parallel] markers; Chinese NLP fallback; parallel dependency inference
-3. **WP10 — Plan quality scoring** (scorePlan): 5-signal evaluation; plan.created consciousness event with quality score
+{Auto-updated by engine.}
 
 ### Dead Ends
-1. **WP8 — Complex intent detection** (detectComplexIntent): 4-category scoring to auto-detect multi-step tasks
-2. **WP9 — Intelligent step decomposition**: LLM prompt produces tool-oriented steps with [parallel] markers; Chinese NLP fallback; parallel dependency inference
-3. **WP10 — Plan quality scoring** (scorePlan): 5-signal evaluation; plan.created consciousness event with quality score
+{Auto-updated by engine.}
 
 ### Surprises
 {Unexpected findings. Auto-updated in creative mode.}
 
 ## Current Best
-- metric: 0 type errors, 2465 tests (747 core + 1718 app)
-- 3 waypoints: auto-plan creation pipeline complete
-- Complex intent detection, LLM step decomposition, plan quality scoring
+- metric: (baseline not yet measured)
+- Baseline: (pending)
 
 ## Ideas Backlog
-1. **意图复杂度检测** — 在 processInputCore 中检测用户输入是否包含多步骤任务信号（并列动作、时间序列、因果链）
-2. **自动 Plan 创建** — 复杂意图自动触发 goal 提交 → plan 生成，无需 /plan 命令
-3. **智能 Step 分解** — 用 LLM 将目标分解为具体、可执行的 steps，带依赖关系
-4. **执行前确认（可选）** — 显示 plan 摘要让用户确认或修改，然后自动开始执行
-5. **Plan 质量评分** — 评估 plan 的完整性、步骤粒度、依赖正确性
+{Auto-populated. Can be manually edited.}
