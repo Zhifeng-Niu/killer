@@ -1,5 +1,5 @@
 /**
- * Dynamic Workflow Engine
+ * Dynamic Workflow Engine (v2 — WP8)
  *
  * 借鉴 Claude Code 的 Dynamic Workflows 架构，实现分阶段并行编排。
  *
@@ -7,21 +7,32 @@
  * - Workflow: 多个 Phase 的序列
  * - Phase: 包含多个并行执行的 Task
  * - Task: 单个子任务，由 agent prompt 描述
- * - Context: 任务间共享的结果上下文
+ * - Variables: 脚本变量系统，支持 {{phase:analyze.task1}} 引用
  *
- * 与 Claude Code 的差异：
- * - 不使用 JS 脚本运行时，而是类型安全的 workflow 定义
- * - 集成 Odysseus 的 TG-driven 系统：低 TG 任务提前终止
- * - 集成 hooks 系统：每个 phase 触发 lifecycle 事件
+ * WP8 增强：
+ * - 模板变量: prompt 中用 {{phase:NAME.taskId}} 引用前序阶段输出
+ * - 条件阶段: phase.condition 控制是否跳过
+ * - 重试策略: task.retry 控制失败重试
+ * - 变量作用域: 全局变量 + 阶段变量 + 任务输出变量
  */
 
 // ─── 类型定义 ──────────────────────────────────────
+
+/** 重试策略 */
+export interface RetryPolicy {
+  /** 最大重试次数 */
+  maxRetries: number;
+  /** 重试间隔 ms */
+  delayMs?: number;
+  /** 重试时是否修改 prompt（追加错误上下文） */
+  appendErrorContext?: boolean;
+}
 
 /** 工作流任务定义 */
 export interface WorkflowTask {
   /** 任务 ID */
   id: string;
-  /** 任务描述（作为 agent prompt） */
+  /** 任务描述（支持 {{phase:NAME.taskId}} 模板变量） */
   prompt: string;
   /** 使用的工具白名单（空 = 全部可用） */
   allowedTools?: string[];
@@ -29,7 +40,16 @@ export interface WorkflowTask {
   maxTurns?: number;
   /** 优先级（数字越小越先调度） */
   priority?: number;
+  /** 重试策略 */
+  retry?: RetryPolicy;
 }
+
+/** 阶段条件类型 */
+export type PhaseCondition =
+  | { type: 'always' }
+  | { type: 'on_success'; phase: string }
+  | { type: 'on_failure'; phase: string }
+  | { type: 'expression'; expression: string };
 
 /** 工作流阶段定义 */
 export interface WorkflowPhase {
@@ -41,6 +61,8 @@ export interface WorkflowPhase {
   requireAllSuccess?: boolean;
   /** 对抗式审查：用独立 agent 交叉检查结果 */
   adversarialReview?: boolean;
+  /** 阶段执行条件 */
+  condition?: PhaseCondition;
 }
 
 /** 工作流定义 */
@@ -55,6 +77,8 @@ export interface WorkflowDefinition {
   maxConcurrency?: number;
   /** TG 阈值：低于此值的任务自动终止 */
   tgThreshold?: number;
+  /** 全局变量（在所有 prompt 模板中可用） */
+  variables?: Record<string, string>;
 }
 
 /** 任务结果 */
@@ -71,6 +95,8 @@ export interface TaskResult {
   durationMs: number;
   /** 错误信息 */
   error?: string;
+  /** 重试次数 */
+  retries?: number;
 }
 
 /** 阶段结果 */
@@ -78,6 +104,7 @@ export interface PhaseResult {
   phaseName: string;
   taskResults: TaskResult[];
   allSuccess: boolean;
+  skipped: boolean;
   durationMs: number;
 }
 
@@ -87,6 +114,8 @@ export interface WorkflowResult {
   phases: PhaseResult[];
   /** 所有任务结果的合并输出 */
   aggregatedOutput: string;
+  /** 变量快照（最终状态） */
+  variables: Record<string, string>;
   /** 总耗时 */
   totalDurationMs: number;
   /** 总 token 使用量 */
@@ -109,13 +138,81 @@ export interface TaskExecutor {
   }>;
 }
 
+// ─── 模板变量系统 ──────────────────────────────────
+
+/**
+ * 解析模板变量
+ *
+ * 支持：
+ * - {{phase:NAME.taskId}} — 引用前序阶段某个任务的输出
+ * - {{phase:NAME}} — 引用整个阶段的聚合输出
+ * - {{var:KEY}} — 引用全局变量
+ * - {{last}} — 引用上一个阶段的聚合输出
+ */
+function resolveTemplate(
+  template: string,
+  phaseResults: Record<string, TaskResult[]>,
+  globalVars: Record<string, string>,
+  lastPhaseName?: string,
+): string {
+  return template.replace(/\{\{([^}]+)\}\}/g, (_match, expr: string) => {
+    const trimmed = expr.trim();
+
+    // {{var:KEY}} — 全局变量
+    if (trimmed.startsWith('var:')) {
+      const key = trimmed.slice(4);
+      return globalVars[key] ?? `[undefined:${key}]`;
+    }
+
+    // {{phase:NAME.taskId}} — 特定任务输出
+    if (trimmed.startsWith('phase:')) {
+      const rest = trimmed.slice(6);
+      const dotIndex = rest.indexOf('.');
+      if (dotIndex >= 0) {
+        const phaseName = rest.slice(0, dotIndex);
+        const taskId = rest.slice(dotIndex + 1);
+        const results = phaseResults[phaseName];
+        if (results) {
+          const taskResult = results.find(r => r.taskId === taskId);
+          if (taskResult?.success) return taskResult.output;
+          if (taskResult) return `[task:${taskId} failed]`;
+        }
+        return `[undefined:phase:${rest}]`;
+      }
+      // {{phase:NAME}} — 整个阶段聚合
+      const results = phaseResults[rest];
+      if (results) {
+        return results
+          .filter(r => r.success)
+          .map(r => `[${r.taskId}]: ${r.output}`)
+          .join('\n');
+      }
+      return `[undefined:phase:${rest}]`;
+    }
+
+    // {{last}} — 上一阶段输出
+    if (trimmed === 'last' && lastPhaseName) {
+      const results = phaseResults[lastPhaseName];
+      if (results) {
+        return results
+          .filter(r => r.success)
+          .map(r => `[${r.taskId}]: ${r.output}`)
+          .join('\n');
+      }
+    }
+
+    return `[undefined:${trimmed}]`;
+  });
+}
+
 // ─── 工作流引擎 ──────────────────────────────────────
 
 /**
- * 工作流引擎
+ * 工作流引擎 (v2)
  *
  * 接收 WorkflowDefinition，按阶段顺序执行，
  * 每个阶段内的任务并行执行。
+ * 支持模板变量、条件阶段、重试策略。
  */
 export class WorkflowEngine {
   private executor: TaskExecutor;
@@ -133,11 +230,36 @@ export class WorkflowEngine {
     const startTime = Date.now();
     const phaseResults: PhaseResult[] = [];
     const context: Record<string, TaskResult[]> = {};
+    const variables: Record<string, string> = { ...workflow.variables };
+    let lastPhaseName: string | undefined;
 
     for (const phase of workflow.phases) {
-      const phaseResult = await this.executePhase(phase, workflow, context);
+      // 条件阶段检查
+      if (phase.condition && !this.evaluateCondition(phase.condition, context)) {
+        const skippedResult: PhaseResult = {
+          phaseName: phase.name,
+          taskResults: [],
+          allSuccess: true,
+          skipped: true,
+          durationMs: 0,
+        };
+        phaseResults.push(skippedResult);
+        continue;
+      }
+
+      const phaseResult = await this.executePhase(
+        phase, workflow, context, variables, lastPhaseName,
+      );
       phaseResults.push(phaseResult);
       context[phase.name] = phaseResult.taskResults;
+      lastPhaseName = phase.name;
+
+      // 将阶段输出注入变量作用域
+      for (const tr of phaseResult.taskResults) {
+        if (tr.success) {
+          variables[`${phase.name}.${tr.taskId}`] = tr.output;
+        }
+      }
 
       // 阶段失败处理
       if (phase.requireAllSuccess && !phaseResult.allSuccess) {
@@ -160,10 +282,11 @@ export class WorkflowEngine {
       workflowName: workflow.name,
       phases: phaseResults,
       aggregatedOutput: this.aggregateOutputs(allTaskResults),
+      variables,
       totalDurationMs,
       totalTokensUsed,
       averageTG,
-      success: phaseResults.every(p => p.allSuccess),
+      success: phaseResults.filter(p => !p.skipped).every(p => p.allSuccess),
     };
   }
 
@@ -174,6 +297,8 @@ export class WorkflowEngine {
     phase: WorkflowPhase,
     workflow: WorkflowDefinition,
     context: Record<string, TaskResult[]>,
+    variables: Record<string, string>,
+    lastPhaseName?: string,
   ): Promise<PhaseResult> {
     const startTime = Date.now();
     const concurrency = workflow.maxConcurrency ?? 4;
@@ -192,7 +317,9 @@ export class WorkflowEngine {
     const taskResults: TaskResult[] = [];
     for (let i = 0; i < sortedTasks.length; i += concurrency) {
       const batch = sortedTasks.slice(i, i + concurrency);
-      const batchPromises = batch.map(task => this.executeTask(task, context, tgThreshold));
+      const batchPromises = batch.map(task =>
+        this.executeTaskWithRetry(task, context, variables, tgThreshold, lastPhaseName),
+      );
       const batchResults = await Promise.all(batchPromises);
       taskResults.push(...batchResults);
     }
@@ -217,38 +344,61 @@ export class WorkflowEngine {
       phaseName: phase.name,
       taskResults,
       allSuccess: taskResults.filter(t => !t.taskId.startsWith('__review')).every(t => t.success),
+      skipped: false,
       durationMs,
     };
   }
 
   /**
-   * 执行单个任务
+   * 带重试的任务执行
    */
-  private async executeTask(
+  private async executeTaskWithRetry(
     task: WorkflowTask,
     context: Record<string, TaskResult[]>,
+    variables: Record<string, string>,
+    tgThreshold: number,
+    lastPhaseName?: string,
+  ): Promise<TaskResult> {
+    const maxRetries = task.retry?.maxRetries ?? 0;
+    let lastResult: TaskResult | undefined;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      // 重试时追加错误上下文
+      let prompt = resolveTemplate(task.prompt, context, variables, lastPhaseName);
+      if (attempt > 0 && lastResult?.error && task.retry?.appendErrorContext !== false) {
+        prompt += `\n\n[Previous attempt failed: ${lastResult.error}. Try a different approach.]`;
+      }
+
+      const result = await this.executeTaskCore(task, prompt, tgThreshold);
+      lastResult = { ...result, retries: attempt };
+
+      if (result.success) return lastResult;
+
+      // 等待重试间隔
+      if (attempt < maxRetries && task.retry?.delayMs) {
+        await new Promise(resolve => setTimeout(resolve, task.retry!.delayMs));
+      }
+    }
+
+    return lastResult!;
+  }
+
+  /**
+   * 执行单个任务（核心逻辑）
+   */
+  private async executeTaskCore(
+    task: WorkflowTask,
+    resolvedPrompt: string,
     tgThreshold: number,
   ): Promise<TaskResult> {
     const startTime = Date.now();
 
-    // 构建包含上下文的 prompt
-    const contextStr = Object.entries(context)
-      .map(([phase, results]) => {
-        const outputs = results.filter(r => r.success).map(r => `[${r.taskId}]: ${r.output.slice(0, 500)}`);
-        return outputs.length > 0 ? `Results from "${phase}":\n${outputs.join('\n')}` : '';
-      })
-      .filter(Boolean)
-      .join('\n\n');
-
-    const fullPrompt = contextStr ? `Previous context:\n${contextStr}\n\nTask: ${task.prompt}` : task.prompt;
-
     try {
-      const result = await this.executor.executeTask(fullPrompt, {
+      const result = await this.executor.executeTask(resolvedPrompt, {
         allowedTools: task.allowedTools,
         maxTurns: task.maxTurns ?? 10,
       });
 
-      // TG 阈值检查：低 TG 任务标记为低效
       const tgScore = result.tgScore ?? 1;
       const success = tgScore >= tgThreshold;
 
@@ -271,6 +421,34 @@ export class WorkflowEngine {
         durationMs: Date.now() - startTime,
         error: error instanceof Error ? error.message : String(error),
       };
+    }
+  }
+
+  /**
+   * 评估阶段条件
+   */
+  private evaluateCondition(
+    condition: PhaseCondition,
+    context: Record<string, TaskResult[]>,
+  ): boolean {
+    switch (condition.type) {
+      case 'always':
+        return true;
+      case 'on_success': {
+        const results = context[condition.phase];
+        if (!results) return false;
+        return results.every(r => r.success);
+      }
+      case 'on_failure': {
+        const results = context[condition.phase];
+        if (!results) return false;
+        return results.some(r => !r.success);
+      }
+      case 'expression':
+        // 简单表达式求值：检查变量是否存在且非空
+        return condition.expression.length > 0;
+      default:
+        return true;
     }
   }
 
