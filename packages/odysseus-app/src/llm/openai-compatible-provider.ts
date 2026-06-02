@@ -671,6 +671,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
    * - 错误分析（error、trace、stack trace）
    * - 架构决策（design、architect、pattern）
    * - 长上下文（消息总长 > 2000 字符）
+   * - 工具链深度（多轮 tool results 暗示复杂任务）
+   * - 错误恢复（build/test 失败后需要更深推理）
    */
   private resolveReasoningEffort(messages: ChatMessage[]): 'high' | 'max' {
     if (this.reasoningEffort === 'max') return 'max';
@@ -682,13 +684,21 @@ export class OpenAICompatibleProvider implements LLMProvider {
       /\bimplement\b.*\b(feature|system|module)/i,
       /\barchitect\b|\bdesign\b.*\bsystem\b/i,
       /\b(why|root cause|analyze|investigate)\b.*\b(error|bug|issue|problem)/i,
-      /\bstep\s+\d|steps?:\s*\d/i,  // "step 1", "steps: 3"
+      /\bstep\s+\d|steps?:\s*\d/i,
     ];
 
     const isComplex = complexSignals.some(p => p.test(text));
     const isLongContext = text.length > 2000;
 
-    return (isComplex || isLongContext) ? 'max' : 'high';
+    // 工具链深度检测：多个 tool result 消息暗示长工具链
+    const toolResultCount = messages.filter(m => m.role === 'tool').length;
+    const isDeepToolChain = toolResultCount >= 3;
+
+    // 错误恢复检测：最近的消息包含失败标记
+    const recentMessages = messages.slice(-4).map(m => m.content).join(' ');
+    const isErrorRecovery = /\bfailed\b.*\b(fix|retry|rebuild)\b|\berror\b.*\bfix\b/i.test(recentMessages);
+
+    return (isComplex || isLongContext || isDeepToolChain || isErrorRecovery) ? 'max' : 'high';
   }
 
   private async doRequest(messages: ChatMessage[], stream: boolean): Promise<Response> {
