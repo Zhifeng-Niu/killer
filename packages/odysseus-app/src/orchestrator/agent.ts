@@ -346,6 +346,7 @@ export class OdysseusAgent implements IDriveSource {
           .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
         this.restoreConversationHistory(history);
         this.logger.info(`Restored ${history.length} conversation turns from previous session`);
+        await this.hooks.emit('session:resume', { turnsRestored: history.length });
       }
 
       // Restore hippocampus memories from auto-saved snapshot
@@ -1150,6 +1151,10 @@ Examples:
 
     // 上下文窗口绑定 LLM 用于智能摘要
     this.contextWindow.bindLLM(this.config.llm);
+    // 绑定 hooks 通知回调（context:pre-compact / post-compact）
+    this.contextWindow.bindHookNotifier((event, payload) => {
+      this.hooks.emit(event as any, payload).catch(() => {});
+    });
 
     // 根据 provider 能力动态调整上下文预算
     const caps = this.resolveProviderCapabilities();
@@ -4290,6 +4295,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           if (!batchResult.result.success) {
             const lesson = extractLessonFromToolFailure(toolName, 'execution', batchResult.result.error ?? 'unknown');
             if (lesson) recordLesson(lesson);
+            this.hooks.emit('tool:error', { tool: toolName, round, error: batchResult.result.error }).catch(() => {});
           }
 
           const resultStr = batchResult.result.success
@@ -4310,6 +4316,15 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
           await this.hooks.emit('tool:result', { tool: toolName, round });
         }
+
+        // v2: 批量完成事件
+        await this.hooks.emit('tool:batch-complete', {
+          batchSize: batchResults.length,
+          tools: batchResults.map(br => br.name),
+          successCount: batchResults.filter(br => br.result.success).length,
+          failCount: batchResults.filter(br => !br.result.success).length,
+          round,
+        });
 
         // ── Token Efficiency: 记录本轮 LLM 调用到效率追踪器 ──
         this.efficiencyTracker.recordCall({

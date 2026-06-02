@@ -107,6 +107,9 @@ export class ContextWindowManager {
   private summary: string = '';
   private llm: LLMProvider | null = null;
 
+  // v2: Hooks 通知回调（由 agent.ts 注入）
+  private hookNotifier?: (event: string, payload: Record<string, unknown>) => void;
+
   // v2: 智能截断 + 可检索记忆库
   readonly truncator: SmartContextTruncator;
   readonly recallStore: RecallableMemoryStore;
@@ -145,6 +148,13 @@ export class ContextWindowManager {
    */
   bindLLM(llm: LLMProvider): void {
     this.llm = llm;
+  }
+
+  /**
+   * 绑定 hooks 通知回调（用于 context:pre-compact / post-compact 事件）
+   */
+  bindHookNotifier(notifier: (event: string, payload: Record<string, unknown>) => void): void {
+    this.hookNotifier = notifier;
   }
 
   /**
@@ -302,6 +312,14 @@ export class ContextWindowManager {
       const older = conversationMessages.slice(0, splitPoint);
       const recent = conversationMessages.slice(splitPoint);
 
+      // 触发 context:pre-compact 事件
+      this.hookNotifier?.('context:pre-compact', {
+        totalMessages: conversationMessages.length,
+        olderCount: older.length,
+        recentCount: recent.length,
+        maxFullTurns: this.config.maxFullTurns,
+      });
+
       // 从旧消息中提取高重要性轮次 (importance > 0.6)
       const importantOlder: ContextMessage[] = [];
       const lowImportanceOlder: ContextMessage[] = [];
@@ -374,6 +392,13 @@ export class ContextWindowManager {
         ...recent[i],
         content: m.content,
       })));
+
+      // 触发 context:post-compact 事件
+      this.hookNotifier?.('context:post-compact', {
+        originalCount: messages.length,
+        compactedCount: result.length,
+        recallStoreSize: this.recallStore.getStats().totalEntries,
+      });
     }
 
     return result;
