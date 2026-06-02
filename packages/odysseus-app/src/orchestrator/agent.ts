@@ -128,6 +128,7 @@ import { SkillManager, type SkillExecutionResult } from '../skills/manager.js';
 import { SessionManager, type SessionSnapshot } from '../session/index.js';
 import { Logger } from '../log/index.js';
 import { PeriodicMemoryGuard, trimArray, trimAgentState } from './memory-guard.js';
+import { TokenEfficiencyTracker, type LLMCallRecord, type ToolCallRecord, type EfficiencyReport } from './token-efficiency.js';
 
 /**
  * 生成唯一 ID
@@ -272,6 +273,9 @@ export class OdysseusAgent implements IDriveSource {
 
   // 工具使用效果追踪
   private toolPerformance: Map<string, { uses: number; successes: number; avgDurationMs: number }> = new Map();
+
+  // Token 效率追踪 (Translation Gap)
+  readonly efficiencyTracker = new TokenEfficiencyTracker();
 
   // 目标依赖树：父目标 ID → 子目标依赖关系
   private goalDependencies: Map<string, Array<{ subGoalId: string; dependsOn: string[] }>> = new Map();
@@ -3868,10 +3872,14 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       this.cacheStats.misses += result.cacheMissTokens ?? 0;
       const total = this.cacheStats.hits + this.cacheStats.misses;
       const hitRate = total > 0 ? this.cacheStats.hits / total : 0;
-      this.logger.debug(`Cache stats: ${(hitRate * 100).toFixed(0)}% hit rate (${result.cacheHitTokens} hit, ${result.cacheMissTokens ?? 0} miss this call)`);
-      // 缓存感知上下文预算调整（DeepSeek 50x 缓存折扣优化）
+      // TG-driven: 传入 Translation Gap 分数用于精细预算调整
+      const tg = this.efficiencyTracker.getRecordCount() > 0
+        ? this.efficiencyTracker.getQuickTG()
+        : undefined;
+      this.logger.debug(`Cache stats: ${(hitRate * 100).toFixed(0)}% hit rate (${result.cacheHitTokens} hit, ${result.cacheMissTokens ?? 0} miss this call)${tg != null ? `, TG: ${(tg * 100).toFixed(0)}%` : ''}`);
+      // 缓存感知 + TG 驱动上下文预算调整
       if (total > 0) {
-        this.contextWindow.updateCacheBudget(hitRate);
+        this.contextWindow.updateCacheBudget(hitRate, tg);
       }
     }
   }
@@ -4235,8 +4243,30 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
           await this.hooks.emit('tool:result', { tool: toolName, round });
         }
+
+        // ── Token Efficiency: 记录本轮 LLM 调用到效率追踪器 ──
+        this.efficiencyTracker.recordCall({
+          round,
+          inputTokens: (result as any).usage?.prompt_tokens ?? 0,
+          outputTokens: (result as any).usage?.completion_tokens ?? 0,
+          cacheHitTokens: (result as any).cacheHitTokens ?? 0,
+          reasoningTokens: (result as any).reasoningContent?.length ? Math.ceil((result as any).reasoningContent.length / 4) : 0,
+          hadToolCalls: true,
+          toolCalls: batchResults.map(br => ({
+            tool: br.name,
+            paramSignature: `${br.name}:${JSON.stringify(br.result).slice(0, 80)}`,
+            success: br.result.success,
+            resultChars: typeof br.result.data === 'string' ? br.result.data.length : JSON.stringify(br.result.data).length,
+            latencyMs: br.durationMs,
+          })),
+          latencyMs: batchResults.reduce((sum, br) => sum + br.durationMs, 0),
+          timestamp: Date.now(),
+        });
       }
     }
+
+    // 标记最后一轮为有效（产生了用户看到的输出）
+    this.efficiencyTracker.markEffective(round);
 
     return response;
   }

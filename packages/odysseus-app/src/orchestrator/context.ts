@@ -123,6 +123,9 @@ export class ContextWindowManager {
   private cacheHitHistory: number[] = [];
   private static readonly CACHE_HISTORY_SIZE = 5;
   private static readonly CACHE_HIGH_THRESHOLD = 0.8;
+  // TG-aware 预算：追踪最近 3 次 TG 分数
+  private tgHistory: number[] = [];
+  private static readonly TG_HISTORY_SIZE = 3;
   // 基础配置（provider 设定的，缓存调整基于此）
   private baseConfig: ContextWindowConfig | null = null;
 
@@ -187,31 +190,59 @@ export class ContextWindowManager {
   }
 
   /**
-   * 缓存感知预算调整
+   * 缓存感知 + TG 驱动预算调整
    *
-   * DeepSeek 缓存命中率 >80% 时放宽截断（缓存命中成本仅 1/50）。
-   * 调整幅度为基础值的 1.5x。低命中率时回归 baseConfig。
+   * 两个维度决定预算倍率：
+   * 1. 缓存命中率 >80%: 放宽（缓存命中成本仅 1/50）
+   * 2. Translation Gap (TG): 高 TG 说明 token 被有效使用，进一步放宽
+   *
+   * 倍率叠加: cache_factor * tg_factor
+   * - 高缓存 + 高 TG: 1.5x * 1.2x = 1.8x
+   * - 高缓存 + 低 TG: 1.5x * 0.8x = 1.2x（token 在浪费，不要过度放宽）
+   * - 低缓存 + 高 TG: 1.0x * 1.1x = 1.1x
+   * - 低缓存 + 低 TG: 回归 baseConfig
    */
-  updateCacheBudget(hitRate: number): void {
+  updateCacheBudget(hitRate: number, tg?: number): void {
     this.cacheHitHistory.push(hitRate);
     if (this.cacheHitHistory.length > ContextWindowManager.CACHE_HISTORY_SIZE) {
       this.cacheHitHistory.shift();
+    }
+    if (tg != null) {
+      this.tgHistory.push(tg);
+      if (this.tgHistory.length > ContextWindowManager.TG_HISTORY_SIZE) {
+        this.tgHistory.shift();
+      }
     }
 
     if (!this.baseConfig) return;
 
     const avgHitRate = this.cacheHitHistory.reduce((a, b) => a + b, 0) / this.cacheHitHistory.length;
+    const avgTG = this.tgHistory.length > 0
+      ? this.tgHistory.reduce((a, b) => a + b, 0) / this.tgHistory.length
+      : 1;
 
-    if (avgHitRate >= ContextWindowManager.CACHE_HIGH_THRESHOLD) {
-      // 高缓存命中：放宽预算 1.5x
+    // 缓存因子：高命中 → 1.5x
+    const cacheFactor = avgHitRate >= ContextWindowManager.CACHE_HIGH_THRESHOLD ? 1.5 : 1.0;
+    // TG 因子：TG > 0.6 → 1.2x, TG > 0.8 → 1.3x, TG < 0.4 → 0.8x
+    const tgFactor = avgTG > 0.8 ? 1.3 : avgTG > 0.6 ? 1.2 : avgTG < 0.4 ? 0.8 : 1.0;
+    const factor = cacheFactor * tgFactor;
+
+    if (factor > 1.0) {
       this.config = {
         ...this.config,
-        maxFullTurns: Math.min(Math.floor(this.baseConfig.maxFullTurns * 1.5), 192),
-        maxMessageChars: Math.min(Math.floor(this.baseConfig.maxMessageChars * 1.5), 18000),
-        maxToolResultChars: Math.min(Math.floor(this.baseConfig.maxToolResultChars * 1.5), 16000),
+        maxFullTurns: Math.min(Math.floor(this.baseConfig.maxFullTurns * factor), 192),
+        maxMessageChars: Math.min(Math.floor(this.baseConfig.maxMessageChars * factor), 18000),
+        maxToolResultChars: Math.min(Math.floor(this.baseConfig.maxToolResultChars * factor), 16000),
+      };
+    } else if (factor < 1.0) {
+      // 低 TG：收紧预算（token 在浪费）
+      this.config = {
+        ...this.baseConfig,
+        maxFullTurns: Math.max(Math.floor(this.baseConfig.maxFullTurns * factor), 4),
+        maxMessageChars: Math.max(Math.floor(this.baseConfig.maxMessageChars * factor), 500),
+        maxToolResultChars: Math.max(Math.floor(this.baseConfig.maxToolResultChars * factor), 400),
       };
     } else {
-      // 低缓存命中：回归基础预算
       this.config = { ...this.baseConfig };
     }
   }
