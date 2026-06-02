@@ -348,38 +348,41 @@ export class ContextWindowManager {
       // 触发异步 LLM 摘要（下次 manage 调用时使用）
       this.backgroundSummarize(lowImportanceOlder).catch(() => {});
 
-      // 插入摘要作为 system 消息
+      // ── Cache-Aware Compaction (DeepSeek V4 优化) ──
+      // 将所有压缩元数据合并为单个 system message，保持 prompt 前缀稳定。
+      // DeepSeek 的 prompt_cache_hit_tokens 依赖前缀匹配，
+      // 多个独立 system message 插入会改变前缀结构导致缓存失效。
+      const compactSections: string[] = [];
+
       if (this.summary) {
-        result.push({
-          role: 'system',
-          content: `[Earlier conversation summary]\n${this.summary}`,
-        });
+        compactSections.push(`[Earlier conversation summary]\n${this.summary}`);
       }
 
-      // 插入持久事实
       if (this.facts.length > 0) {
-        result.push({
-          role: 'system',
-          content: `[Key facts]\n${this.facts.map((f, i) => `${i + 1}. ${f}`).join('\n')}`,
-        });
+        compactSections.push(`[Key facts]\n${this.facts.map((f, i) => `${i + 1}. ${f}`).join('\n')}`);
       }
 
-      // 插入可检索记忆库摘要（让 LLM 知道可回溯内容）
       const recallSummary = this.recallStore.getContextSummary(3);
       if (recallSummary) {
-        result.push({ role: 'system', content: recallSummary });
+        compactSections.push(recallSummary);
       }
 
-      // 插入高重要性旧消息（智能截断版）
       if (importantOlder.length > 0) {
         const { messages: truncatedImportant, allEvicted: importantEvicted } =
           this.truncator.truncateMessages(
             importantOlder.slice(0, 4).map(m => ({ role: m.role, content: m.content.slice(0, 500) })),
           );
         this.recallStore.storeBatch(importantEvicted);
+        compactSections.push(
+          `[Important earlier context]\n${truncatedImportant.map(m => `${m.role}: ${m.content}`).join('\n')}`,
+        );
+      }
+
+      // 合并为单个 system message — 保持缓存前缀稳定
+      if (compactSections.length > 0) {
         result.push({
           role: 'system',
-          content: `[Important earlier context]\n${truncatedImportant.map(m => `${m.role}: ${m.content}`).join('\n')}`,
+          content: compactSections.join('\n\n'),
         });
       }
 
