@@ -3885,24 +3885,37 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
   }
 
   /**
-   * 根据 provider 能力和工具类型动态计算结果截断限制
+   * 根据 provider 能力、工具类型和 TG 动态计算结果截断限制
    *
-   * DeepSeek 1M 上下文：编码工具（build/test/read）完整保留，其他放宽到 32K
-   * 短上下文 provider：保守截断 8000 字符
+   * 三个维度：
+   * 1. Provider 上下文长度（1M vs 短上下文）
+   * 2. 工具类型（编码 vs 通用）
+   * 3. 工具级 TG（低 TG → 更紧截断，避免浪费上下文）
    */
   private getToolResultLimit(toolName: string): number {
     const caps = this.resolveProviderCapabilities();
     const isLongContext = caps && caps.maxContext >= 500_000;
     const isCodingTool = /build|test|compile|read|exec|shell|self_read|file/i.test(toolName);
 
+    // TG 感知：低 TG 工具使用更紧截断
+    let baseLimit: number;
     if (isLongContext) {
-      // 编码工具：完整保留（DeepSeek 1M 上下文足够）
-      if (isCodingTool) return 64_000;
-      // 其他工具：放宽到 32K
-      return 32_000;
+      baseLimit = isCodingTool ? 64_000 : 32_000;
+    } else {
+      baseLimit = 8_000;
     }
-    // 短上下文 provider：保守限制
-    return 8_000;
+
+    // 工具级 TG 调整
+    if (this.efficiencyTracker.getRecordCount() > 0) {
+      const report = this.efficiencyTracker.generateReport();
+      const toolStats = report.toolEfficiency.get(toolName);
+      if (toolStats && toolStats.tg < 0.4 && toolStats.calls >= 2) {
+        // 低 TG 工具：截断到 50%（避免浪费上下文给低效工具）
+        baseLimit = Math.floor(baseLimit * 0.5);
+      }
+    }
+
+    return baseLimit;
   }
 
   /**
@@ -4134,26 +4147,37 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         ...(result.reasoningContent && { reasoning_content: result.reasoningContent }),
       });
 
-      // ── Pre-flight: repetition detection + permission checks ──
+      // ── Pre-flight: efficiency-aware repetition detection + permission checks ──
       const approvedCalls: { name: string; params: unknown; id: string }[] = [];
 
       for (const toolCall of result.toolCalls) {
         const toolName = toolCall.function.name;
 
-        // 重复检测
+        // 效能感知重复检测：结合签名重复率 + 工具级 TG
         const sig = `${toolName}:${toolCall.function.arguments}`;
         callHistory.push(sig);
         const recentWindow = callHistory.slice(-8);
         const uniqueRecent = new Set(recentWindow).size;
-        const isRepeating = recentWindow.length > 4
-          && (1 - uniqueRecent / recentWindow.length) > 0.5;
+        const repetitionRatio = 1 - uniqueRecent / recentWindow.length;
+
+        // 获取工具级 TG（低 TG 时更早触发收敛）
+        const toolTG = this.efficiencyTracker.getRecordCount() > 0
+          ? (this.efficiencyTracker.generateReport().toolEfficiency.get(toolName)?.tg ?? 1)
+          : 1;
+
+        // TG 低时降低重复阈值：低 TG (<0.4) → 阈值 0.3，正常 → 0.5
+        const repetitionThreshold = toolTG < 0.4 ? 0.3 : 0.5;
+        const isRepeating = recentWindow.length > 4 && repetitionRatio > repetitionThreshold;
 
         if (isRepeating) {
           onStatus?.('Converging...');
+          const toolGuidance = toolTG < 0.4
+            ? `[Repetition detected. Tool "${toolName}" has low success rate (${(toolTG * 100).toFixed(0)}%). Try a different tool or approach, then respond to the user.]`
+            : '[Repetition detected. Respond to the user now, do not call more tools.]';
           messages.push({
             role: 'tool',
             toolCallId: toolCall.id,
-            content: '[Repetition detected. Respond to the user now, do not call more tools.]',
+            content: toolGuidance,
           });
           continue;
         }
