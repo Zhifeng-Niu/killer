@@ -524,8 +524,13 @@ export class OpenAICompatibleProvider implements LLMProvider {
         return { role: 'tool', tool_call_id: tm.toolCallId, content: tm.content };
       }
       if (m.role === 'assistant' && 'tool_calls' in m) {
-        const am = m as { role: 'assistant'; content: string; tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }> };
-        return { role: 'assistant', content: am.content, tool_calls: am.tool_calls };
+        const am = m as { role: 'assistant'; content: string; tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>; reasoning_content?: string };
+        const msg: Record<string, unknown> = { role: 'assistant', content: am.content, tool_calls: am.tool_calls };
+        // DeepSeek 要求：工具调用中间的 reasoning_content 必须回传
+        if (am.reasoning_content) {
+          msg.reasoning_content = am.reasoning_content;
+        }
+        return msg;
       }
       return m;
     });
@@ -543,7 +548,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     // DeepSeek V4: strict tool calling with reasoning
     if (this.providerName === 'deepseek' && this.thinkingMode) {
       body.thinking = { type: 'enabled' };
-      body.reasoning_effort = this.reasoningEffort;
+      body.reasoning_effort = this.resolveReasoningEffort(messages);
       body.max_tokens = Math.max(this.maxTokens, 16_384);
     }
 
@@ -629,12 +634,15 @@ export class OpenAICompatibleProvider implements LLMProvider {
       ? data.usage.prompt_tokens + data.usage.completion_tokens
       : undefined;
 
+    const reasoningContent = choice.message?.reasoning_content;
+
     return {
       content,
       model: data.model || this.model,
       tokensUsed,
       finishReason,
       ...(toolCalls && toolCalls.length > 0 && { toolCalls }),
+      ...(reasoningContent && { reasoningContent }),
     };
   }
 

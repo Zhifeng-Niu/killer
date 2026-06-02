@@ -4054,11 +4054,12 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
       round++;
 
-      // 追加 assistant 消息（带 tool_calls）
+      // 追加 assistant 消息（带 tool_calls + reasoning_content）
       messages.push({
         role: 'assistant',
         content: result.content || '',
         tool_calls: result.toolCalls,
+        ...(result.reasoningContent && { reasoning_content: result.reasoningContent }),
       });
 
       // ── Pre-flight: repetition detection + permission checks ──

@@ -43,6 +43,8 @@ export interface ToolCall {
  */
 export interface LLMToolCallCompletion extends LLMCompletion {
   toolCalls?: ToolCall[];
+  /** DeepSeek 等 thinking-mode provider 的推理内容（需回传以保持推理质量） */
+  reasoningContent?: string;
 }
 
 /**
@@ -60,7 +62,7 @@ export interface ToolResultMessage {
 export type ChatMessage =
   | { role: 'system'; content: string }
   | { role: 'user'; content: string }
-  | { role: 'assistant'; content: string; tool_calls?: ToolCall[] }
+  | { role: 'assistant'; content: string; tool_calls?: ToolCall[]; reasoning_content?: string }
   | ToolResultMessage;
 
 /**
