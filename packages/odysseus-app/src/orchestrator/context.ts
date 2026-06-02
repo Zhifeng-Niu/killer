@@ -129,8 +129,16 @@ export class ContextWindowManager {
   // TG-aware 预算：追踪最近 3 次 TG 分数
   private tgHistory: number[] = [];
   private static readonly TG_HISTORY_SIZE = 3;
+
+  // TG-Driven 主动压缩：连续低 TG 触发提前压缩
+  private static readonly TG_COMPACT_THRESHOLD = 0.35;
+  private static readonly TG_COMPACT_MIN_ROUNDS = 3;
+
   // 基础配置（provider 设定的，缓存调整基于此）
   private baseConfig: ContextWindowConfig | null = null;
+
+  // Reasoning-aware 保留：是否为 thinking mode provider
+  private isThinkingModeProvider = false;
 
   constructor(config?: Partial<ContextWindowConfig>) {
     this.config = { ...DEFAULT_CONTEXT_CONFIG, ...config };
@@ -200,7 +208,74 @@ export class ContextWindowManager {
   }
 
   /**
-   * 缓存感知 + TG 驱动预算调整
+   * 标记当前 provider 是否为 thinking mode（DeepSeek V4 reasoning）
+   */
+  setThinkingMode(enabled: boolean): void {
+    this.isThinkingModeProvider = enabled;
+  }
+
+  /**
+   * 检查是否应该触发 TG-driven 主动压缩
+   *
+   * 当连续 TG_COMPACT_MIN_ROUNDS 轮的 TG 低于 TG_COMPACT_THRESHOLD 时，
+   * 提前压缩而非等到 context 溢出。低 TG 说明 token 在浪费，压缩可释放空间。
+   */
+  shouldTgCompact(): boolean {
+    if (this.tgHistory.length < ContextWindowManager.TG_COMPACT_MIN_ROUNDS) return false;
+    const recent = this.tgHistory.slice(-ContextWindowManager.TG_COMPACT_MIN_ROUNDS);
+    return recent.every(tg => tg < ContextWindowManager.TG_COMPACT_THRESHOLD);
+  }
+
+  /**
+   * Reasoning-aware 消息截断
+   *
+   * DeepSeek thinking mode 的 reasoning_content 包含推理链骨架。
+   * 简单截断会丢失关键推理步骤，导致后续推理质量下降。
+   * 策略：保留推理链的 head + tail，中间只保留结论性语句。
+   */
+  truncateReasoningContent(content: string, maxChars: number): { truncated: string; evicted: string[] } {
+    if (content.length <= maxChars) return { truncated: content, evicted: [] };
+
+    // 检测 reasoning_content 特征（<think&gt;...</think&gt; 或纯推理文本）
+    const lines = content.split('\n');
+    const evicted: string[] = [];
+
+    if (lines.length <= 3) {
+      // 短推理直接截断
+      const truncated = content.slice(0, maxChars);
+      evicted.push(content.slice(maxChars));
+      return { truncated, evicted };
+    }
+
+    // Head-tail 策略：保留前 30% 和后 40%，中间提取结论句
+    const headCount = Math.max(1, Math.floor(lines.length * 0.3));
+    const tailCount = Math.max(1, Math.floor(lines.length * 0.4));
+    const head = lines.slice(0, headCount);
+    const tail = lines.slice(-tailCount);
+
+    // 从中间部分提取结论性语句（以 "因此"/"所以"/"结论"/"result" 开头的行）
+    const middle = lines.slice(headCount, -tailCount);
+    const conclusions = middle.filter(l =>
+      /^(因此|所以|结论|综上|也就是说|result|thus|therefore|hence|conclusion)/i.test(l.trim())
+    );
+
+    const truncated = [
+      ...head,
+      conclusions.length > 0 ? '...[reasoning steps omitted]...' : '',
+      ...conclusions.slice(0, 3),
+      conclusions.length > 0 ? '...[more reasoning]...' : '',
+      ...tail,
+    ].filter(Boolean).join('\n');
+
+    evicted.push(middle.filter(l => !conclusions.includes(l)).join('\n'));
+
+    return {
+      truncated: truncated.length > maxChars ? truncated.slice(0, maxChars) : truncated,
+      evicted,
+    };
+  }
+
+  /**
    *
    * 两个维度决定预算倍率：
    * 1. 缓存命中率 >80%: 放宽（缓存命中成本仅 1/50）
@@ -296,7 +371,13 @@ export class ContextWindowManager {
     // 2. 非 system 消息
     const conversationMessages = messages.filter(m => m.role !== 'system');
 
-    if (conversationMessages.length <= this.config.maxFullTurns * 2) {
+    // TG-driven 主动压缩：当连续低 TG 时，降低压缩阈值提前触发
+    // 避免等到 context 溢出才压缩（token 已被浪费）
+    const effectiveMaxTurns = this.shouldTgCompact()
+      ? Math.max(4, Math.floor(this.config.maxFullTurns * 0.6))
+      : this.config.maxFullTurns;
+
+    if (conversationMessages.length <= effectiveMaxTurns * 2) {
       // 未超出限制 — 使用智能截断（工具结果优化 + 消息截断）
       const { messages: truncated, allEvicted } = this.truncator.truncateMessages(
         conversationMessages.map(m => ({ role: m.role, content: m.content })),
@@ -307,8 +388,8 @@ export class ContextWindowManager {
         content: m.content,
       })));
     } else {
-      // 超出限制 — 保留最近 N 轮 + 高重要性旧轮次 + 摘要其余
-      const splitPoint = conversationMessages.length - this.config.maxFullTurns * 2;
+      // 超出限制 — 保留最近 effectiveMaxTurns 轮 + 高重要性旧轮次 + 摘要其余
+      const splitPoint = conversationMessages.length - effectiveMaxTurns * 2;
       const older = conversationMessages.slice(0, splitPoint);
       const recent = conversationMessages.slice(splitPoint);
 

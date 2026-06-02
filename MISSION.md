@@ -6,7 +6,7 @@ expedition_branch: odyssey/20260603-004715
 baseline_metric: "build: pass, type_error_count: 0"
 best_metric: null
 total_waypoints: 12
-completed_waypoints: 0
+completed_waypoints: 3
 consecutive_discards: 0
 ---
 
