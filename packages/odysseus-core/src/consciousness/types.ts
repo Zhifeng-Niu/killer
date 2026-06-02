@@ -103,7 +103,12 @@ export type EventType =
   | 'execution.progress'
   | 'execution.log'
   | 'delivery.report'
-  | 'plan.created';
+  | 'plan.created'
+  // Global Workspace 事件
+  | 'workspace.broadcast'
+  | 'workspace.coalition_submitted'
+  | 'workspace.attention_cycle'
+  | 'workspace.module_registered';
 
 /**
  * 轨迹记录

@@ -42,6 +42,31 @@ export interface ForgettingConfig {
    * 最小访问间隔（毫秒），防止频繁访问过度增强
    */
   minAccessInterval: number;
+
+  /**
+   * 是否启用信息熵衰减
+   */
+  entropyDecayEnabled: boolean;
+
+  /**
+   * 低密度记忆的衰减加速因子 (>1 表示加速)
+   */
+  lowDensityDecayFactor: number;
+
+  /**
+   * 高密度记忆的衰减减速因子 (<1 表示减速)
+   */
+  highDensityDecayFactor: number;
+
+  /**
+   * 信息密度阈值，低于此值视为低密度
+   */
+  lowDensityThreshold: number;
+
+  /**
+   * 信息密度阈值，高于此值视为高密度
+   */
+  highDensityThreshold: number;
 }
 
 /**
@@ -54,7 +79,144 @@ export const DEFAULT_FORGETTING_CONFIG: ForgettingConfig = {
   reinforcementFactor: 2.0, // 每次回忆翻倍
   dormantThreshold: 0.1, // 10% 保持率以下休眠
   minAccessInterval: 60 * 1000, // 1 分钟
+  entropyDecayEnabled: true,
+  lowDensityDecayFactor: 3.0,   // 低密度衰减3倍加速
+  highDensityDecayFactor: 0.5,  // 高密度衰减减半
+  lowDensityThreshold: 0.2,     // Shannon熵归一化后低于20%
+  highDensityThreshold: 0.6,    // 高于60%视为高密度
 };
+
+/**
+ * 信息密度评估结果
+ */
+export interface InformationDensity {
+  /** Shannon 熵（归一化到 [0,1]） */
+  shannonEntropy: number;
+  /** 词汇独特性比例 */
+  uniqueRatio: number;
+  /** 综合密度评分 [0,1] */
+  densityScore: number;
+  /** 密度等级 */
+  level: 'empty' | 'low' | 'medium' | 'high';
+}
+
+/**
+ * 计算文本的信息密度
+ *
+ * 综合三个指标：
+ * 1. Shannon熵：衡量字符/词分布的不可预测性
+ * 2. 词汇独特性：不重复词占总词数的比例
+ * 3. 内容长度因子：过短的内容密度自然低
+ *
+ * @param text - 要评估的文本
+ * @returns 信息密度评估结果
+ */
+export function calculateInformationDensity(text: string): InformationDensity {
+  if (!text || text.trim().length === 0) {
+    return { shannonEntropy: 0, uniqueRatio: 0, densityScore: 0, level: 'empty' };
+  }
+
+  // 提取词（支持中英文混合：英文按空格分，中文按字符）
+  const tokens = extractTokens(text);
+  if (tokens.length === 0) {
+    return { shannonEntropy: 0, uniqueRatio: 0, densityScore: 0, level: 'empty' };
+  }
+
+  // 1. Shannon熵计算
+  const freq = new Map<string, number>();
+  for (const t of tokens) {
+    freq.set(t, (freq.get(t) || 0) + 1);
+  }
+
+  let entropy = 0;
+  const len = tokens.length;
+  for (const count of freq.values()) {
+    const p = count / len;
+    if (p > 0) {
+      entropy -= p * Math.log2(p);
+    }
+  }
+
+  // 归一化熵：最大熵 = log2(len)，但用 log2(freq.size) 作为更合理的上限
+  const maxEntropy = freq.size > 1 ? Math.log2(freq.size) : 1;
+  const normalizedEntropy = Math.min(entropy / maxEntropy, 1);
+
+  // 2. 词汇独特性
+  const uniqueRatio = freq.size / len;
+
+  // 3. 长度因子：过短(<10 token)的内容密度打折
+  const lengthFactor = len >= 10 ? 1 : len / 10;
+
+  // 综合评分
+  const densityScore = (normalizedEntropy * 0.5 + uniqueRatio * 0.35 + lengthFactor * 0.15);
+
+  // 确定等级
+  let level: InformationDensity['level'];
+  if (densityScore < 0.1) level = 'empty';
+  else if (densityScore < 0.3) level = 'low';
+  else if (densityScore < 0.5) level = 'medium';
+  else level = 'high';
+
+  return { shannonEntropy: normalizedEntropy, uniqueRatio, densityScore, level };
+}
+
+/**
+ * 提取token，支持中英文混合
+ */
+function extractTokens(text: string): string[] {
+  const tokens: string[] = [];
+  // 英文单词
+  const englishWords = text.match(/[a-zA-Z]+/g) || [];
+  tokens.push(...englishWords.map(w => w.toLowerCase()));
+  // 中文字符（连续中文作为单独token，2-gram更好但单字也行）
+  const chineseChars = text.match(/[\u4e00-\u9fff]/g) || [];
+  tokens.push(...chineseChars);
+  // 数字序列
+  const numbers = text.match(/\d+/g) || [];
+  tokens.push(...numbers);
+  return tokens;
+}
+
+/**
+ * 根据信息密度调整稳定性
+ *
+ * 低密度记忆初始稳定性降低（加速遗忘）
+ * 高密度记忆初始稳定性提高（保护有价值信息）
+ *
+ * @param baseStability - 基础稳定性
+ * @param density - 信息密度评估
+ * @param config - 遗忘配置
+ * @returns 调整后的稳定性
+ */
+export function adjustStabilityByDensity(
+  baseStability: number,
+  density: InformationDensity,
+  config: ForgettingConfig = DEFAULT_FORGETTING_CONFIG
+): number {
+  if (!config.entropyDecayEnabled) return baseStability;
+
+  if (density.level === 'empty') {
+    return config.minStability; // 空内容，极低稳定性
+  }
+
+  if (density.densityScore < config.lowDensityThreshold) {
+    // 低密度：加速衰减
+    return Math.max(
+      baseStability / config.lowDensityDecayFactor,
+      config.minStability
+    );
+  }
+
+  if (density.densityScore > config.highDensityThreshold) {
+    // 高密度：保护性衰减
+    return Math.min(
+      baseStability * (2 - config.highDensityDecayFactor),
+      config.maxStability
+    );
+  }
+
+  return baseStability;
+}
 
 /**
  * 计算记忆保持率
@@ -173,7 +335,10 @@ export function calculateNextReview(
 }
 
 /**
- * 批量应用遗忘曲线
+ * 批量应用遗忘曲线（含信息熵衰减）
+ *
+ * 对每个episode评估其narrative的信息密度，
+ * 低密度记忆加速衰减，高密度记忆保护性衰减
  *
  * @param episodes - 情节记忆集合
  * @param now - 当前时间戳
@@ -186,13 +351,26 @@ export function applyForgettingCurve(
   config: ForgettingConfig = DEFAULT_FORGETTING_CONFIG
 ): Episode[] {
   return episodes.map((episode) => {
-    const decayed = decay(episode, now);
+    let decayed = decay(episode, now);
+
+    // 信息熵衰减：根据narrative密度调整衰减速率
+    if (config.entropyDecayEnabled) {
+      const density = calculateInformationDensity(episode.narrative);
+      if (density.level === 'empty' || density.level === 'low') {
+        // 低密度额外加速衰减
+        const factor = density.level === 'empty' ? 0.5 : 0.7;
+        decayed = {
+          ...decayed,
+          emotionalWeight: decayed.emotionalWeight * factor,
+        };
+      }
+    }
 
     // 标记为休眠但不删除
     if (decayed.emotionalWeight < config.dormantThreshold) {
       return {
         ...decayed,
-        tags: [...decayed.tags, 'dormant'],
+        tags: [...new Set([...decayed.tags, 'dormant'])],
       };
     }
 

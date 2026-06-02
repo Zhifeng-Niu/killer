@@ -240,6 +240,10 @@ function cleanDsmlRemnants(text: string): string {
   cleaned = cleaned.replace(/<\|\/?tool_calls\|>/g, '');
   // 移除 <|invoke|> 和 <|parameter|> 残留
   cleaned = cleaned.replace(/<\|(?:\/?invoke|\/?parameter)[^|]*\|>/g, '');
+  // 移除 [tool_call:status] { JSON } 噪音块（LLM 文本中的冗余工具调用描述）
+  cleaned = cleaned.replace(/\[tool_call:\w+\]\s*\{[^}]*\}/g, '');
+  // 移除嵌套 JSON 版本（params 含子对象）
+  cleaned = cleaned.replace(/\[tool_call:\w+\]\s*\{[\s\S]*?\n\}/g, '');
   return cleaned;
 }
 

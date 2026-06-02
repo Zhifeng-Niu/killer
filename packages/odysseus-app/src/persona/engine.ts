@@ -382,6 +382,47 @@ export class PersonaEngine {
   }
 
   /**
+   * 认知一致性检查
+   *
+   * 确保人格特质之间不会产生矛盾（如同时高好奇心但低探索意愿）。
+   * 检测到矛盾时微调较低优先级的特质。
+   * 返回调整记录，可用于诊断。
+   */
+  checkCognitiveConsistency(): Array<{ trait: string; before: number; after: number; reason: string }> {
+    const adjustments: Array<{ trait: string; before: number; after: number; reason: string }> = [];
+    const ADJUST = 0.05;
+
+    // 矛盾1: 高好奇心 + 低技术深度 = 不一致
+    const curiosity = this.getTrait('curiosity');
+    const depth = this.getTrait('technicalDepth');
+    if (curiosity > 0.7 && depth < 0.3) {
+      const newVal = Math.min(depth + ADJUST, 0.4);
+      this.updateTrait('technicalDepth', newVal);
+      adjustments.push({ trait: 'technicalDepth', before: depth, after: newVal, reason: 'curiosity-depth mismatch' });
+    }
+
+    // 矛盾2: 高温暖 + 低同理心（如果存在）
+    const warmth = this.getTrait('warmth');
+    const empathy = this.getTrait('empathy');
+    if (warmth > 0.7 && empathy < 0.3) {
+      const newVal = Math.min(empathy + ADJUST, 0.4);
+      this.updateTrait('empathy', newVal);
+      adjustments.push({ trait: 'empathy', before: empathy, after: newVal, reason: 'warmth-empathy mismatch' });
+    }
+
+    // 矛盾3: 高耐心 + 低细致（如果存在）
+    const patience = this.getTrait('patience');
+    const meticulousness = this.getTrait('meticulousness');
+    if (patience > 0.7 && meticulousness < 0.3) {
+      const newVal = Math.min(meticulousness + ADJUST, 0.4);
+      this.updateTrait('meticulousness', newVal);
+      adjustments.push({ trait: 'meticulousness', before: meticulousness, after: newVal, reason: 'patience-meticulousness mismatch' });
+    }
+
+    return adjustments;
+  }
+
+  /**
    * 设置上次见面时间（从保存的会话恢复）
    */
   setLastSeenAt(timestamp: number): void {

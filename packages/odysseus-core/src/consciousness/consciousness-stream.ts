@@ -48,8 +48,10 @@ export class ConsciousnessStream {
   private trajectorySegments: Map<string, TrajectorySegment> = new Map();
   private currentSegmentId: string | null = null;
   private paused = false;
-  private maxEvents = 10000;
-  private maxSegments = 1000;
+  private maxEvents = 2000;
+  private maxSegments = 500;
+  private compressCounter = 0;
+  private readonly COMPRESS_EVERY = 100; // 每 100 条事件自动压缩
 
   /**
    * 发布事件
@@ -76,6 +78,13 @@ export class ConsciousnessStream {
     // 限制事件数量
     if (this.events.length > this.maxEvents) {
       this.events = this.events.slice(-this.maxEvents);
+    }
+
+    // 定期自动压缩，防止长期运行内存膨胀
+    this.compressCounter++;
+    if (this.compressCounter >= this.COMPRESS_EVERY) {
+      this.compressCounter = 0;
+      this.smartCompress();
     }
 
     // 触发订阅
@@ -479,5 +488,107 @@ export class ConsciousnessStream {
    */
   private generateEventId(): string {
     return `evt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  // ============================================================
+  // Smart Event Compression (智能事件压缩)
+  // ============================================================
+
+  /**
+   * 自动压缩重复或低价值事件
+   *
+   * 在事件流中，同类型事件频繁出现是常态（如连续的 perception_received）。
+   * 此方法将 N 个连续同类型事件压缩为一个摘要事件，
+   * 保留统计信息（计数、时间范围），丢弃冗余细节。
+   *
+   * @param windowMs - 压缩窗口（毫秒），同一窗口内的同类事件会被折叠
+   * @returns 压缩后移除的事件数
+   */
+  smartCompress(windowMs: number = 5000): number {
+    if (this.events.length < 10) return 0;
+
+    let removed = 0;
+    const compressed: ConsciousnessEvent[] = [];
+    let i = 0;
+
+    while (i < this.events.length) {
+      const current = this.events[i]!;
+      let runEnd = i + 1;
+
+      // 找到连续同类型事件的边界
+      while (
+        runEnd < this.events.length &&
+        this.events[runEnd]!.type === current.type &&
+        this.events[runEnd]!.timestamp - this.events[runEnd - 1]!.timestamp <= windowMs
+      ) {
+        runEnd++;
+      }
+
+      const runLength = runEnd - i;
+
+      if (runLength > 2) {
+        // 压缩为摘要事件
+        const summaryEvent: ConsciousnessEvent = {
+          ...current,
+          id: this.generateEventId(),
+          timestamp: current.timestamp,
+          data: {
+            ...(current.data || {}),
+            _compressed: {
+              count: runLength,
+              timeRange: `${this.events[runEnd - 1]!.timestamp - current.timestamp}ms`,
+              originalType: current.type,
+            },
+          },
+        };
+        compressed.push(summaryEvent);
+        removed += runLength - 1;
+      } else {
+        // 保留原事件
+        for (let j = i; j < runEnd; j++) {
+          compressed.push(this.events[j]!);
+        }
+      }
+
+      i = runEnd;
+    }
+
+    this.events = compressed;
+    return removed;
+  }
+
+  /**
+   * 获取事件流摘要（不查看详细事件，只看统计）
+   *
+   * 适用于需要快速了解"最近发生了什么"但不需要细节的场景。
+   */
+  getEventSummary(): {
+    totalEvents: number;
+    typeBreakdown: Map<string, number>;
+    recentActivity: string;
+    eventRate: number;
+  } {
+    const typeBreakdown = new Map<string, number>();
+    for (const event of this.events) {
+      typeBreakdown.set(event.type, (typeBreakdown.get(event.type) || 0) + 1);
+    }
+
+    // 计算事件率（最近1分钟）
+    const now = Date.now();
+    const recentEvents = this.events.filter(e => now - e.timestamp < 60_000);
+    const eventRate = recentEvents.length / 60; // events per second
+
+    // 最近活动描述
+    const lastEvent = this.events[this.events.length - 1];
+    const recentActivity = lastEvent
+      ? `Last: ${lastEvent.type} at ${new Date(lastEvent.timestamp).toISOString()}`
+      : 'No events';
+
+    return {
+      totalEvents: this.events.length,
+      typeBreakdown,
+      recentActivity,
+      eventRate,
+    };
   }
 }

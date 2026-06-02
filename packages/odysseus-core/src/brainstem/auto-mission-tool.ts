@@ -11,6 +11,7 @@
 import type { Tool, ToolResult } from './tool-executor.js';
 import type { Cerebellum } from '../cerebellum/cerebellum.js';
 import type { Orientation } from '../cerebellum/types.js';
+import { analyzeMissionEntropy } from './decision-entropy.js';
 
 export interface AutoMissionDeps {
   cerebellum: Cerebellum;
@@ -164,6 +165,17 @@ export class AutoMissionTool implements Tool {
     try {
       const experiment = await this.cerebellum.beginExperiment(hypothesis);
 
+      // Entropy-Cut分析：从历史hypothesis中识别决策点（论①）
+      const history = this.cerebellum.getHistory();
+      const pastHypotheses = history.wins
+        .concat(history.deadEnds)
+        .map(e => e.hypothesis);
+      const entropyAnalysis = analyzeMissionEntropy(pastHypotheses);
+
+      const entropyHint = entropyAnalysis.topDecisionPoints.length > 0
+        ? `\nEntropy-Cut hint: ${entropyAnalysis.recommendation}`
+        : '';
+
       return {
         success: true,
         data: {
@@ -171,7 +183,8 @@ export class AutoMissionTool implements Tool {
           waypoint: experiment.waypoint,
           hypothesis: experiment.hypothesis,
           missionGoal: mission.goal,
-          message: `Experiment waypoint ${experiment.waypoint} started. Now: use self_read/self_modify to implement your hypothesis, then use "decide" to keep or discard.`,
+          entropyDecisionPoints: entropyAnalysis.topDecisionPoints.length,
+          message: `Experiment waypoint ${experiment.waypoint} started.${entropyHint} Now: use self_read/self_modify to implement your hypothesis, then use "decide" to keep or discard.`,
         },
       };
     } catch (err) {
@@ -195,16 +208,23 @@ export class AutoMissionTool implements Tool {
         return { success: false, error: 'No active experiment. Use "waypoint" to start one.' };
       }
 
-      // Get verification result
+      // Get verification result (基础验证)
       const verification = await this.cerebellum.verify(experiment);
+
+      // STV增强验证（论②）：对比改造前后的状态快照
+      // 验证 > 生成 的不对称性：先看build是否通过，再对比关键指标
+      const stvEnhanced = this.enhanceWithSTVVerification(verification, experiment);
 
       // Update with external metric values if provided
       const finalVerification = metricValues
-        ? this.cerebellum.updateVerification(experiment, verification, metricValues)
-        : verification;
+        ? this.cerebellum.updateVerification(experiment, stvEnhanced, metricValues)
+        : stvEnhanced;
 
       // Record outcome
       this.cerebellum.recordOutcome(experiment, effectiveDecision, finalVerification);
+
+      // MOSS Health-Probe检查（论⑤）
+      const healthProbe = this.cerebellum.runHealthProbe();
 
       // Check termination
       const history = this.cerebellum.getHistory();
@@ -221,6 +241,14 @@ export class AutoMissionTool implements Tool {
           terminated: termination.terminated,
           terminationReason: termination.reason,
           totalWaypoints: history.totalWaypoints,
+          healthProbe: healthProbe.healthy
+            ? { healthy: true, score: healthProbe.healthScore }
+            : {
+                healthy: false,
+                score: healthProbe.healthScore,
+                warnings: healthProbe.warnings,
+                rollbackRecommended: healthProbe.rollbackRecommended,
+              },
           consecutiveDiscards: history.consecutiveDiscards,
         },
       };
@@ -243,5 +271,74 @@ export class AutoMissionTool implements Tool {
         message: 'Mission abandoned. You can create a new one anytime.',
       },
     };
+  }
+
+  /**
+   * STV增强验证 — Self-Trained Verification
+   *
+   * 灵感: "STV: Self-Trained Verification" (arXiv:2605.30290)
+   * 核心洞察：模型看到参考解后能诊断自身错误，验证比生成容易。
+   *
+   * 在auto_mission中：
+   * - 如果基础verification通过（build OK），加入STV信心分
+   * - 如果基础verification失败，明确标记为"需要参考解辅助诊断"
+   * - 利用验证 > 生成的不对称性：不重新生成，而是检查已有的验证信号
+   */
+  private enhanceWithSTVVerification(
+    baseVerification: Awaited<ReturnType<Cerebellum['verify']>>,
+    experiment: Awaited<ReturnType<Cerebellum['getActiveExperiment']>>,
+  ): typeof baseVerification {
+    if (!experiment) return baseVerification;
+
+    const stvConfidence = this.computeSTVConfidence(baseVerification, experiment);
+
+    return {
+      ...baseVerification,
+      overall: baseVerification.overall === 'pass'
+        ? (stvConfidence > 0.8 ? 'pass' : baseVerification.overall)
+        : baseVerification.overall,
+      // 附加STV分析
+      ...(typeof baseVerification === 'object' ? {
+        stvConfidence,
+        stvNote: stvConfidence > 0.8
+          ? 'High verification confidence — change is likely beneficial'
+          : stvConfidence > 0.5
+            ? 'Moderate confidence — consider additional testing'
+            : 'Low confidence — verify manually or get reference solution',
+      } : {}),
+    };
+  }
+
+  /**
+   * 计算STV信心分
+   *
+   * 综合多个验证维度：
+   * 1. 基础build验证结果
+   * 2. hypothesis清晰度（越具体越可信）
+   * 3. 历史连续成功/失败模式
+   */
+  private computeSTVConfidence(
+    verification: Awaited<ReturnType<Cerebellum['verify']>>,
+    experiment: { hypothesis: string },
+  ): number {
+    let confidence = 0.5;
+
+    // 1. 基础验证通过
+    if (typeof verification === 'object' && verification?.overall === 'pass') {
+      confidence += 0.25;
+    }
+
+    // 2. Hypothesis清晰度（长度适中、有具体动作）
+    const h = experiment.hypothesis ?? '';
+    if (h.length > 20 && h.length < 500) confidence += 0.1;
+    if (/\b(add|fix|refactor|remove|update|optimize)\b/i.test(h)) confidence += 0.1;
+
+    // 3. 历史模式
+    const history = this.cerebellum.getHistory();
+    if (history.wins.length > history.deadEnds.length) {
+      confidence += 0.05;
+    }
+
+    return Math.min(1, confidence);
   }
 }

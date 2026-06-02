@@ -106,6 +106,34 @@ function highlightTokens(text: string, startKey: number): React.ReactNode[] {
 
 // ── Markdown 内容渲染 ──
 
+function renderToolChainCard(spinner: string, chain: string, keyBase: number): React.ReactNode {
+  const segments = chain.split('→');
+  const nodes: React.ReactNode[] = [];
+  const isDone = spinner === '✓';
+
+  segments.forEach((seg, i) => {
+    const s = seg.trim();
+    if (s.startsWith('+')) {
+      nodes.push(
+        <Text key={`overflow-${i}`} color={colors.secondary}> +{s.slice(1)}</Text>,
+      );
+    } else if (s.startsWith('✓')) {
+      if (i > 0) nodes.push(<Text key={`sep-${i}`} color={colors.separator}> → </Text>);
+      nodes.push(<Text key={`done-${i}`} color={colors.cyan}>● {s.slice(1)}</Text>);
+    } else if (s.startsWith('◐')) {
+      if (i > 0) nodes.push(<Text key={`sep-${i}`} color={colors.separator}> → </Text>);
+      nodes.push(<Text key={`active-${i}`} color={colors.purpleBright}>◐ {s.slice(1)}</Text>);
+    }
+  });
+
+  return (
+    <Box key={`chain-${keyBase}`} marginTop={1} marginLeft={1}>
+      <Text color={isDone ? colors.cyan : colors.purpleBright}>{spinner} </Text>
+      {nodes}
+    </Box>
+  );
+}
+
 function renderContent(text: string): React.ReactNode {
   const lines = text.split('\n');
   const elements: React.ReactNode[] = [];
@@ -178,6 +206,35 @@ function renderContent(text: string): React.ReactNode {
         </Box>,
       );
       continue;
+    }
+
+    const chainMatch = line.match(/^\[ToolChain:\s*(.)\|(.*)\]\s*$/);
+    if (chainMatch) {
+      elements.push(renderToolChainCard(chainMatch[1], chainMatch[2], i));
+      continue;
+    }
+
+    // [tool_call:status] { JSON } — 压缩为一行，不膨胀对话
+    if (/^\[tool_call:\w+\]/.test(line.trim())) {
+      const tcMatch = line.match(/^\[tool_call:(\w+)\]\s*\{?\s*"?tool"?\s*:?\s*"?(\w+)?/);
+      if (tcMatch) {
+        const status = tcMatch[1];
+        const toolName = tcMatch[2] || '';
+        const icon = status === 'completed' ? '●' : '◐';
+        const color = status === 'completed' ? colors.cyan : colors.purpleBright;
+        elements.push(
+          <Box key={`tc-${i}`} marginTop={0} marginLeft={1}>
+            <Text color={color}>{icon} {toolName}</Text>
+          </Box>,
+        );
+      }
+      // 跳过后续 JSON 行（直到下一个非 JSON 行）
+      continue;
+    }
+    // JSON 续行（tool_call 的 params body）— 静默吞掉
+    if (/^\s*["{]/.test(line) && elements.length > 0) {
+      const last = elements[elements.length - 1];
+      if (last != null && typeof last === 'object' && 'key' in last && String((last as { key: unknown }).key).startsWith('tc-')) continue;
     }
 
     const resultMatch = line.match(/^\[Tool Result: (\w+)\]\s*$/);
@@ -461,7 +518,7 @@ function ThinkingIndicator() {
   const [frame, setFrame] = useState(0);
 
   useEffect(() => {
-    const timer = setInterval(() => setFrame(f => (f + 1) % rippleFrames.length), 80);
+    const timer = setInterval(() => setFrame(f => (f + 1) % rippleFrames.length), 200);
     return () => clearInterval(timer);
   }, []);
 
@@ -492,7 +549,7 @@ function StreamingCursor() {
   const [frame, setFrame] = useState(0);
 
   useEffect(() => {
-    const timer = setInterval(() => setFrame(f => (f + 1) % streamFlowFrames.length), 80);
+    const timer = setInterval(() => setFrame(f => (f + 1) % streamFlowFrames.length), 200);
     return () => clearInterval(timer);
   }, []);
 

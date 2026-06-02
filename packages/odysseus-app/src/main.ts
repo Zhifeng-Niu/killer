@@ -359,7 +359,7 @@ async function main(): Promise<void> {
   const logger = Logger.getInstance();
   logger.setLevel(config.logging.level as 'debug' | 'info' | 'warn' | 'error' | 'silent');
 
-  // 决定是否使用 TUI 模式（需要在 banner 和 boot 之前判断）
+  // 决定是否使用 TUI 模式（readline 输入层，IME 兼容）
   const useTUI = tui || !cli;
 
   // 显示横幅（TUI 模式下跳过 — TUI 有自己的 header）
@@ -490,6 +490,8 @@ async function main(): Promise<void> {
 
   // 启动交互式界面
   if (useTUI) {
+    // ink 接管 stdout — 静音 CLI channel 避免 raw output 打乱渲染
+    agent.cliChannel.mute();
     const instance = startTUI(agent);
     instance.waitUntilExit().then(() => shutdown());
   } else {

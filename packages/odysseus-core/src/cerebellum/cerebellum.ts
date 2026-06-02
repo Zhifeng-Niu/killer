@@ -285,6 +285,71 @@ export class Cerebellum {
   }
 
   /**
+   * MOSS风格Health-Probe检查
+   *
+   * 灵感: "MOSS: Self-Evolution through Source-Level Rewriting" (arXiv:2605.22794)
+   * 核心机制：ephemeral trial worker验证 → health-probe-gated promote + rollback
+   *
+   * 在Odysseus中：
+   * - 每次keep后自动运行health probe
+   * - 如果health退化超过阈值，触发自动rollback警告
+   * - health指标：连续失败率、指标退化趋势、stagnation信号
+   */
+  runHealthProbe(missionId?: string): {
+    healthy: boolean;
+    healthScore: number;
+    warnings: string[];
+    rollbackRecommended: boolean;
+  } {
+    const history = this.getHistory(missionId ?? this.activeMission?.id ?? '');
+    const warnings: string[] = [];
+    let healthScore = 1.0;
+
+    // 1. 连续失败率
+    if (history.consecutiveDiscards >= 3) {
+      const penalty = Math.min(0.5, history.consecutiveDiscards * 0.1);
+      healthScore -= penalty;
+      warnings.push(`${history.consecutiveDiscards} consecutive discards detected`);
+    }
+
+    // 2. 成功率
+    if (history.totalWaypoints > 0) {
+      const successRate = history.wins.length / history.totalWaypoints;
+      if (successRate < 0.3) {
+        healthScore -= 0.3;
+        warnings.push(`Low success rate: ${(successRate * 100).toFixed(0)}%`);
+      }
+    }
+
+    // 3. Stagnation检测：最近N次没有改善
+    if (history.deadEnds.length >= 5) {
+      const recentDeadEnds = history.deadEnds.slice(-5);
+      const allRecent = recentDeadEnds.every(d =>
+        d.waypoint >= (history.totalWaypoints - 5)
+      );
+      if (allRecent && history.wins.length > 0) {
+        healthScore -= 0.2;
+        warnings.push('Recent stagnation: no success in last 5 attempts');
+      }
+    }
+
+    // 4. 意外过多（可能是错误路径）
+    if (history.surprises.length > history.wins.length * 2) {
+      healthScore -= 0.15;
+      warnings.push('High surprise-to-win ratio — possible wrong direction');
+    }
+
+    healthScore = Math.max(0, Math.min(1, healthScore));
+
+    return {
+      healthy: healthScore >= 0.5,
+      healthScore,
+      warnings,
+      rollbackRecommended: healthScore < 0.3,
+    };
+  }
+
+  /**
    * 获取尝试历史
    */
   getHistory(missionId?: string): AttemptHistory {

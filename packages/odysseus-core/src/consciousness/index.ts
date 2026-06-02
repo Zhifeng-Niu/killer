@@ -25,6 +25,18 @@ export type {
 
 // Classes
 export { ConsciousnessStream } from './consciousness-stream.js';
+export { GlobalWorkspace } from './global-workspace.js';
+export type {
+  WorkspaceCoalition,
+  WorkspaceModule,
+  GlobalWorkspaceConfig,
+} from './global-workspace.js';
+export { BrainCoordinator } from './brain-coordinator.js';
+export type {
+  ModuleFeedbackHandler,
+  BrainCoordinatorConfig,
+  AttentionPreset,
+} from './brain-coordinator.js';
 
 // Self Monitor — execution health and stagnation detection
 export {

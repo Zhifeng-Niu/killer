@@ -34,7 +34,8 @@
   ],
   "bin": {
     "odysseus": "./odysseus.mjs",
-    "odysseus-agent": "./odysseus.mjs"
+    "odysseus-agent": "./odysseus.mjs",
+    "ody": "./odysseus.mjs"
   },
   "preferGlobal": true,
   "author": "Zhifeng Niu",

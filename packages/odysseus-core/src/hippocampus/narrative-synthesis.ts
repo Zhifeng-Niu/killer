@@ -445,4 +445,102 @@ export class NarrativeSynthesisEngine {
     if (avgWeight > 0.2) return 'challenging';
     return 'difficult';
   }
+
+  // ============================================================
+  // Cross-Chapter Coherence (跨章节连贯性)
+  // ============================================================
+
+  /**
+   * 检查新旧章节之间的主题连贯性
+   *
+   * 如果新章节与最近 3 章共享标签 < 30%，发出一个"断裂"信号，
+   * 用于触发叙事合并或过渡章节生成。
+   *
+   * @returns { coherent: boolean, overlapRatio: number, bridgingTheme?: string }
+   */
+  checkCoherence(
+    newChapters: NarrativeChapter[],
+    existingNarrative: Readonly<AutobiographicalNarrative>
+  ): { coherent: boolean; overlapRatio: number; bridgingTheme?: string } {
+    if (existingNarrative.chapters.length === 0 || newChapters.length === 0) {
+      return { coherent: true, overlapRatio: 1 };
+    }
+
+    // 收集最近 3 章的标签集合
+    const recentChapters = existingNarrative.chapters.slice(-3);
+    const recentTags = new Set<string>();
+    for (const ch of recentChapters) {
+      // 从 summary 中提取关键词作为标签代理
+      const keywords = this.extractKeywords(ch.summary);
+      for (const kw of keywords) recentTags.add(kw);
+    }
+
+    // 收集新章节标签
+    const newTags = new Set<string>();
+    for (const ch of newChapters) {
+      const keywords = this.extractKeywords(ch.summary);
+      for (const kw of keywords) newTags.add(kw);
+    }
+
+    // 计算重叠率
+    const intersection = [...recentTags].filter(t => newTags.has(t)).length;
+    const union = new Set([...recentTags, ...newTags]).size;
+    const overlapRatio = union > 0 ? intersection / union : 0;
+
+    // 找桥接主题：同时出现在新旧章节中的标签
+    const bridgingTheme = [...recentTags].find(t => newTags.has(t));
+
+    return {
+      coherent: overlapRatio >= 0.15,
+      overlapRatio,
+      bridgingTheme,
+    };
+  }
+
+  /**
+   * 从文本中提取关键词
+   *
+   * 简单的 TF 统计，返回出现 ≥ 2 次的词。
+   */
+  private extractKeywords(text: string): string[] {
+    if (!text) return [];
+
+    const words = text.match(/[a-zA-Z]{2,}|[\u4e00-\u9fff]{2}/g) || [];
+    const freq = new Map<string, number>();
+    for (const w of words.map(w => w.toLowerCase())) {
+      freq.set(w, (freq.get(w) || 0) + 1);
+    }
+
+    return [...freq.entries()]
+      .filter(([, count]) => count >= 2)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([word]) => word);
+  }
+
+  /**
+   * 生成过渡叙事
+   *
+   * 当连贯性断裂时，生成一个桥接章节。
+   */
+  generateBridgeChapter(
+    previousChapters: NarrativeChapter[],
+    newChapters: NarrativeChapter[],
+  ): NarrativeChapter | null {
+    if (previousChapters.length === 0 || newChapters.length === 0) return null;
+
+    const lastPrev = previousChapters[previousChapters.length - 1];
+    const firstNew = newChapters[0];
+
+    return {
+      id: `chapter_bridge_${Date.now()}`,
+      title: 'Transition',
+      summary: `Shifted from "${lastPrev.title}" to "${firstNew.title}" — a period of adaptation.`,
+      startTime: lastPrev.endTime,
+      endTime: firstNew.startTime,
+      keyEpisodes: [...lastPrev.keyEpisodes.slice(-2), ...firstNew.keyEpisodes.slice(0, 2)],
+      emotionalTone: 'transitional',
+      significance: 0.3,
+    };
+  }
 }

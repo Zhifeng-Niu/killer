@@ -34,6 +34,7 @@ export type {
 
 export type {
   ForgettingConfig,
+  InformationDensity,
 } from './forgetting.js';
 
 export type {
@@ -69,6 +70,8 @@ export {
   calculateNextReview,
   applyForgettingCurve,
   getMemoryHealth,
+  calculateInformationDensity,
+  adjustStabilityByDensity,
 } from './forgetting.js';
 
 // Constants

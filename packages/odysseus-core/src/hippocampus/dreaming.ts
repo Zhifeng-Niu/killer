@@ -7,6 +7,7 @@
 
 import type { Episode, SemanticNode, SemanticRelation, NarrativeChapter } from './types.js';
 import { applyForgettingCurve, decay, getMemoryHealth } from './forgetting.js';
+import { MemoryBlockRefiner, type RefinementResult } from './memory-block-refiner.js';
 
 /**
  * 梦境结果
@@ -20,6 +21,8 @@ export interface DreamResult {
   narrativeSynthesized: boolean;
   /** 反事实梦境分支 */
   counterfactualBranches: CounterfactualBranch[];
+  /** RiM风格隐式推理精炼结果 */
+  memoryBlockRefinement?: RefinementResult;
 }
 
 /**
@@ -83,6 +86,11 @@ export interface DreamingConfig {
    * 反事实分支最大深度
    */
   counterfactualDepth: number;
+
+  /**
+   * RiM风格隐式推理精炼开关
+   */
+  memoryBlockRefiningEnabled: boolean;
 }
 
 /**
@@ -94,8 +102,9 @@ export const DEFAULT_DREAMING_CONFIG: DreamingConfig = {
   patternThreshold: 0.5,
   decayThreshold: 0.2,
   maxInsights: 3,
-  counterfactualEnabled: false,
+  counterfactualEnabled: true,
   counterfactualDepth: 3,
+  memoryBlockRefiningEnabled: true,
 };
 
 /**
@@ -114,9 +123,11 @@ interface ExtractedPattern {
  */
 export class DreamEngine {
   private config: DreamingConfig;
+  private readonly blockRefiner: MemoryBlockRefiner;
 
   constructor(config: DreamingConfig = DEFAULT_DREAMING_CONFIG) {
     this.config = config;
+    this.blockRefiner = new MemoryBlockRefiner();
   }
 
   /**
@@ -212,6 +223,21 @@ export class DreamEngine {
       }
     }
 
+    // 5.6 RiM风格隐式推理精炼：用memory block替代逐条处理
+    if (this.config.memoryBlockRefiningEnabled && recentEpisodes.length > 0) {
+      try {
+        const refinement = this.blockRefiner.refine(recentEpisodes, semanticGraph);
+        result.memoryBlockRefinement = refinement;
+        // 将精炼洞察注入主洞察列表
+        for (const insight of refinement.newInsights) {
+          result.insights.push(`[RiM] ${insight}`);
+        }
+        result.insights = result.insights.slice(0, this.config.maxInsights);
+      } catch {
+        // 精炼失败不阻断
+      }
+    }
+
     // 6. 合成叙事（如果提供了回调）
     if (synthesizeNarrative) {
       try {
@@ -286,7 +312,94 @@ export class DreamEngine {
       }
     }
 
+    // 新增：情感梯度模式 — 检测情感沿时间轴的系统性变化
+    const emotionalPatterns = this.extractEmotionalGradientPatterns(episodes);
+    patterns.push(...emotionalPatterns);
+
+    // 新增：跨标签共现模式 — 检测标签组合
+    const cooccurrencePatterns = this.extractCooccurrencePatterns(episodes);
+    patterns.push(...cooccurrencePatterns);
+
     return patterns.filter((p) => p.confidence >= this.config.patternThreshold);
+  }
+
+  /**
+   * 提取情感梯度模式
+   *
+   * 检测情感沿时间轴的系统性变化趋势，如"每次讨论X话题后情绪下降"。
+   */
+  private extractEmotionalGradientPatterns(episodes: Episode[]): ExtractedPattern[] {
+    if (episodes.length < 5) return [];
+
+    // 按时间排序
+    const sorted = [...episodes].sort((a, b) => a.timestamp - b.timestamp);
+    const patterns: ExtractedPattern[] = [];
+
+    // 计算全局情感趋势
+    let risingCount = 0;
+    let fallingCount = 0;
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].emotionalWeight > sorted[i - 1].emotionalWeight) risingCount++;
+      else if (sorted[i].emotionalWeight < sorted[i - 1].emotionalWeight) fallingCount++;
+    }
+
+    // 检测显著的情感趋势
+    if (risingCount > sorted.length * 0.6) {
+      patterns.push({
+        sourceEpisodes: sorted.map(e => e.id),
+        pattern: `Emotional trend: rising momentum (${risingCount}/${sorted.length - 1} transitions upward)`,
+        confidence: risingCount / (sorted.length - 1),
+      });
+    } else if (fallingCount > sorted.length * 0.6) {
+      patterns.push({
+        sourceEpisodes: sorted.map(e => e.id),
+        pattern: `Emotional trend: declining momentum (${fallingCount}/${sorted.length - 1} transitions downward)`,
+        confidence: fallingCount / (sorted.length - 1),
+      });
+    }
+
+    return patterns;
+  }
+
+  /**
+   * 提取跨标签共现模式
+   *
+   * 检测频繁一起出现的标签组合。
+   */
+  private extractCooccurrencePatterns(episodes: Episode[]): ExtractedPattern[] {
+    if (episodes.length < 3) return [];
+
+    const patterns: ExtractedPattern[] = [];
+    const pairCounts = new Map<string, { count: number; episodes: Episode[] }>();
+
+    for (const ep of episodes) {
+      const tags = [...new Set(ep.tags)];
+      for (let i = 0; i < tags.length; i++) {
+        for (let j = i + 1; j < tags.length; j++) {
+          const pair = [tags[i], tags[j]].sort().join(' + ');
+          const existing = pairCounts.get(pair);
+          if (existing) {
+            existing.count++;
+            existing.episodes.push(ep);
+          } else {
+            pairCounts.set(pair, { count: 1, episodes: [ep] });
+          }
+        }
+      }
+    }
+
+    // 只报告出现 ≥ 2 次的共现
+    for (const [pair, data] of pairCounts) {
+      if (data.count >= 2) {
+        patterns.push({
+          sourceEpisodes: data.episodes.map(e => e.id),
+          pattern: `Co-occurrence: "${pair}" appeared together ${data.count} times`,
+          confidence: Math.min(data.count / episodes.length * 2, 1),
+        });
+      }
+    }
+
+    return patterns;
   }
 
   /**
@@ -351,31 +464,45 @@ export class DreamEngine {
   }
 
   /**
-   * 衰减低权重记忆
+   * 衰减低权重记忆 + 淘汰死亡记忆
+   *
+   * 链路：Dream → Decay → Evict
+   * 低权重的标记 dormant；已长期 dormant 且 retention ≈ 0 的直接删除。
    */
   private decayWeakMemories(
     episodicStore: Map<string, Episode>,
     now: number
   ): number {
     let decayed = 0;
+    let evicted = 0;
 
     for (const [id, episode] of episodicStore) {
       const health = getMemoryHealth(episode, now);
       const updated = decay(episode, now);
 
       if (updated.emotionalWeight < this.config.decayThreshold) {
+        // 已 dormant 且 retention 极低 → 真正删除
+        if (updated.tags.includes('dormant')) {
+          const timeSince = now - updated.timestamp;
+          const retention = Math.exp(-timeSince / Math.max(updated.decayRate, 1));
+          if (retention < 0.005) {
+            episodicStore.delete(id);
+            evicted++;
+            continue;
+          }
+        }
         // 标记为休眠
         if (!updated.tags.includes('dormant')) {
           updated.tags.push('dormant');
-          episodicStore.set(id, updated);
           decayed++;
         }
+        episodicStore.set(id, updated);
       } else if (health === 'weak') {
         episodicStore.set(id, updated);
       }
     }
 
-    return decayed;
+    return decayed + evicted;
   }
 
   /**

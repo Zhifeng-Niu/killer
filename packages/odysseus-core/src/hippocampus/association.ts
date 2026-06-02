@@ -355,3 +355,170 @@ export class AssociationEngine {
     return activated.map((a) => a.node);
   }
 }
+
+// ============================================================
+// TF-IDF Semantic Similarity (语义相似度匹配)
+// ============================================================
+
+/**
+ * TF-IDF 向量表示
+ */
+interface TfIdfVector {
+  terms: Map<string, number>;
+  norm: number;
+}
+
+/**
+ * 计算 TF（词频）
+ *
+ * 归一化词频：tf(t, d) = count(t, d) / |d|
+ */
+function computeTf(tokens: string[]): Map<string, number> {
+  const tf = new Map<string, number>();
+  const total = tokens.length || 1;
+  for (const t of tokens) {
+    tf.set(t, (tf.get(t) || 0) + 1);
+  }
+  for (const [term, count] of tf) {
+    tf.set(term, count / total);
+  }
+  return tf;
+}
+
+/**
+ * 计算 IDF（逆文档频率）
+ *
+ * idf(t, D) = log(|D| / (1 + df(t)))
+ * df(t) = 包含 term t 的文档数
+ */
+function computeIdf(documents: string[][]): Map<string, number> {
+  const n = documents.length || 1;
+  const df = new Map<string, number>();
+  for (const doc of documents) {
+    const uniqueTerms = new Set(doc);
+    for (const term of uniqueTerms) {
+      df.set(term, (df.get(term) || 0) + 1);
+    }
+  }
+  const idf = new Map<string, number>();
+  for (const [term, freq] of df) {
+    idf.set(term, Math.log(n / (1 + freq)));
+  }
+  return idf;
+}
+
+/**
+ * 构建 TF-IDF 向量
+ */
+function buildTfIdfVector(tokens: string[], idf: Map<string, number>): TfIdfVector {
+  const tf = computeTf(tokens);
+  const terms = new Map<string, number>();
+  for (const [term, tfVal] of tf) {
+    const idfVal = idf.get(term) || 0;
+    terms.set(term, tfVal * idfVal);
+  }
+  // L2 归一化
+  let norm = 0;
+  for (const v of terms.values()) {
+    norm += v * v;
+  }
+  norm = Math.sqrt(norm) || 1;
+  return { terms, norm };
+}
+
+/**
+ * 余弦相似度
+ */
+function cosineSimilarity(a: TfIdfVector, b: TfIdfVector): number {
+  let dot = 0;
+  for (const [term, val] of a.terms) {
+    if (b.terms.has(term)) {
+      dot += val * b.terms.get(term)!;
+    }
+  }
+  return dot / (a.norm * b.norm);
+}
+
+/**
+ * 分词（支持中英文混合）
+ */
+export function tokenizeSemantic(text: string): string[] {
+  const tokens: string[] = [];
+  // 英文单词（≥2字符）
+  const english = text.match(/[a-zA-Z]{2,}/g) || [];
+  tokens.push(...english.map(w => w.toLowerCase()));
+  // 中文字符 bigram
+  const chinese = text.match(/[\u4e00-\u9fff]/g) || [];
+  for (let i = 0; i < chinese.length - 1; i++) {
+    tokens.push(chinese[i] + chinese[i + 1]);
+  }
+  if (chinese.length === 1) tokens.push(chinese[0]);
+  return tokens;
+}
+
+/**
+ * 计算两段文本的语义相似度 [0, 1]
+ *
+ * 使用 TF-IDF + 余弦相似度。适用于中英文混合文本。
+ * 对于短文本（<3 token），直接回退到字面匹配。
+ */
+export function semanticSimilarity(textA: string, textB: string): number {
+  if (!textA || !textB) return 0;
+
+  const tokensA = tokenizeSemantic(textA);
+  const tokensB = tokenizeSemantic(textB);
+
+  // 短文本回退到 Jaccard
+  if (tokensA.length < 3 || tokensB.length < 3) {
+    const setA = new Set(tokensA);
+    const setB = new Set(tokensB);
+    const intersection = [...setA].filter(t => setB.has(t)).length;
+    const union = new Set([...setA, ...setB]).size;
+    return union > 0 ? intersection / union : 0;
+  }
+
+  // TF-IDF
+  const idf = computeIdf([tokensA, tokensB]);
+  const vecA = buildTfIdfVector(tokensA, idf);
+  const vecB = buildTfIdfVector(tokensB, idf);
+
+  return cosineSimilarity(vecA, vecB);
+}
+
+/**
+ * 语义联想检索
+ *
+ * 给定 query 和一组候选文本，返回按语义相似度排序的结果。
+ * 比 spreadActivation 更适合"模糊匹配"场景（如搜索记忆）。
+ *
+ * @param query - 查询文本
+ * @param candidates - 候选 { id, text } 列表
+ * @param limit - 返回数量上限
+ * @param threshold - 最低相似度阈值
+ */
+export function semanticSearch(
+  query: string,
+  candidates: Array<{ id: string; text: string }>,
+  limit: number = 10,
+  threshold: number = 0.1
+): Array<{ id: string; text: string; score: number }> {
+  const queryTokens = tokenizeSemantic(query);
+
+  if (queryTokens.length === 0) return [];
+
+  // 用所有文档计算 IDF
+  const allDocs = [queryTokens, ...candidates.map(c => tokenizeSemantic(c.text))];
+  const idf = computeIdf(allDocs);
+  const queryVec = buildTfIdfVector(queryTokens, idf);
+
+  const scored = candidates.map(c => {
+    const docVec = buildTfIdfVector(tokenizeSemantic(c.text), idf);
+    const score = cosineSimilarity(queryVec, docVec);
+    return { ...c, score };
+  });
+
+  return scored
+    .filter(r => r.score >= threshold)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}

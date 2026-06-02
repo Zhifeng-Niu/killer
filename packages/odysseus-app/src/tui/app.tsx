@@ -7,16 +7,20 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Box, Text, useApp, useInput, useStdout } from 'ink';
+import { Box, Text, useApp, useStdout } from 'ink';
 import { ChatPanel, type ChatMessage } from './chat-panel.js';
 import { InputArea } from './input-area.js';
-import { Header } from './header.js';
-import { colors, box } from './theme.js';
+import { colors, box, formatDuration } from './theme.js';
 import type { OdysseusAgent } from '../orchestrator/index.js';
 import { generateBootGreeting } from '../cli/greeting.js';
 
 interface OdysseusTUIProps {
   agent: OdysseusAgent;
+  bridge: {
+    submit: (fn: (input: string) => void) => void;
+    getStatus: (fn: () => string) => void;
+    abort: (fn: () => void) => void;
+  };
 }
 
 let msgCounter = 0;
@@ -35,7 +39,7 @@ function createMessage(role: ChatMessage['role'], content: string, streaming = f
   return { id: `msg-${++msgCounter}`, role, content, streaming, timestamp: Date.now() };
 }
 
-export function OdysseusTUI({ agent }: OdysseusTUIProps) {
+export function OdysseusTUI({ agent, bridge }: OdysseusTUIProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -96,11 +100,24 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
     setMessages([...pool]);
   }, []);
 
+  const MAX_TUI_MESSAGES = 150;
+
   const appendMessage = useCallback((msg: ChatMessage) => {
     if (renderedIdsRef.current.has(msg.id)) return;
     renderedIdsRef.current.add(msg.id);
     const pool = messagesRef.current;
-    messagesRef.current = [...pool, msg];
+    const next = [...pool, msg];
+
+    // 裁剪旧消息防止 React state 内存膨胀
+    if (next.length > MAX_TUI_MESSAGES) {
+      const removed = next.slice(0, next.length - MAX_TUI_MESSAGES);
+      for (const m of removed) {
+        renderedIdsRef.current.delete(m.id);
+      }
+      messagesRef.current = next.slice(-MAX_TUI_MESSAGES);
+    } else {
+      messagesRef.current = next;
+    }
     setMessages(messagesRef.current);
   }, []);
 
@@ -116,35 +133,6 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
     const used = Math.min(messages.length * 500, 128000);
     return { used, total: 128000 };
   }, [messages.length]);
-
-  // ── 键盘 ──
-  const shutdownRef = useRef(false);
-  useInput((_input, key) => {
-    if (key.ctrl && _input === 'c') {
-      if (shutdownRef.current) return;
-      shutdownRef.current = true;
-      agent.saveSession('tui-session');
-      agent.shutdown().then(() => exit()).catch(() => exit());
-      return;
-    }
-    if (key.escape && abortRef.current) {
-      abortRef.current.abort();
-      abortRef.current = null;
-      setIsThinking(false);
-      setAgentStatus('idle');
-      const pool = messagesRef.current;
-      if (pool.length > 0) {
-        const last = pool[pool.length - 1];
-        if (last?.streaming) {
-          updateMessage(last.id, (m) => ({
-            ...m,
-            streaming: false,
-            content: m.content + '\n\n[已取消]',
-          }));
-        }
-      }
-    }
-  });
 
   // ── 提交处理 ──
 
@@ -231,7 +219,24 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
       let fullResponse = '';
       let lastFlush = 0;
       let statusSet = false;
-      const FLUSH_MS = 400;
+      const FLUSH_MS = 500;
+
+      // ── 工具链 Pipeline ──
+      const toolEntries: Array<{ name: string; done: boolean }> = [];
+      let toolAnimFrame = 0;
+      let toolMsgId: string | null = null;
+      let toolAnimTimer: ReturnType<typeof setInterval> | null = null;
+      const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+      const MAX_VISIBLE = 7;
+
+      function renderToolChain(animating: boolean): string {
+        const spinner = animating ? SPINNER[toolAnimFrame] : '✓';
+        const visible = toolEntries.slice(-MAX_VISIBLE);
+        const overflow = toolEntries.length - visible.length;
+        const parts = visible.map(e => `${e.done ? '✓' : '◐'}${e.name}`);
+        if (overflow > 0) parts.push(`+${overflow}`);
+        return `[ToolChain: ${spinner}|${parts.join('→')}]`;
+      }
 
       const result = await agent.processInput(input, 'cli', (token) => {
         if (ac.signal.aborted) return;
@@ -252,15 +257,33 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
         setAgentStatus('thinking');
         setStatusDetail(status);
         if (status.includes('(') && !status.startsWith('Thinking') && !status.startsWith('Reasoning') && !status.startsWith('Summarizing') && !status.startsWith('Converging')) {
-          const pool = messagesRef.current;
-          const last = pool[pool.length - 1];
-          if (last?.role === 'system' && last.content.startsWith('  ◉ ') && !last.content.includes('\n')) {
-            updateMessage(last.id, () => createMessage('system', `  ◉ ${status}`));
-          } else {
-            appendMessage(createMessage('system', `  ◉ ${status}`));
+          const title = status.split('(')[0].trim();
+          if (title) {
+            for (const e of toolEntries) e.done = true;
+            toolEntries.push({ name: title, done: false });
+            if (!toolMsgId) {
+              const msg = createMessage('system', renderToolChain(true));
+              toolMsgId = msg.id;
+              appendMessage(msg);
+              toolAnimTimer = setInterval(() => {
+                toolAnimFrame = (toolAnimFrame + 1) % SPINNER.length;
+                if (toolMsgId) {
+                  updateMessage(toolMsgId, (m) => ({ ...m, content: renderToolChain(true) }));
+                }
+              }, 200);
+            } else {
+              updateMessage(toolMsgId, (m) => ({ ...m, content: renderToolChain(true) }));
+            }
           }
         }
       });
+
+      // 工具链动画清理 + 最终状态（所有圆点实心）
+      if (toolAnimTimer) clearInterval(toolAnimTimer);
+      if (toolMsgId && toolEntries.length > 0) {
+        for (const e of toolEntries) e.done = true;
+        updateMessage(toolMsgId, (m) => ({ ...m, content: renderToolChain(false) }));
+      }
 
       if (!ac.signal.aborted) {
         const elapsed = Date.now() - startTime;
@@ -289,23 +312,55 @@ export function OdysseusTUI({ agent }: OdysseusTUIProps) {
     }
   }, [agent]);
 
+  // ── Bridge: readline → ink ──
+  useEffect(() => {
+    bridge.submit(handleSubmit);
+  }, [handleSubmit, bridge]);
+
+  useEffect(() => {
+    bridge.getStatus(() => agentStatus);
+  }, [agentStatus, bridge]);
+
+  useEffect(() => {
+    bridge.abort(() => {
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+        setIsThinking(false);
+        setAgentStatus('idle');
+        const pool = messagesRef.current;
+        if (pool.length > 0) {
+          const last = pool[pool.length - 1];
+          if (last?.streaming) {
+            updateMessage(last.id, (m) => ({
+              ...m,
+              streaming: false,
+              content: m.content + '\n\n[已取消]',
+            }));
+          }
+        }
+      }
+    });
+  }, [updateMessage, bridge]);
+
   // ── 渲染 — 线性布局 ──
 
   return (
     <Box flexDirection="column" height="100%">
       <ChatPanel messages={messages} isThinking={isThinking} />
-      <Header
-        model={agent.getModel?.() ?? ''}
-        agent={agent}
-        bootTime={bootTimeRef.current}
-        messageCount={messages.length}
-      />
       <InputArea
-        onSubmit={handleSubmit}
         agentStatus={agentStatus}
         statusDetail={statusDetail}
         contextUsed={contextEstimate.used}
         contextTotal={contextEstimate.total}
+        model={agent.getModel?.() ?? ''}
+        uptime={formatDuration(Date.now() - bootTimeRef.current)}
+        messageCount={messages.length}
+        cellsCount={agent.synapse?.getAllColumns()?.length ?? 0}
+        goalsCount={agent.getGoals?.()?.length ?? 0}
+        episodesCount={agent.getMemoryStats?.()?.totalEpisodes ?? 0}
+        toolsCount={agent.tools?.list?.()?.length ?? 0}
+        emotion={emotionToEmoji(agent.persona?.emotionalState?.getState?.()?.primaryEmotion ?? 'neutral')}
       />
     </Box>
   );
