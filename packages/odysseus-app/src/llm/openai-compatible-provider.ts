@@ -24,6 +24,33 @@ import type { LLMProviderConfig } from './types.js';
  * 双协议支持: 部分服务商同时提供 OpenAI 和 Anthropic 兼容端点。
  * 设置 anthropicBaseUrl 后，用户可通过 protocol: 'anthropic' 切换协议。
  */
+/**
+ * Provider 能力元数据
+ *
+ * 描述每个服务商的独特能力，供上层认知架构做智能路由。
+ * 例如：DeepSeek 的 thinking mode 适合深度推理，
+ *       Kimi 的 256K context 适合长文档分析，
+ *       MiniMax 的 Anthropic 兼容端点适合工具密集型任务。
+ */
+export interface ProviderCapabilities {
+  /** 最大上下文长度（tokens） */
+  maxContext: number;
+  /** 最大输出长度（tokens） */
+  maxOutput: number;
+  /** 是否支持 thinking / reasoning mode */
+  thinkingMode: boolean;
+  /** 是否支持 function calling / tool use */
+  toolUse: boolean;
+  /** 是否支持流式输出 */
+  streaming: boolean;
+  /** 是否支持 vision / 多模态 */
+  vision: boolean;
+  /** 是否支持 JSON mode */
+  jsonMode: boolean;
+  /** 特殊能力标签 */
+  features: string[];
+}
+
 export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
   baseUrl: string;
   defaultModel: string;
@@ -38,6 +65,8 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
   keyPrefix?: string;
   /** 获取 API key 的帮助链接 */
   helpUrl?: string;
+  /** Provider 能力元数据 */
+  capabilities?: ProviderCapabilities;
 }> = {
   minimax: {
     baseUrl: 'https://api.minimaxi.com/v1/chat/completions',
@@ -49,42 +78,92 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     helpUrl: 'https://platform.minimaxi.com/',
     anthropicBaseUrl: 'https://api.minimaxi.com/anthropic/v1/messages',
     anthropicModels: ['MiniMax-M2.7', 'MiniMax-M2.7-highspeed'],
+    capabilities: {
+      maxContext: 1_000_000,
+      maxOutput: 128_000,
+      thinkingMode: true,
+      toolUse: true,
+      streaming: true,
+      vision: true,
+      jsonMode: true,
+      features: ['anthropic-compatible', 'coding-optimized', 'fast-tool-calling'],
+    },
   },
   glm: {
-    baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4/chat/completions',
-    defaultModel: 'GLM-4.7',
-    models: ['GLM-5.1', 'GLM-5', 'GLM-4.7', 'GLM-4.5-Air'],
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+    defaultModel: 'GLM-5.1',
+    models: ['GLM-5.1', 'GLM-5', 'GLM-4.7', 'GLM-4.5-Air', 'GLM-4-Long'],
     envKey: 'GLM_API_KEY',
     description: 'GLM / 智谱 AI',
     helpUrl: 'https://open.bigmodel.cn/',
     anthropicBaseUrl: 'https://open.bigmodel.cn/api/anthropic/v1/messages',
-    anthropicModels: ['GLM-5.1', 'GLM-5', 'GLM-4.7', 'GLM-4.5-Air'],
+    anthropicModels: ['GLM-5.1', 'GLM-5', 'GLM-4.7'],
+    capabilities: {
+      maxContext: 1_000_000,
+      maxOutput: 128_000,
+      thinkingMode: true,
+      toolUse: true,
+      streaming: true,
+      vision: true,
+      jsonMode: true,
+      features: ['anthropic-compatible', 'long-horizon-tasks', 'agentic-engineering', 'chinese-optimized'],
+    },
   },
   deepseek: {
     baseUrl: 'https://api.deepseek.com/v1/chat/completions',
-    defaultModel: 'deepseek-chat',
-    models: ['deepseek-chat', 'deepseek-reasoner'],
+    defaultModel: 'deepseek-v4-flash',
+    models: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
     envKey: 'DEEPSEEK_API_KEY',
     description: 'DeepSeek',
     keyPrefix: 'sk-',
     helpUrl: 'https://platform.deepseek.com/api_keys',
+    capabilities: {
+      maxContext: 1_000_000,
+      maxOutput: 384_000,
+      thinkingMode: true,
+      toolUse: true,
+      streaming: true,
+      vision: false,
+      jsonMode: true,
+      features: ['thinking-mode', 'reasoning-effort', 'strict-tool-calling', 'ultra-long-context', 'cache-discount'],
+    },
   },
   qwen: {
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
     defaultModel: 'qwen-plus',
-    models: ['qwen-max', 'qwen-plus', 'qwen-turbo'],
+    models: ['qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen-long'],
     envKey: 'DASHSCOPE_API_KEY',
     description: 'Qwen / 通义千问 (阿里云)',
     helpUrl: 'https://dashscope.console.aliyun.com/',
+    capabilities: {
+      maxContext: 1_000_000,
+      maxOutput: 8_192,
+      thinkingMode: false,
+      toolUse: true,
+      streaming: true,
+      vision: false,
+      jsonMode: true,
+      features: ['long-context', 'chinese-optimized'],
+    },
   },
   moonshot: {
     baseUrl: 'https://api.moonshot.cn/v1/chat/completions',
-    defaultModel: 'moonshot-v1-8k',
-    models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+    defaultModel: 'kimi-k2.5',
+    models: ['kimi-k2.6', 'kimi-k2.5', 'moonshot-v1-128k', 'moonshot-v1-32k', 'moonshot-v1-8k'],
     envKey: 'MOONSHOT_API_KEY',
     description: 'Moonshot / Kimi (月之暗面)',
     keyPrefix: 'sk-kimi',
     helpUrl: 'https://platform.moonshot.cn/',
+    capabilities: {
+      maxContext: 256_000,
+      maxOutput: 8_192,
+      thinkingMode: false,
+      toolUse: true,
+      streaming: true,
+      vision: true,
+      jsonMode: true,
+      features: ['long-context', 'agent-swarm', 'multimodal', 'zero-schema-errors'],
+    },
   },
   baichuan: {
     baseUrl: 'https://api.baichuan-ai.com/v1/chat/completions',
@@ -92,6 +171,16 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     models: ['Baichuan4', 'Baichuan3-Turbo', 'Baichuan3-Turbo-128k'],
     envKey: 'BAICHUAN_API_KEY',
     description: 'Baichuan / 百川智能',
+    capabilities: {
+      maxContext: 128_000,
+      maxOutput: 4_096,
+      thinkingMode: false,
+      toolUse: true,
+      streaming: true,
+      vision: false,
+      jsonMode: false,
+      features: ['chinese-optimized'],
+    },
   },
   yi: {
     baseUrl: 'https://api.lingyiwanwu.com/v1/chat/completions',
@@ -99,14 +188,34 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     models: ['yi-lightning', 'yi-large', 'yi-medium'],
     envKey: 'YI_API_KEY',
     description: 'Yi / 零一万物',
+    capabilities: {
+      maxContext: 32_000,
+      maxOutput: 4_096,
+      thinkingMode: false,
+      toolUse: true,
+      streaming: true,
+      vision: false,
+      jsonMode: false,
+      features: [],
+    },
   },
   siliconflow: {
     baseUrl: 'https://api.siliconflow.cn/v1/chat/completions',
     defaultModel: 'deepseek-ai/DeepSeek-V3',
-    models: ['deepseek-ai/DeepSeek-V3', 'deepseek-ai/DeepSeek-V3.2', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen2.5-72B-Instruct'],
+    models: ['deepseek-ai/DeepSeek-V3', 'deepseek-ai/DeepSeek-V3.2', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen2.5-72B-Instruct', 'moonshotai/Kimi-K2.5'],
     envKey: 'SILICONFLOW_API_KEY',
     description: 'SiliconFlow / 硅基流动',
     helpUrl: 'https://cloud.siliconflow.cn/',
+    capabilities: {
+      maxContext: 128_000,
+      maxOutput: 8_192,
+      thinkingMode: false,
+      toolUse: true,
+      streaming: true,
+      vision: false,
+      jsonMode: true,
+      features: ['multi-model-aggregation'],
+    },
   },
   volcengine: {
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
@@ -114,14 +223,34 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     models: ['doubao-1.5-pro-32k', 'doubao-1.5-pro-256k', 'doubao-1.5-lite-32k', 'deepseek-V3'],
     envKey: 'VOLCENGINE_API_KEY',
     description: 'Volcengine / 火山方舟 (字节跳动)',
+    capabilities: {
+      maxContext: 256_000,
+      maxOutput: 4_096,
+      thinkingMode: false,
+      toolUse: true,
+      streaming: true,
+      vision: false,
+      jsonMode: false,
+      features: ['chinese-optimized'],
+    },
   },
   gemini: {
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-    defaultModel: 'gemini-2.0-flash',
+    defaultModel: 'gemini-2.5-flash',
     models: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'],
     envKey: 'GEMINI_API_KEY',
     description: 'Google Gemini',
     helpUrl: 'https://aistudio.google.com/apikey',
+    capabilities: {
+      maxContext: 1_000_000,
+      maxOutput: 65_536,
+      thinkingMode: true,
+      toolUse: true,
+      streaming: true,
+      vision: true,
+      jsonMode: true,
+      features: ['multimodal', 'thinking-mode', 'grounding'],
+    },
   },
   groq: {
     baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
@@ -131,14 +260,34 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     description: 'Groq (超快推理)',
     keyPrefix: 'gsk_',
     helpUrl: 'https://console.groq.com/keys',
+    capabilities: {
+      maxContext: 128_000,
+      maxOutput: 8_192,
+      thinkingMode: false,
+      toolUse: true,
+      streaming: true,
+      vision: false,
+      jsonMode: false,
+      features: ['ultra-fast-inference'],
+    },
   },
   together: {
     baseUrl: 'https://api.together.xyz/v1/chat/completions',
     defaultModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-    models: ['meta-llama/Llama-3.3-70B-Instruct-Turbo', 'mistralai/Mixtral-8x7B-Instruct-v0.1'],
+    models: ['meta-llama/Llama-3.3-70B-Instruct-Turbo', 'mistralai/Mixtral-8x7B-Instruct-v0.1', 'moonshotai/Kimi-K2.5'],
     envKey: 'TOGETHER_API_KEY',
     description: 'Together AI',
     helpUrl: 'https://api.together.xyz/settings/api-keys',
+    capabilities: {
+      maxContext: 128_000,
+      maxOutput: 4_096,
+      thinkingMode: false,
+      toolUse: true,
+      streaming: true,
+      vision: false,
+      jsonMode: false,
+      features: ['multi-model-hosting'],
+    },
   },
   stepfun: {
     baseUrl: 'https://api.stepfun.com/v1/chat/completions',
@@ -147,6 +296,16 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     envKey: 'STEPFUN_API_KEY',
     description: 'Stepfun / 阶跃星辰',
     helpUrl: 'https://platform.stepfun.com/',
+    capabilities: {
+      maxContext: 16_000,
+      maxOutput: 4_096,
+      thinkingMode: false,
+      toolUse: true,
+      streaming: true,
+      vision: false,
+      jsonMode: false,
+      features: [],
+    },
   },
   hunyuan: {
     baseUrl: 'https://api.hunyuan.cloud.tencent.com/v1/chat/completions',
@@ -155,6 +314,16 @@ export const OPENAI_COMPATIBLE_PROVIDERS: Record<string, {
     envKey: 'HUNYUAN_API_KEY',
     description: 'Hunyuan / 混元 (腾讯)',
     helpUrl: 'https://console.cloud.tencent.com/hunyuan',
+    capabilities: {
+      maxContext: 256_000,
+      maxOutput: 4_096,
+      thinkingMode: false,
+      toolUse: true,
+      streaming: true,
+      vision: false,
+      jsonMode: false,
+      features: ['chinese-optimized'],
+    },
   },
 };
 
@@ -165,7 +334,7 @@ const DEFAULT_MAX_TOKENS = 4096;
  */
 
 interface ChatChoice {
-  message: { content: string; tool_calls?: RawToolCall[] };
+  message: { content: string; reasoning_content?: string; tool_calls?: RawToolCall[] };
   finish_reason: string;
 }
 
@@ -209,6 +378,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private readonly maxTokens: number;
   private readonly baseUrl: string;
   private readonly providerName: string;
+  private readonly thinkingMode: boolean;
+  private readonly reasoningEffort: 'high' | 'max';
 
   constructor(config: LLMProviderConfig) {
     const preset = OPENAI_COMPATIBLE_PROVIDERS[config.provider];
@@ -218,6 +389,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
     this.maxTokens = config.maxTokens || DEFAULT_MAX_TOKENS;
     this.baseUrl = config.baseUrl || preset?.baseUrl || 'https://api.openai.com/v1/chat/completions';
     this.providerName = config.provider;
+    this.thinkingMode = config.thinkingMode ?? (preset?.capabilities?.thinkingMode ?? false);
+    this.reasoningEffort = config.reasoningEffort ?? 'high';
   }
 
   async complete(prompt: string, context?: string): Promise<LLMCompletion> {
@@ -234,7 +407,13 @@ export class OpenAICompatibleProvider implements LLMProvider {
     }
 
     const data = (await response.json()) as ChatResponse;
-    const content = data.choices[0]?.message?.content || '';
+    const choice = data.choices[0];
+    const reasoning = choice?.message?.reasoning_content;
+    const mainContent = choice?.message?.content || '';
+    // 思考内容用 <thinking> 标签包裹，便于 UI 层分离展示
+    const content = reasoning
+      ? `<thinking>\n${reasoning}\n</thinking>\n\n${mainContent}`
+      : mainContent;
     const tokensUsed = data.usage
       ? data.usage.prompt_tokens + data.usage.completion_tokens
       : undefined;
@@ -243,7 +422,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       content,
       model: data.model || this.model,
       tokensUsed,
-      finishReason: data.choices[0]?.finish_reason === 'length' ? 'length' : 'stop',
+      finishReason: choice?.finish_reason === 'length' ? 'length' : 'stop',
     };
   }
 
@@ -267,6 +446,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     const decoder = new TextDecoder();
     let buffer = '';
+    let emittedThinkingBoundary = false;
 
     try {
       while (true) {
@@ -284,10 +464,25 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
           try {
             const chunk = JSON.parse(data) as {
-              choices?: Array<{ delta?: { content?: string } }>;
+              choices?: Array<{ delta?: { content?: string; reasoning_content?: string } }>;
             };
-            const content = chunk.choices?.[0]?.delta?.content;
-            if (content) yield content;
+            const delta = chunk.choices?.[0]?.delta;
+            if (delta?.reasoning_content) {
+              // 标记思考内容开始（仅首次）
+              if (!emittedThinkingBoundary) {
+                yield '\n<thinking>\n';
+                emittedThinkingBoundary = true;
+              }
+              yield delta.reasoning_content;
+            }
+            if (delta?.content) {
+              // 思考结束，正文开始
+              if (emittedThinkingBoundary) {
+                yield '\n</thinking>\n\n';
+                emittedThinkingBoundary = false;
+              }
+              yield delta.content;
+            }
           } catch {
             // 跳过格式错误的行
           }
@@ -342,6 +537,33 @@ export class OpenAICompatibleProvider implements LLMProvider {
       tools,
       tool_choice: 'auto',
     };
+
+    // Provider-specific tool calling adaptations
+
+    // DeepSeek V4: strict tool calling with reasoning
+    if (this.providerName === 'deepseek' && this.thinkingMode) {
+      body.thinking = { type: 'enabled' };
+      body.reasoning_effort = this.reasoningEffort;
+      body.max_tokens = Math.max(this.maxTokens, 16_384);
+    }
+
+    // Kimi K2.5+: parallel tool calling for agent swarm patterns
+    if (this.providerName === 'moonshot') {
+      body.parallel_tool_calls = true;
+    }
+
+    // MiniMax M2.7: fast tool calling mode
+    if (this.providerName === 'minimax') {
+      body.tool_choice = 'auto';
+    }
+
+    // GLM-5: agentic engineering mode — higher max_tokens for long tool chains
+    if (this.providerName === 'glm') {
+      const preset = OPENAI_COMPATIBLE_PROVIDERS.glm;
+      if (preset?.capabilities?.maxOutput) {
+        body.max_tokens = Math.min(this.maxTokens * 2, preset.capabilities.maxOutput);
+      }
+    }
 
     let response: Response;
     try {
@@ -423,6 +645,34 @@ export class OpenAICompatibleProvider implements LLMProvider {
     return messages;
   }
 
+  /**
+   * 自适应推理深度
+   *
+   * 检测提示词中的复杂任务信号，自动升级到 max：
+   * - 多步骤任务（debug、refactor、implement + 多个要求）
+   * - 错误分析（error、trace、stack trace）
+   * - 架构决策（design、architect、pattern）
+   * - 长上下文（消息总长 > 2000 字符）
+   */
+  private resolveReasoningEffort(messages: ChatMessage[]): 'high' | 'max' {
+    if (this.reasoningEffort === 'max') return 'max';
+
+    const text = messages.map(m => m.content).join(' ').toLowerCase();
+    const complexSignals = [
+      /\bdebug\b.*\b(fix|error|trace|stack)/i,
+      /\brefactor\b.*\b(structure|pattern|design)/i,
+      /\bimplement\b.*\b(feature|system|module)/i,
+      /\barchitect\b|\bdesign\b.*\bsystem\b/i,
+      /\b(why|root cause|analyze|investigate)\b.*\b(error|bug|issue|problem)/i,
+      /\bstep\s+\d|steps?:\s*\d/i,  // "step 1", "steps: 3"
+    ];
+
+    const isComplex = complexSignals.some(p => p.test(text));
+    const isLongContext = text.length > 2000;
+
+    return (isComplex || isLongContext) ? 'max' : 'high';
+  }
+
   private async doRequest(messages: ChatMessage[], stream: boolean): Promise<Response> {
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${this.apiKey}`,
@@ -434,7 +684,27 @@ export class OpenAICompatibleProvider implements LLMProvider {
       max_tokens: this.maxTokens,
       messages,
       ...(stream && { stream: true }),
+      ...(this.thinkingMode && {
+        thinking: { type: 'enabled' },
+        ...(this.providerName === 'deepseek' && {
+          reasoning_effort: this.resolveReasoningEffort(messages),
+        }),
+        ...(this.providerName === 'minimax' && { interleaved_thinking: true }),
+      }),
     };
+
+    // Provider-specific adaptations
+    if (this.providerName === 'deepseek' && this.thinkingMode) {
+      body.max_tokens = Math.max(this.maxTokens, 16_384);
+    }
+
+    if (this.providerName === 'glm') {
+      // GLM-5 支持 1M context 但需要合理设置 max_tokens
+      const preset = OPENAI_COMPATIBLE_PROVIDERS.glm;
+      if (preset?.capabilities?.maxOutput && this.maxTokens > preset.capabilities.maxOutput) {
+        body.max_tokens = preset.capabilities.maxOutput;
+      }
+    }
 
     let response: Response;
     try {
@@ -495,6 +765,57 @@ export function formatProviderError(
     default:
       return `${preset?.description ?? provider} 请求失败 (${status})。${helpSuffix}`;
   }
+}
+
+/**
+ * 查询 provider 能力元数据
+ *
+ * 供认知架构做智能路由：根据任务特征选择最佳 provider。
+ * 例如：需要深度推理 → DeepSeek thinking mode
+ *       需要长文档分析 → Kimi 256K context
+ *       需要密集工具调用 → MiniMax Anthropic 兼容端点
+ */
+export function getProviderCapabilities(providerName: string): ProviderCapabilities | null {
+  const preset = OPENAI_COMPATIBLE_PROVIDERS[providerName];
+  return preset?.capabilities ?? null;
+}
+
+/**
+ * 根据任务特征推荐最佳 provider
+ *
+ * 匹配逻辑：按 features 标签加权打分，返回得分最高的 provider。
+ */
+export function recommendProvider(requirements: {
+  minContext?: number;
+  thinkingMode?: boolean;
+  toolUse?: boolean;
+  vision?: boolean;
+  preferredFeatures?: string[];
+}): Array<{ provider: string; score: number; capabilities: ProviderCapabilities }> {
+  const results: Array<{ provider: string; score: number; capabilities: ProviderCapabilities }> = [];
+
+  for (const [name, preset] of Object.entries(OPENAI_COMPATIBLE_PROVIDERS)) {
+    if (!preset.capabilities) continue;
+    const caps = preset.capabilities;
+    let score = 0;
+
+    if (requirements.minContext && caps.maxContext >= requirements.minContext) score += 30;
+    if (requirements.thinkingMode && caps.thinkingMode) score += 25;
+    if (requirements.toolUse && caps.toolUse) score += 20;
+    if (requirements.vision && caps.vision) score += 15;
+
+    if (requirements.preferredFeatures) {
+      for (const feat of requirements.preferredFeatures) {
+        if (caps.features.includes(feat)) score += 10;
+      }
+    }
+
+    if (score > 0) {
+      results.push({ provider: name, score, capabilities: caps });
+    }
+  }
+
+  return results.sort((a, b) => b.score - a.score);
 }
 
 /** 内置 provider（非 OpenAI-compatible） */
