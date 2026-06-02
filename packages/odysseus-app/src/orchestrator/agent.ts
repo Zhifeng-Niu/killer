@@ -3919,21 +3919,49 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
   }
 
   /**
-   * 构建工具失败消息（编码工作流感知）
+   * 构建工具失败消息（编码工作流 + TG 感知）
    *
-   * build/test 失败时注入修复指导，而非通用"再试一次"。
-   * DeepSeek thinking mode 可利用此上下文做精准的错误分析和修复。
+   * build/test 失败时注入修复指导，根据编码工具链 TG 动态调整策略：
+   * - 高 TG (>0.6): 标准修复指导（工具链有效，继续）
+   * - 低 TG (<0.4): 收敛引导（工具链浪费严重，建议简化或上报）
+   * - 中 TG: 增强指导（提供更多上下文提示）
    */
   private buildToolFailureMessage(toolName: string, error: string, round: number): string {
     const base = `Tool "${toolName}" failed: ${error}`;
     const isBuildOrTest = /build|test|compile|tsc|eslint|vitest|jest/i.test(toolName);
+
+    // 编码工作流 TG 检查
+    const codingTG = this.getCodingToolTG();
+
     if (isBuildOrTest && round <= 8) {
-      return `${base}\n\n[FIX PROTOCOL: Read the error above carefully. Identify the root cause. Use self_read to examine the failing file. Make a minimal, targeted fix. Then retry the build/test. Do NOT rewrite entire files — fix only what's broken.]`;
+      if (codingTG > 0.6) {
+        return `${base}\n\n[FIX PROTOCOL: Read the error above carefully. Identify the root cause. Use self_read to examine the failing file. Make a minimal, targeted fix. Then retry the build/test. Do NOT rewrite entire files — fix only what's broken.]`;
+      }
+      if (codingTG < 0.4 && round >= 4) {
+        return `${base}\n\n[EFFICIENCY ALERT: Coding tools have low success rate (${(codingTG * 100).toFixed(0)}%). The current approach is not converging efficiently. Consider: (1) a completely different strategy, (2) simplify the fix scope, (3) report current status to user for guidance.]`;
+      }
+      return `${base}\n\n[FIX PROTOCOL: Analyze the error pattern. Check if previous fixes introduced new issues. Use self_read on the specific failing line. Make ONE targeted change and verify before continuing.]`;
     }
     if (round > 8) {
       return `${base}\n\n[Multiple failures detected. Consider: (1) report current progress to user, (2) try a fundamentally different approach, (3) simplify the task scope.]`;
     }
     return `${base} IMPORTANT: Do NOT give up. Try a different approach, use alternative tools, or break the task into smaller steps.`;
+  }
+
+  /** 计算编码工具链的整体 TG */
+  private getCodingToolTG(): number {
+    if (this.efficiencyTracker.getRecordCount() === 0) return 1;
+    const report = this.efficiencyTracker.generateReport();
+    const codingTools = ['build', 'test', 'compile', 'exec', 'shell', 'self_read', 'file_read'];
+    let totalCalls = 0;
+    let totalSuccesses = 0;
+    for (const [tool, stats] of report.toolEfficiency) {
+      if (codingTools.some(ct => tool.toLowerCase().includes(ct))) {
+        totalCalls += stats.calls;
+        totalSuccesses += stats.successes;
+      }
+    }
+    return totalCalls > 0 ? totalSuccesses / totalCalls : 1;
   }
 
   private async executeToolCallsFromResponse(
@@ -4070,6 +4098,18 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
     const tools = this.buildToolDefinitions();
     if (tools.length === 0) return response;
+
+    // ── TG-driven reasoning effort 调整 ──
+    // 低 TG 时降低 reasoning effort（避免在浪费路径上深度思考）
+    // 高 TG 时保持 'max'（token 被有效使用，值得深度推理）
+    const quickTG = this.efficiencyTracker.getQuickTG();
+    const llmConfig = this.config.llm;
+    if ('reasoningEffort' in llmConfig && quickTG < 0.4 && this.efficiencyTracker.getRecordCount() >= 3) {
+      (llmConfig as any).reasoningEffort = 'high'; // 降低深度，加速收敛
+      this.logger.debug(`TG ${(quickTG * 100).toFixed(0)}% → reasoning effort: high`);
+    } else if (quickTG > 0.7 && this.efficiencyTracker.getRecordCount() >= 2) {
+      (llmConfig as any).reasoningEffort = 'max'; // 高效路径，允许深度推理
+    }
 
     // 构建 messages（包含对话上下文 + 第一轮工具结果）
     // 注入编码工作流指导（DeepSeek thinking mode 可利用此上下文做多步规划）
