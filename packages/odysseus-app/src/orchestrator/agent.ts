@@ -128,6 +128,7 @@ import { SkillManager, type SkillExecutionResult } from '../skills/manager.js';
 import { SessionManager, type SessionSnapshot } from '../session/index.js';
 import { Logger } from '../log/index.js';
 import { PeriodicMemoryGuard, trimArray, trimAgentState } from './memory-guard.js';
+import { TokenEfficiencyTracker, type LLMCallRecord, type ToolCallRecord, type EfficiencyReport } from './token-efficiency.js';
 
 /**
  * 生成唯一 ID
@@ -272,6 +273,9 @@ export class OdysseusAgent implements IDriveSource {
 
   // 工具使用效果追踪
   private toolPerformance: Map<string, { uses: number; successes: number; avgDurationMs: number }> = new Map();
+
+  // Token 效率追踪 (Translation Gap)
+  readonly efficiencyTracker = new TokenEfficiencyTracker();
 
   // 目标依赖树：父目标 ID → 子目标依赖关系
   private goalDependencies: Map<string, Array<{ subGoalId: string; dependsOn: string[] }>> = new Map();
@@ -1225,6 +1229,7 @@ Examples:
       denyToolAction: (name) => this.toolPermissions.deny(name),
       confirmToolAction: (name) => this.toolPermissions.deny(name),
       getHealthReport: () => MetricsCollector.getInstance().healthCheck(),
+      getEfficiencyReport: () => this.efficiencyTracker.getRecordCount() > 0 ? this.efficiencyTracker.generateReport() : null,
       getMetricsSnapshot: () => MetricsCollector.getInstance().snapshot(),
       getNarrative: () => this.hippocampus.getNarrative(),
       getPredictions: () => this.persona.getPredictions(),
@@ -3397,6 +3402,8 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     if (!content.startsWith('[AUTO-CONTINUE]')) {
       this.autoContinueCount = 0;
       this.consecutiveFailures = 0;
+      // 重置效率追踪器（新对话轮次开始）
+      this.efficiencyTracker.reset();
 
       // Acknowledge resumed plans from previous session
       if (this.hasResumedPlans) {
@@ -3868,51 +3875,96 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       this.cacheStats.misses += result.cacheMissTokens ?? 0;
       const total = this.cacheStats.hits + this.cacheStats.misses;
       const hitRate = total > 0 ? this.cacheStats.hits / total : 0;
-      this.logger.debug(`Cache stats: ${(hitRate * 100).toFixed(0)}% hit rate (${result.cacheHitTokens} hit, ${result.cacheMissTokens ?? 0} miss this call)`);
-      // 缓存感知上下文预算调整（DeepSeek 50x 缓存折扣优化）
+      // TG-driven: 传入 Translation Gap 分数用于精细预算调整
+      const tg = this.efficiencyTracker.getRecordCount() > 0
+        ? this.efficiencyTracker.getQuickTG()
+        : undefined;
+      this.logger.debug(`Cache stats: ${(hitRate * 100).toFixed(0)}% hit rate (${result.cacheHitTokens} hit, ${result.cacheMissTokens ?? 0} miss this call)${tg != null ? `, TG: ${(tg * 100).toFixed(0)}%` : ''}`);
+      // 缓存感知 + TG 驱动上下文预算调整
       if (total > 0) {
-        this.contextWindow.updateCacheBudget(hitRate);
+        this.contextWindow.updateCacheBudget(hitRate, tg);
       }
     }
   }
 
   /**
-   * 根据 provider 能力和工具类型动态计算结果截断限制
+   * 根据 provider 能力、工具类型和 TG 动态计算结果截断限制
    *
-   * DeepSeek 1M 上下文：编码工具（build/test/read）完整保留，其他放宽到 32K
-   * 短上下文 provider：保守截断 8000 字符
+   * 三个维度：
+   * 1. Provider 上下文长度（1M vs 短上下文）
+   * 2. 工具类型（编码 vs 通用）
+   * 3. 工具级 TG（低 TG → 更紧截断，避免浪费上下文）
    */
   private getToolResultLimit(toolName: string): number {
     const caps = this.resolveProviderCapabilities();
     const isLongContext = caps && caps.maxContext >= 500_000;
     const isCodingTool = /build|test|compile|read|exec|shell|self_read|file/i.test(toolName);
 
+    // TG 感知：低 TG 工具使用更紧截断
+    let baseLimit: number;
     if (isLongContext) {
-      // 编码工具：完整保留（DeepSeek 1M 上下文足够）
-      if (isCodingTool) return 64_000;
-      // 其他工具：放宽到 32K
-      return 32_000;
+      baseLimit = isCodingTool ? 64_000 : 32_000;
+    } else {
+      baseLimit = 8_000;
     }
-    // 短上下文 provider：保守限制
-    return 8_000;
+
+    // 工具级 TG 调整
+    if (this.efficiencyTracker.getRecordCount() > 0) {
+      const report = this.efficiencyTracker.generateReport();
+      const toolStats = report.toolEfficiency.get(toolName);
+      if (toolStats && toolStats.tg < 0.4 && toolStats.calls >= 2) {
+        // 低 TG 工具：截断到 50%（避免浪费上下文给低效工具）
+        baseLimit = Math.floor(baseLimit * 0.5);
+      }
+    }
+
+    return baseLimit;
   }
 
   /**
-   * 构建工具失败消息（编码工作流感知）
+   * 构建工具失败消息（编码工作流 + TG 感知）
    *
-   * build/test 失败时注入修复指导，而非通用"再试一次"。
-   * DeepSeek thinking mode 可利用此上下文做精准的错误分析和修复。
+   * build/test 失败时注入修复指导，根据编码工具链 TG 动态调整策略：
+   * - 高 TG (>0.6): 标准修复指导（工具链有效，继续）
+   * - 低 TG (<0.4): 收敛引导（工具链浪费严重，建议简化或上报）
+   * - 中 TG: 增强指导（提供更多上下文提示）
    */
   private buildToolFailureMessage(toolName: string, error: string, round: number): string {
     const base = `Tool "${toolName}" failed: ${error}`;
     const isBuildOrTest = /build|test|compile|tsc|eslint|vitest|jest/i.test(toolName);
+
+    // 编码工作流 TG 检查
+    const codingTG = this.getCodingToolTG();
+
     if (isBuildOrTest && round <= 8) {
-      return `${base}\n\n[FIX PROTOCOL: Read the error above carefully. Identify the root cause. Use self_read to examine the failing file. Make a minimal, targeted fix. Then retry the build/test. Do NOT rewrite entire files — fix only what's broken.]`;
+      if (codingTG > 0.6) {
+        return `${base}\n\n[FIX PROTOCOL: Read the error above carefully. Identify the root cause. Use self_read to examine the failing file. Make a minimal, targeted fix. Then retry the build/test. Do NOT rewrite entire files — fix only what's broken.]`;
+      }
+      if (codingTG < 0.4 && round >= 4) {
+        return `${base}\n\n[EFFICIENCY ALERT: Coding tools have low success rate (${(codingTG * 100).toFixed(0)}%). The current approach is not converging efficiently. Consider: (1) a completely different strategy, (2) simplify the fix scope, (3) report current status to user for guidance.]`;
+      }
+      return `${base}\n\n[FIX PROTOCOL: Analyze the error pattern. Check if previous fixes introduced new issues. Use self_read on the specific failing line. Make ONE targeted change and verify before continuing.]`;
     }
     if (round > 8) {
       return `${base}\n\n[Multiple failures detected. Consider: (1) report current progress to user, (2) try a fundamentally different approach, (3) simplify the task scope.]`;
     }
     return `${base} IMPORTANT: Do NOT give up. Try a different approach, use alternative tools, or break the task into smaller steps.`;
+  }
+
+  /** 计算编码工具链的整体 TG */
+  private getCodingToolTG(): number {
+    if (this.efficiencyTracker.getRecordCount() === 0) return 1;
+    const report = this.efficiencyTracker.generateReport();
+    const codingTools = ['build', 'test', 'compile', 'exec', 'shell', 'self_read', 'file_read'];
+    let totalCalls = 0;
+    let totalSuccesses = 0;
+    for (const [tool, stats] of report.toolEfficiency) {
+      if (codingTools.some(ct => tool.toLowerCase().includes(ct))) {
+        totalCalls += stats.calls;
+        totalSuccesses += stats.successes;
+      }
+    }
+    return totalCalls > 0 ? totalSuccesses / totalCalls : 1;
   }
 
   private async executeToolCallsFromResponse(
@@ -4050,6 +4102,18 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     const tools = this.buildToolDefinitions();
     if (tools.length === 0) return response;
 
+    // ── TG-driven reasoning effort 调整 ──
+    // 低 TG 时降低 reasoning effort（避免在浪费路径上深度思考）
+    // 高 TG 时保持 'max'（token 被有效使用，值得深度推理）
+    const quickTG = this.efficiencyTracker.getQuickTG();
+    const llmConfig = this.config.llm;
+    if ('reasoningEffort' in llmConfig && quickTG < 0.4 && this.efficiencyTracker.getRecordCount() >= 3) {
+      (llmConfig as any).reasoningEffort = 'high'; // 降低深度，加速收敛
+      this.logger.debug(`TG ${(quickTG * 100).toFixed(0)}% → reasoning effort: high`);
+    } else if (quickTG > 0.7 && this.efficiencyTracker.getRecordCount() >= 2) {
+      (llmConfig as any).reasoningEffort = 'max'; // 高效路径，允许深度推理
+    }
+
     // 构建 messages（包含对话上下文 + 第一轮工具结果）
     // 注入编码工作流指导（DeepSeek thinking mode 可利用此上下文做多步规划）
     const caps = this.resolveProviderCapabilities();
@@ -4126,26 +4190,37 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         ...(result.reasoningContent && { reasoning_content: result.reasoningContent }),
       });
 
-      // ── Pre-flight: repetition detection + permission checks ──
+      // ── Pre-flight: efficiency-aware repetition detection + permission checks ──
       const approvedCalls: { name: string; params: unknown; id: string }[] = [];
 
       for (const toolCall of result.toolCalls) {
         const toolName = toolCall.function.name;
 
-        // 重复检测
+        // 效能感知重复检测：结合签名重复率 + 工具级 TG
         const sig = `${toolName}:${toolCall.function.arguments}`;
         callHistory.push(sig);
         const recentWindow = callHistory.slice(-8);
         const uniqueRecent = new Set(recentWindow).size;
-        const isRepeating = recentWindow.length > 4
-          && (1 - uniqueRecent / recentWindow.length) > 0.5;
+        const repetitionRatio = 1 - uniqueRecent / recentWindow.length;
+
+        // 获取工具级 TG（低 TG 时更早触发收敛）
+        const toolTG = this.efficiencyTracker.getRecordCount() > 0
+          ? (this.efficiencyTracker.generateReport().toolEfficiency.get(toolName)?.tg ?? 1)
+          : 1;
+
+        // TG 低时降低重复阈值：低 TG (<0.4) → 阈值 0.3，正常 → 0.5
+        const repetitionThreshold = toolTG < 0.4 ? 0.3 : 0.5;
+        const isRepeating = recentWindow.length > 4 && repetitionRatio > repetitionThreshold;
 
         if (isRepeating) {
           onStatus?.('Converging...');
+          const toolGuidance = toolTG < 0.4
+            ? `[Repetition detected. Tool "${toolName}" has low success rate (${(toolTG * 100).toFixed(0)}%). Try a different tool or approach, then respond to the user.]`
+            : '[Repetition detected. Respond to the user now, do not call more tools.]';
           messages.push({
             role: 'tool',
             toolCallId: toolCall.id,
-            content: '[Repetition detected. Respond to the user now, do not call more tools.]',
+            content: toolGuidance,
           });
           continue;
         }
@@ -4235,8 +4310,30 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
           await this.hooks.emit('tool:result', { tool: toolName, round });
         }
+
+        // ── Token Efficiency: 记录本轮 LLM 调用到效率追踪器 ──
+        this.efficiencyTracker.recordCall({
+          round,
+          inputTokens: (result as any).usage?.prompt_tokens ?? 0,
+          outputTokens: (result as any).usage?.completion_tokens ?? 0,
+          cacheHitTokens: (result as any).cacheHitTokens ?? 0,
+          reasoningTokens: (result as any).reasoningContent?.length ? Math.ceil((result as any).reasoningContent.length / 4) : 0,
+          hadToolCalls: true,
+          toolCalls: batchResults.map(br => ({
+            tool: br.name,
+            paramSignature: `${br.name}:${JSON.stringify(br.result).slice(0, 80)}`,
+            success: br.result.success,
+            resultChars: typeof br.result.data === 'string' ? br.result.data.length : JSON.stringify(br.result.data).length,
+            latencyMs: br.durationMs,
+          })),
+          latencyMs: batchResults.reduce((sum, br) => sum + br.durationMs, 0),
+          timestamp: Date.now(),
+        });
       }
     }
+
+    // 标记最后一轮为有效（产生了用户看到的输出）
+    this.efficiencyTracker.markEffective(round);
 
     return response;
   }

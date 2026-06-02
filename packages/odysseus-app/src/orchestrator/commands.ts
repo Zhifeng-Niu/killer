@@ -61,6 +61,7 @@ interface CommandHandlerDeps {
   denyToolAction?: (name: string) => void;
   confirmToolAction?: (name: string) => void;
   getHealthReport?: () => { status: string; uptime: number; llm: { calls: number; errors: number; errorRate: number; avgLatency: number }; tools: { calls: number; avgLatency: number } };
+  getEfficiencyReport?: () => import('./token-efficiency.js').EfficiencyReport | null;
   getMetricsSnapshot?: () => { metrics: Array<{ name: string; type: string; stats?: { avg: number }; labels?: Record<string, string> }> };
   getNarrative?: () => { identityStatement: string; activeThemes: string[]; chapters: Array<{ startTime: number; title: string; summary: string; emotionalTone: string }>; relationships: Array<{ userId: string; summary: string; trustLevel: number }> };
   getPredictions?: () => { psychologicalProfile: { decisionStyle: string; openness: number; conscientiousness: number; informationPreference: string; riskTolerance: number }; predictedNeeds: Array<{ description: string; confidence: number; timeHorizon: string }>; communicationPatterns: Array<{ name: string; frequency: number }> };
@@ -118,6 +119,7 @@ export class CommandHandler {
       denyToolAction: deps.denyToolAction,
       confirmToolAction: deps.confirmToolAction,
       getHealthReport: deps.getHealthReport,
+      getEfficiencyReport: deps.getEfficiencyReport,
       getMetricsSnapshot: deps.getMetricsSnapshot,
       getNarrative: deps.getNarrative,
       getPredictions: deps.getPredictions,
@@ -240,6 +242,30 @@ export class CommandHandler {
       `  Synapse: ${status.modules.synapse.cells} cells (${status.modules.synapse.cellTypes.join(', ')})`,
       `  Sensory: ${status.modules.sensory.channels.join(', ')} - ${status.modules.sensory.connected ? 'connected' : 'disconnected'}`,
     ];
+
+    // Token 效率统计
+    const report = this.ext.getEfficiencyReport?.();
+    if (report && report.totalRounds > 0) {
+      lines.push('');
+      lines.push(`  Efficiency: TG ${(report.translationGap * 100).toFixed(0)}% (${report.effectiveRounds}/${report.totalRounds} effective rounds)`);
+      if (report.totalCacheHitTokens > 0) {
+        const cacheRate = report.totalCacheHitTokens / report.totalInputTokens;
+        lines.push(`  Cache: ${(cacheRate * 100).toFixed(0)}% hit (${report.totalCacheHitTokens.toLocaleString()} tokens)`);
+      }
+      if (report.waste.totalWaste > 0) {
+        const wastePct = (report.waste.totalWaste / (report.totalInputTokens + report.totalOutputTokens) * 100).toFixed(0);
+        lines.push(`  Waste: ${wastePct}% (retry: ${report.waste.retryWaste}, dead: ${report.waste.deadBranchWaste}, fail: ${report.waste.failedWaste})`);
+      }
+      const toolEffs = [...report.toolEfficiency.entries()]
+        .filter(([, s]) => s.calls >= 2)
+        .sort((a, b) => b[1].tg - a[1].tg);
+      if (toolEffs.length > 0) {
+        const best = toolEffs[0];
+        const worst = toolEffs[toolEffs.length - 1];
+        lines.push(`  Tools: best=${best[0]} (${(best[1].tg * 100).toFixed(0)}%), worst=${worst[0]} (${(worst[1].tg * 100).toFixed(0)}%)`);
+      }
+    }
+
     this.outputManager.sendResult(lines.join('\n'));
   }
 
