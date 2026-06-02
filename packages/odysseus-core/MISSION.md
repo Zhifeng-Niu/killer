@@ -1,113 +1,110 @@
 ---
 orientation: [engineer]
-status: complete
-started_at: 2026-06-02T04:57:00Z
-completed_at: 2026-06-02T06:30:00Z
-expedition_branch: odyssey/20260602-125738
+status: active
+started_at: 2026-06-02T08:01:00Z
+expedition_branch: odyssey/20260602-164100
 baseline_metric: null
-best_metric: "type_error_count: 0"
+best_metric: null
 total_waypoints: 8
-completed_waypoints: 8
 consecutive_discards: 0
 ---
 
-# Mission: DeepSeek V4 全栈优化 — 打造完美 Coding Agent
+# Mission: DeepSeek V4 深度适配 Phase 2 — 运行时优化 + 智能路由
 
 ## Goal
-从提示词、长流程工作流、编排、上下文管理，全面为 DeepSeek-v4-flash/v4-pro 做优化适配。
-使 Odysseus 在 DeepSeek 后端下成为顶级的自主 Coding Agent。
+在 Phase 1（WP1-WP8 基础优化）之上，深化 DeepSeek V4 的运行时集成：
+缓存感知上下文预算、自适应协议切换、reasoning 生命周期完善、DSML 快速路径。
 
 ## Context
-DeepSeek V4 系列模型特性（来自官方 API 文档 2026-06-02）：
-- 1M 上下文窗口，最大 384K 输出
-- 原生 thinking mode（reasoning_content 分离）
-- reasoning_effort: high/max（自适应推理深度）
-- 原生 function calling（128 工具上限）
-- 缓存命中价仅 ¥0.02/M tokens（未命中 ¥1），应最大化缓存利用率
-- 同时支持 OpenAI 和 Anthropic 协议
-- DSML 格式工具调用已实现（response-processor.ts）
+Phase 1 已完成（branch odyssey/20260602-125738）：
+- 8段式 XML 提示词 + Provider-aware 上下文窗口
+- reasoning_content 流式分离 + 贯穿工具链
+- 缓存统计追踪 + 编码工作流指导
+- DeepSeek anthropicBaseUrl 注册
 
-当前代码已实现基础 DeepSeek 适配（provider 注册、thinking mode、DSML 解析），
-但缺少针对 Coding Agent 场景的深度优化。
+Phase 2 聚焦运行时深度集成：
+- 缓存命中感知的动态上下文预算分配
+- reasoning_content 在 thinking+tool_calls 混合场景的正确处理
+- response-processor 中 DeepSeek 原生工具调用快速路径
+- 上下文窗口对 1M token 的更积极利用
 
 ## Scope
 
 ### Modifiable
 - packages/odysseus-app/src/llm/ (provider 层)
 - packages/odysseus-app/src/orchestrator/ (编排、提示词、上下文)
-- packages/odysseus-core/src/brainstem/ (工具系统)
-- packages/odysseus-app/src/__tests__/ (测试)
+- packages/odysseus-app/src/orchestrator/response-processor.ts
 
 ### Read-Only (PROTECTED)
-- packages/odysseus-app/src/tui/ (TUI 组件不改动)
-- packages/odysseus-app/src/api/ (API 端点不改动)
-- packages/odysseus-app/src/persona/ (Persona 引擎不改动)
+- packages/odysseus-app/src/tui/ (TUI 组件)
+- packages/odysseus-app/src/api/ (API 端点)
+- packages/odysseus-app/src/persona/ (Persona 引擎)
 
 ## Waypoints
 
-### WP1: DeepSeek-native 提示词策略
-**文件**: `src/orchestrator/prompt-builder.ts`
-为 DeepSeek V4 设计专用提示词策略：
-- 添加 `buildDeepSeekCodingPrompt()` 函数，针对 coding 场景精简提示词
-- 将 40+ 个分散 section 合并为结构化的 8 段式 prompt（身份→能力→工具→计划→记忆→上下文→策略→历史）
-- 添加 DeepSeek 特定的思维链引导指令（"先分析再执行"模式）
-- 基于 provider capabilities 动态选择 prompt 策略
+### WP1: 缓存感知上下文预算
+**文件**: `src/orchestrator/context.ts`
+当 DeepSeek 缓存命中率 >80% 时，放宽上下文截断策略：
+- 追踪最近 5 次调用的平均缓存命中率
+- 高命中率时 maxFullTurns 1.5x、maxMessageChars 1.5x
+- 低命中率时回归保守策略
+- 添加 `updateCacheBudget(hitRate: number)` 方法
 
-### WP2: 动态上下文窗口管理
-**文件**: `src/orchestrator/context.ts`, `src/orchestrator/prompt-builder.ts`
-突破固定 24K 限制，实现 provider-aware 上下文管理：
-- 从 ProviderCapabilities.maxContext 动态计算可用 prompt 空间
-- DeepSeek 1M 上下文 → 允许 80K+ 系统 prompt
-- 实现缓存友好型 prompt 结构：固定前缀 + 变量后缀（最大化 DeepSeek 缓存命中率）
-- 历史消息按 token 计量而非字符数
+### WP2: 1M Token 上下文窗口极限优化
+**文件**: `src/orchestrator/context.ts`
+DeepSeek 1M token（~4M chars）当前只用到 64 轮/6000字符，过于保守：
+- maxFullTurns 从 64 提升到 128（长编码会话场景）
+- maxMessageChars 从 6000 提升到 12000
+- maxToolResultChars 从 2000 提升到 8000（编码输出常很长）
+- maxSummaryChars 从 3000 提升到 6000
 
-### WP3: Thinking Mode 深度集成
-**文件**: `src/llm/openai-compatible-provider.ts`, `src/orchestrator/agent.ts`
-完善 reasoning_content 的全生命周期管理：
-- 流式输出分离：先 yield reasoning_content（显示为思考过程），再 yield content
-- 多轮对话中正确传递 reasoning_content（工具调用场景必须回传）
-- 自适应 reasoning_effort：简单问答用 high，复杂 coding/debugging 用 max
-- 非侵入式思考内容展示（不混入正式响应）
+### WP3: reasoning+tool_calls 混合响应处理
+**文件**: `src/llm/openai-compatible-provider.ts`
+DeepSeek V4 在 thinking mode + function calling 场景下，
+可能同时返回 reasoning_content 和 tool_calls：
+- 在 completeWithTools 中检测 thinking mode，将 reasoning_content 附带到 LLMToolCallCompletion
+- 确保 reasoning_content 不被截断或混入 content
+- 在返回的 content 中不包含 <thinking> 标签（避免干扰工具调用解析）
 
-### WP4: 原生 Function Calling 优先路由
-**文件**: `src/orchestrator/agent.ts`, `src/orchestrator/response-processor.ts`
-DeepSeek V4 支持原生 function calling，应优先使用：
-- 检测 provider 支持 native tool calling 时，跳过 regex 文本解析
-- 将 `completeWithTools()` 的结果直接传入工具执行管线
-- 保留 DSML 和文本格式作为 fallback
-- 工具调用结果格式化为标准的 tool message
+### WP4: Response Processor DeepSeek 快速路径
+**文件**: `src/orchestrator/response-processor.ts`
+当 agent 使用原生 function calling 路径时，跳过 DSML regex 解析：
+- 添加 provider-aware 标志位 `usedNativeToolCalling`
+- 如果为 true，extractToolCalls 直接返回空（不执行 regex）
+- 保留 DSML 作为 fallback 路径不变
+- 减少 ~20ms 的 regex 开销
 
-### WP5: 缓存优化策略
-**文件**: `src/llm/openai-compatible-provider.ts`, `src/orchestrator/prompt-builder.ts`
-利用 DeepSeek 的 50 倍缓存折扣：
-- 将系统 prompt 分为"固定前缀"（身份、工具定义、能力）和"变量后缀"（对话历史、情感状态）
-- 固定前缀保持不变以命中缓存，变量后缀追加在末尾
-- 工具定义独立缓存（不随每轮变化）
-- 实现 prompt fingerprint 校验（检测缓存命中率）
+### WP5: 自适应 reasoning_effort 策略增强
+**文件**: `src/llm/openai-compatible-provider.ts`
+当前 resolveReasoningEffort 基于关键词检测，升级为：
+- 工具调用循环中：round > 3 自动升级到 max（长工具链需要更深推理）
+- 错误恢复场景（build/test 失败）：强制 max
+- 简单问答保持 high（节省 token）
+- 添加 reasoning_effort 日志记录（可追踪推理深度决策）
 
-### WP6: 长流程 Coding 工作流编排
+### WP6: 工具结果智能截断（DeepSeek 长上下文优化）
 **文件**: `src/orchestrator/agent.ts`
-优化 DeepSeek 在 coding agent 场景下的多步骤执行：
-- 实现"规划-执行-验证"三阶段 coding workflow
-- 工具链编排：read → analyze → modify → build → test 循环
-- 错误恢复：build 失败自动回退到 read+fix 循环
-- 上下文压缩：长工具链中间结果智能摘要，保持核心上下文不丢失
+DeepSeek 1M 上下文下，工具结果截断过于激进（当前 8000 字符）：
+- Provider-aware 截断阈值：长上下文 provider 允许 32000 字符
+- build/test 输出完整保留（编码场景核心信息）
+- 文件读取结果完整保留（减少信息丢失）
+- 仅对非编码工具（web_search 等）保持截断
 
-### WP7: 双协议智能路由
-**文件**: `src/llm/factory.ts`, `src/llm/openai-compatible-provider.ts`
-利用 DeepSeek 的 Anthropic 兼容端点：
-- 注册 DeepSeek 的 anthropicBaseUrl: `https://api.deepseek.com/anthropic`
-- 工具密集型任务自动路由到 Anthropic 协议（更好的 tool calling）
-- 简单对话保持 OpenAI 协议
-- 添加 DeepSeek 模型名映射规则
+### WP7: Provider 能力运行时重检测
+**文件**: `src/orchestrator/agent.ts`
+当用户通过 /key 或配置变更切换模型时，重新解析 provider capabilities：
+- resolveProviderCapabilities 检测模型名变更
+- 重置 context window 预算
+- 重新选择提示词策略（DeepSeek vs 通用）
+- 触发 context.ts setProviderCapabilities 重新校准
 
-### WP8: 集成验证 + Provider Profile 更新
-**文件**: 所有改动文件 + 测试
-确保所有优化协同工作：
-- 更新 DeepSeek provider preset（添加 anthropicBaseUrl、更新模型列表）
-- 端到端测试：DeepSeek V4 全流程（thinking → tool call → multi-turn → cache）
-- 验证 type check 通过
-- 更新 CLAUDE.md 文档
+### WP8: 集成验证 + CLAUDE.md 文档更新
+**文件**: 所有改动文件
+端到端验证：
+- tsc --noEmit 零错误
+- pnpm build 通过
+- 更新 CLAUDE.md 记录 Phase 2 优化点
+- 更新 MISSION.md 实验记录
 
 ## Metrics
 
@@ -115,7 +112,6 @@ DeepSeek V4 支持原生 function calling，应优先使用：
 |------|------|----------------|-----------|
 | type_error_count | - | cd packages/odysseus-app && npx tsc --noEmit 2>&1 \| wc -l | lower |
 | prompt_efficiency | % | (cached_prefix_chars / total_prompt_chars) * 100 | higher |
-| tool_call_accuracy | - | test suite | higher |
 
 ## Guard
 ```bash
@@ -123,34 +119,23 @@ cd packages/odysseus-app && npx tsc --noEmit
 ```
 
 ## Termination
-- Task complete (all waypoints done AND build passes AND tests pass)
+- Task complete (all waypoints done AND build passes)
 - OR stuck (10 consecutive discards)
 - OR user interrupt (/odyssey-cancel)
 
 ## What's Been Tried
 
 ### Wins
-- WP1: buildDeepSeekCodingPrompt 8段式 XML 提示词（身份→能力→工作流→计划→记忆→上下文→策略→历史），前3段缓存稳定
-- WP2: Provider-aware 动态上下文窗口，1M context → 64轮/6000字符/3000摘要/2000工具结果
-- WP3: reasoning_content 流式/完整分离输出，resolveReasoningEffort 自适应推理深度（high/max）
-- WP4: ChatMessage 扩展 reasoning_content 字段，贯穿 completeWithTools 工具链循环
-- WP5: 缓存统计追踪（prompt_cache_hit_tokens/miss_tokens），getCacheStableFingerprint 前缀指纹
-- WP6: 编码工作流指导注入（plan→execute→verify），buildToolFailureMessage 精准修复指导
-- WP7: DeepSeek anthropicBaseUrl 注册，双协议路由（ODYSSEUS_PROTOCOL=anthropic）
-- WP8: 全量 type check 通过（0 errors）
+{Phase 1 complete. Phase 2 starting.}
 
 ### Dead Ends
-- ChatMessage 类型扩展需要 `as any` 桥接（core 包有预存 hippocampus 类型错误，未重新 build）
+{Auto-updated by engine.}
 
 ### Surprises
-- DeepSeek 的 runNativeToolLoop 已有成熟的两阶段设计（文本先→工具循环后），避免强制工具调用
-- resolveProviderCapabilities 用前缀匹配而非 provider name 查找，更灵活但需要维护映射表
+{Unexpected findings.}
 
 ## Current Best
-- metric: type_error_count = 0
-- All 8 waypoints complete, build passes
+- metric: (baseline not yet measured)
 
 ## Ideas Backlog
-- 运行时缓存命中率监控面板
-- 自动协议切换（根据任务类型动态选择 OpenAI/Anthropic 协议）
-- DeepSeek V4 reasoning_content 压缩策略（长推理结果摘要后再回传）
+{Auto-populated. Can be manually edited.}
