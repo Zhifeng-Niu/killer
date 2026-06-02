@@ -6,7 +6,7 @@ expedition_branch: odyssey/20260603-004715
 baseline_metric: "build: pass, type_error_count: 0"
 best_metric: null
 total_waypoints: 12
-completed_waypoints: 9
+completed_waypoints: 10
 consecutive_discards: 0
 ---
 
@@ -22,6 +22,7 @@ consecutive_discards: 0
 - **WP8**: Phase-Based Orchestration v2 — 模板变量({{phase:NAME.taskId}}) + 条件阶段 + 重试策略 + 变量作用域
 - **WP9**: Workflow Persistence — .odysseus/workflows/ 持久化 + /workflow run <name> 按名称复用
 - **WP10**: Session Store 抽象层 — SessionStore 接口 + MemorySessionStore + FileSessionStore + 工厂函数
+- **WP11**: Container-Ready 部署 — Dockerfile (non-root+SIGTERM) + docker-compose + K8s Deployment+PVC+Service
 
 ### Dead Ends
 {None.}
@@ -53,7 +54,7 @@ consecutive_discards: 0
 
 ## Current Best
 - metric: build: pass, type_error_count: 0
-- 9/12 waypoints complete
+- 10/12 waypoints complete
 
 ## Ideas Backlog
 - Claude Code 的 auto memory 跨会话学习

@@ -1,4 +1,4 @@
-# Killer Agent Framework - Docker Compose
+# Odysseus Agent Framework - Docker Compose
 #
 # 一键启动:
 #   DEEPSEEK_API_KEY=your-key docker compose up -d
@@ -7,18 +7,18 @@
 #   cp .env.example .env  →  编辑填入 API key  →  docker compose up -d
 
 services:
-  killer:
+  odysseus:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: killer-agent
+    container_name: odysseus-agent
     restart: unless-stopped
     ports:
-      - "${KILLER_PORT:-3000}:3000"
+      - "${ODYSSEUS_PORT:-3000}:3000"
     environment:
       # Provider 自动检测 — 只需设一个 API key
-      - KILLER_LLM_PROVIDER=${KILLER_LLM_PROVIDER:-}
-      - KILLER_API_KEY=${KILLER_API_KEY:-}
+      - ODYSSEUS_LLM_PROVIDER=${ODYSSEUS_LLM_PROVIDER:-}
+      - ODYSSEUS_API_KEY=${ODYSSEUS_API_KEY:-}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - GLM_API_KEY=${GLM_API_KEY:-}
       - MINIMAX_API_KEY=${MINIMAX_API_KEY:-}
@@ -33,19 +33,28 @@ services:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       # 可选配置
-      - KILLER_MODEL=${KILLER_MODEL:-}
-      - KILLER_API_TOKEN=${KILLER_API_TOKEN:-}
-      - KILLER_LOG_LEVEL=${KILLER_LOG_LEVEL:-info}
-      - KILLER_DEBUG=${KILLER_DEBUG:-false}
+      - ODYSSEUS_MODEL=${ODYSSEUS_MODEL:-}
+      - ODYSSEUS_API_TOKEN=${ODYSSEUS_API_TOKEN:-}
+      - ODYSSEUS_LOG_LEVEL=${ODYSSEUS_LOG_LEVEL:-info}
+      - ODYSSEUS_DEBUG=${ODYSSEUS_DEBUG:-false}
+      # Session store type (memory | file)
+      - ODYSSEUS_SESSION_STORE=${ODYSSEUS_SESSION_STORE:-file}
     volumes:
-      - killer-data:/app/.killer
+      - odysseus-data:/app/.odysseus
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s
       timeout: 5s
-      start_period: 10s
+      start_period: 15s
       retries: 3
+    # K8s-friendly resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
 
 volumes:
-  killer-data:
+  odysseus-data:
     driver: local
