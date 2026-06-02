@@ -3873,6 +3873,24 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     }
   }
 
+  /**
+   * 构建工具失败消息（编码工作流感知）
+   *
+   * build/test 失败时注入修复指导，而非通用"再试一次"。
+   * DeepSeek thinking mode 可利用此上下文做精准的错误分析和修复。
+   */
+  private buildToolFailureMessage(toolName: string, error: string, round: number): string {
+    const base = `Tool "${toolName}" failed: ${error}`;
+    const isBuildOrTest = /build|test|compile|tsc|eslint|vitest|jest/i.test(toolName);
+    if (isBuildOrTest && round <= 8) {
+      return `${base}\n\n[FIX PROTOCOL: Read the error above carefully. Identify the root cause. Use self_read to examine the failing file. Make a minimal, targeted fix. Then retry the build/test. Do NOT rewrite entire files — fix only what's broken.]`;
+    }
+    if (round > 8) {
+      return `${base}\n\n[Multiple failures detected. Consider: (1) report current progress to user, (2) try a fundamentally different approach, (3) simplify the task scope.]`;
+    }
+    return `${base} IMPORTANT: Do NOT give up. Try a different approach, use alternative tools, or break the task into smaller steps.`;
+  }
+
   private async executeToolCallsFromResponse(
     response: string,
     onToken?: (token: string) => void,
@@ -4009,8 +4027,14 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     if (tools.length === 0) return response;
 
     // 构建 messages（包含对话上下文 + 第一轮工具结果）
+    // 注入编码工作流指导（DeepSeek thinking mode 可利用此上下文做多步规划）
+    const caps = this.resolveProviderCapabilities();
+    const codingWorkflowHint = (caps?.thinkingMode && caps.maxContext >= 500_000)
+      ? '\n\n[CODING WORKFLOW: Follow plan→execute→verify. After each tool call, evaluate the result before proceeding. If build/test fails, read the error output and fix before retrying. Do NOT call unrelated tools when a build fails — focus on fixing the error first.]'
+      : '';
+
     const messages: ChatMessage[] = [
-      { role: 'system', content: systemContext },
+      { role: 'system', content: systemContext + codingWorkflowHint },
       ...this.conversationHistory.map(m => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,
@@ -4171,7 +4195,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
           const resultStr = batchResult.result.success
             ? (typeof batchResult.result.data === 'string' ? batchResult.result.data : JSON.stringify(batchResult.result.data))
-            : `Tool "${toolName}" failed: ${batchResult.result.error}. IMPORTANT: Do NOT give up. Try a different approach, use alternative tools, or break the task into smaller steps. The user expects you to complete the task.`;
+            : this.buildToolFailureMessage(toolName, batchResult.result.error ?? 'unknown', round);
 
           const truncated = resultStr.length > 8000
             ? resultStr.slice(0, 8000) + '\n...[truncated]'
