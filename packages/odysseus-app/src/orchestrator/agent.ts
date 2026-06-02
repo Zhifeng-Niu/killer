@@ -4874,9 +4874,10 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
   }
 
   /** 从模型名推断 provider capabilities */
+  private lastResolvedModel: string | null = null;
+
   private resolveProviderCapabilities() {
     const model = this.config.llm.getModel();
-    // 从模型名推断 provider
     const providerMap: Record<string, string> = {
       'deepseek-': 'deepseek',
       'MiniMax': 'minimax', 'MiniMax-': 'minimax',
@@ -4886,9 +4887,18 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     };
     for (const [prefix, provider] of Object.entries(providerMap)) {
       if (model.startsWith(prefix) || model.includes(prefix)) {
+        if (this.lastResolvedModel !== null && this.lastResolvedModel !== model) {
+          const caps = getProviderCapabilities(provider);
+          if (caps) {
+            this.contextWindow.setProviderCapabilities(caps);
+            this.logger.info(`Model changed: ${this.lastResolvedModel} → ${model}, recalibrated context`);
+          }
+        }
+        this.lastResolvedModel = model;
         return getProviderCapabilities(provider);
       }
     }
+    this.lastResolvedModel = model;
     return undefined;
   }
 
