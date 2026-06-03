@@ -3,44 +3,17 @@ orientation: [engineer]
 status: active
 started_at: 2026-06-03T02:13:58Z
 expedition_branch: odyssey/20260603-101358
-baseline_metric: null
+baseline_metric: "build: pass, tui_jsx_errors: 47"
 best_metric: null
-total_waypoints: 0
+total_waypoints: 6
+completed_waypoints: 0
 consecutive_discards: 0
 ---
 
 # Mission: 优化TUI和交互，为vibe harness而生！
 
 ## Goal
-优化TUI和交互，为vibe harness而生！
-
-## Context
-Project type: typescript. Auto-detected guard: npm test 2>&1.
-
-## Scope
-
-### Modifiable
-- (auto — all files not in Read-Only)
-
-### Read-Only (PROTECTED)
-- (none specified)
-
-## Metrics
-
-| Name | Unit | Measure Command | Direction |
-|------|------|----------------|-----------|
-| type_error_count | - | (auto-detected) | lower |
-
-## Guard
-```bash
-npm test 2>&1
-```
-
-## Termination
-- Task complete (all checks pass AND metric improved)
-- OR stuck (10 consecutive discards)
-- OR user interrupt (/odyssey-cancel)
-- No iteration limit — runs until done
+将 Odysseus TUI 从基本可用迭代至世界级 coding agent 终端体验 — 像 Claude Code CLI 一样流畅、美观、高效。Vibe harness 不是玩具，是生产力工具。
 
 ## What's Been Tried
 
@@ -48,14 +21,33 @@ npm test 2>&1
 {Auto-updated by engine.}
 
 ### Dead Ends
-{Auto-updated by engine.}
+{None.}
 
 ### Surprises
-{Unexpected findings. Auto-updated in creative mode.}
+{Unexpected findings.}
+
+## Waypoint Plan
+
+### Phase A: 基础修复 (WP1)
+- **WP1**: 修复 TUI JSX 编译错误 — 47 个 JSX 错误，根源是 tsconfig 与文件匹配问题
+
+### Phase B: Vibe 体验 (WP2-WP3)
+- **WP2**: 主题系统重做 — Catppuccin Mocha 色彩 + 渐变 accent + emoji-free 专业风格
+- **WP3**: Chat Panel 重写 — 精致 markdown 渲染 + 代码块语法高亮 + tool call 卡片化
+
+### Phase C: 交互升级 (WP4-WP5)
+- **WP4**: 输入区域重设计 — 可见输入框 + 历史导航 + Tab 补全
+- **WP5**: 流式 & 进度 — 平滑 token 流式 + 工具进度条 + thinking 动画
+
+### Phase D: 性能 & 验证 (WP6)
+- **WP6**: 性能优化 + 集成验证 — 消息虚拟化 + 渲染优化 + build 通过
 
 ## Current Best
-- metric: (baseline not yet measured)
-- Baseline: (pending)
+- metric: build: pass, tui_jsx_errors: 47
+- 0/6 waypoints complete
 
 ## Ideas Backlog
-{Auto-populated. Can be manually edited.}
+- 多 tab 支持
+- 对话导出
+- 快捷键自定义
+- Lighthouse 风格评分仪表盘
