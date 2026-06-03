@@ -6,9 +6,12 @@ node_modules
 .env
 .env.*
 !.env.example
-.killer/
+.odysseus/
 dist/
 coverage/
 *.tsbuildinfo
 .vscode/
 .idea/
+packages/odysseus-core/erl_crash.dump
+packages/odysseus-core/odyssey.jsonl
+*.log

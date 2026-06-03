@@ -1,49 +1,45 @@
 /**
- * TUI Theme — Z世代视觉系统
+ * TUI Theme — Catppuccin Mocha 色彩系统
  *
- * 设计方向：大胆但克制。紫色品牌为核心，辅助色从暖灰中点缀。
- * 电子青和热能粉可以同屏，但用量控制。
- * 不用荧光色 — Z世代不等于刺眼。
- *
- * 色彩规则：一屏最多 3 种彩色（紫常驻 + 2 种点缀）。
+ * 设计方向：Catppuccin Mocha 官方色板，Mauve 品牌为核心。
+ * 一屏最多 3 种彩色（Mauve 常驻 + 2 种点缀）。
+ * emoji-free 专业风格。所有颜色语义命名，组件不硬编码 hex。
  */
 
-// ── 色彩系统 ──
+// ── 色彩系统 (Catppuccin Mocha) ──
 
 export const colors = {
-  // 品牌 — 紫色系
-  purple: '#7C5CFC',
-  purpleDim: '#5A3ED8',
-  purpleBright: '#9D8AFF',
-  purpleGlow: '#B8A9FF',
+  // Mauve 色系 (品牌)
+  purple: '#CBA6F7',       // Mauve — 主品牌
+  purpleDim: '#9B7BDB',    // 暗紫 — 品牌阴影/脉冲低点
+  purpleBright: '#B4BEFE', // Lavender — 品牌高光
+  purpleGlow: '#D9B8FF',   // 亮紫 — 品牌辉光
 
-  // 点缀 — 温和版
-  cyan: '#22D3EE',         // 电子青 — 工具/链接
-  pink: '#F43F5E',         // 热能粉 — 警告/强调
-  gold: '#FFB800',         // 琥珀金 — 高亮/重要
+  // 点缀
+  cyan: '#89DCEB',         // Sky — 工具/链接
+  pink: '#F5C2E7',         // Pink — 警告/强调
+  gold: '#F9E2AF',         // Yellow — 高亮/重要
 
   // 警告
-  amber: '#F59E0B',
+  amber: '#FAB387',        // Peach — 警告/进度
+  error: '#F38BA8',        // Red — 错误
 
-  // 错误闪光
-  error: '#FC5C7C',
-
-  // 灰度 — 暖冷温度差
-  text: '#C8C2BA',         // 暖灰提亮 — 正文更可读
-  secondary: '#78716C',    // 冷灰 — 辅助信息
-  separator: '#292524',    // 深灰 — 分隔线
-  border: '#45475A',       // 输入框边框默认色
+  // 文本 & UI
+  text: '#CDD6F4',         // Text — 正文
+  secondary: '#A6ADC8',    // Subtext0 — 辅助信息
+  separator: '#45475A',    // Surface1 — 分隔线
+  border: '#585B70',       // Surface2 — 边框
 
   // 背景
-  bg: '#0D0D0D',           // 真黑
-  surface: '#1A1A1A',      // 微抬层
-  surfaceHigh: '#252525',  // 高亮面板背景
+  bg: '#11111B',           // Crust — 真背景
+  surface: '#1E1E2E',      // Base — 微抬层
+  surfaceHigh: '#313244',  // Surface0 — 高亮面板
 
   // 角色色
-  user: '#E8D5B7',         // 暖米色 — 用户消息
-  agent: '#7C5CFC',        // 紫 — agent 消息
-  system: '#22D3EE',       // 电子青 — 系统消息
-  tool: '#9D8AFF',         // 亮紫 — 工具调用
+  user: '#F5E0DC',         // Rosewater — 用户
+  agent: '#CBA6F7',        // Mauve — agent
+  system: '#89DCEB',       // Sky — 系统
+  tool: '#B4BEFE',         // Lavender — 工具
 } as const;
 
 // ── Unicode 方块 ──
@@ -54,10 +50,32 @@ export const SHADE_4 = ['█', '▓', '▒', '░'] as const;
 // ── 渐变预设 ──
 
 export const gradients = {
-  brand: [colors.purpleDim, colors.purple, colors.purpleBright, colors.cyan],
-  hot: [colors.purpleDim, colors.purple, colors.pink],
-  success: [colors.purpleDim, colors.purple, colors.cyan],
+  brand: [colors.purpleDim, colors.purple, colors.purpleBright],
+  hot: [colors.purple, colors.pink, colors.amber],
+  success: [colors.purpleDim, colors.cyan, colors.purpleBright],
+  cool: [colors.purple, colors.cyan],
+  warm: [colors.amber, colors.gold, colors.purple],
   muted: [colors.separator, colors.secondary, colors.separator],
+} as const;
+
+// ── 渐变 accent 工具 ──
+
+export function gradientSteps(from: string, to: string, count: number): string[] {
+  return Array.from({ length: count }, (_, i) => lerpColor(from, to, i / (count - 1)));
+}
+
+export function gradientText(text: string, palette: readonly string[]): Array<{ ch: string; col: string }> {
+  return text.split('').map((ch, i) => ({
+    ch,
+    col: palette[i % palette.length],
+  }));
+}
+
+export const accentGradients = {
+  brand: gradientSteps(colors.purpleDim, colors.purpleBright, 8),
+  hot: gradientSteps(colors.purple, colors.pink, 6),
+  cool: gradientSteps(colors.purple, colors.cyan, 6),
+  warm: gradientSteps(colors.amber, colors.gold, 6),
 } as const;
 
 // ── 上下文进度条 ──
@@ -200,8 +218,8 @@ export const borderFlowFrames = sineColorFrames(
 
 export const errorFlashFrames = [
   colors.error,
-  '#D04A68',
-  '#A63E55',
+  lerpColor(colors.error, colors.border, 0.33),
+  lerpColor(colors.error, colors.border, 0.66),
   colors.border,
 ] as const;
 

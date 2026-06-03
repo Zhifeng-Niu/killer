@@ -8,7 +8,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useStdout } from 'ink';
-import { colors, box, icons, thinkFrames, streamFlowFrames, rippleFrames, roleColors } from './theme.js';
+import { colors, box, icons, thinkFrames, streamFlowFrames, rippleFrames, roleColors, gradientText, accentGradients } from './theme.js';
 
 export interface ChatMessage {
   id: string;
@@ -110,6 +110,7 @@ function renderToolChainCard(spinner: string, chain: string, keyBase: number): R
   const segments = chain.split('→');
   const nodes: React.ReactNode[] = [];
   const isDone = spinner === '✓';
+  const arrowGrad = accentGradients.brand;
 
   segments.forEach((seg, i) => {
     const s = seg.trim();
@@ -118,10 +119,10 @@ function renderToolChainCard(spinner: string, chain: string, keyBase: number): R
         <Text key={`overflow-${i}`} color={colors.secondary}> +{s.slice(1)}</Text>,
       );
     } else if (s.startsWith('✓')) {
-      if (i > 0) nodes.push(<Text key={`sep-${i}`} color={colors.separator}> → </Text>);
+      if (i > 0) nodes.push(<Text key={`sep-${i}`} color={arrowGrad[i % arrowGrad.length]}> → </Text>);
       nodes.push(<Text key={`done-${i}`} color={colors.cyan}>● {s.slice(1)}</Text>);
     } else if (s.startsWith('◐')) {
-      if (i > 0) nodes.push(<Text key={`sep-${i}`} color={colors.separator}> → </Text>);
+      if (i > 0) nodes.push(<Text key={`sep-${i}`} color={arrowGrad[i % arrowGrad.length]}> → </Text>);
       nodes.push(<Text key={`active-${i}`} color={colors.purpleBright}>◐ {s.slice(1)}</Text>);
     }
   });
@@ -393,11 +394,12 @@ function renderToolResult(tool: string, data: string, keyBase: number): React.Re
 
 function renderCodeBlock(lines: string[], lang: string, keyBase: number): React.ReactNode {
   const numWidth = String(lines.length).length;
+  const langBadge = lang ? gradientText(` ${lang} `, accentGradients.brand) : null;
   return (
     <Box key={`code-${keyBase}`} flexDirection="column" marginTop={1} marginBottom={1}>
       {lang && (
         <Box marginLeft={1}>
-          <Text color={colors.purple} backgroundColor={colors.surface}> {lang} </Text>
+          {langBadge?.map((g, i) => <Text key={`lb-${i}`} color={g.col} bold>{g.ch}</Text>)}
           <Text color={colors.separator}> {lines.length} lines</Text>
         </Box>
       )}
@@ -464,14 +466,25 @@ function renderTable(rows: string[], keyBase: number): React.ReactNode {
 
 // ── 空状态 ──
 
+function GradientBrand() {
+  const brand = '◈  O D Y S S E U S';
+  const grad = gradientText(brand, accentGradients.brand);
+  return (
+    <Box>
+      <Text>{'  '}</Text>
+      {grad.map((g, i) => <Text key={i} color={g.col} bold>{g.ch}</Text>)}
+    </Box>
+  );
+}
+
 function EmptyState() {
   return (
     <Box flexDirection="column" paddingY={2} marginLeft={2}>
-      <Text color={colors.purple} bold>  ◈  O D Y S S E U S</Text>
+      <GradientBrand />
       <Text color={colors.secondary}>     Autonomous Agent Framework</Text>
       <Text> </Text>
       <Box marginLeft={2}>
-        <Text color={colors.purpleDim}>{'━'.repeat(30)}</Text>
+        <Text color={colors.separator}>{'━'.repeat(30)}</Text>
       </Box>
       <Text> </Text>
       <Text color={colors.text}>  type anything to start</Text>
@@ -549,7 +562,7 @@ function StreamingCursor() {
   const [frame, setFrame] = useState(0);
 
   useEffect(() => {
-    const timer = setInterval(() => setFrame(f => (f + 1) % streamFlowFrames.length), 200);
+    const timer = setInterval(() => setFrame(f => (f + 1) % streamFlowFrames.length), 150);
     return () => clearInterval(timer);
   }, []);
 

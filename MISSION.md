@@ -1,45 +1,60 @@
 ---
 orientation: [engineer]
 status: complete
-started_at: 2026-06-02T11:30:14Z
-completed_at: 2026-06-02T12:15:00Z
-expedition_branch: odyssey/20260602-193014
-baseline_metric: "build: pass, type_error_count: 0"
-best_metric: "build: pass, type_error_count: 0, TG-driven budget active"
+started_at: 2026-06-03T02:13:58Z
+expedition_branch: odyssey/20260603-101358
+baseline_metric: "build: pass, tui_jsx_errors: 47"
+best_metric: "build: pass, tui_jsx_errors: 0, catppuccin_mocha: true, gradient_accent: true"
 total_waypoints: 6
 completed_waypoints: 6
 consecutive_discards: 0
 ---
 
-# Mission: DeepSeek V4 自适应缓存+编码 Harness 能力深化
+# Mission: 优化TUI和交互，为vibe harness而生！
 
 ## Goal
-借鉴 multi-agent-efficiency (Translation Gap) 思想，在 Odysseus 中实现自适应缓存命中感知 + 编码 Harness 能力。
+将 Odysseus TUI 从基本可用迭代至世界级 coding agent 终端体验 — 像 Claude Code CLI 一样流畅、美观、高效。Vibe harness 不是玩具，是生产力工具。
 
 ## What's Been Tried
 
 ### Wins
-- WP1: Token Efficiency Tracker — Translation Gap (TG) 追踪器 + TG-driven 预算调整 (cache_factor * tg_factor 叠加)
-- WP2: 效能感知重复检测 — 低 TG 工具更早触发收敛 + TG-aware 工具结果截断 (低 TG → 50% 截断)
-- WP3: 编码工作流 Harness — TG 感知编码失败指导 + getCodingToolTG() + TG-driven reasoning effort
-- WP4: 效率指标集成到 /status 命令 — TG/Waste/Cache/工具效能可视化
-- WP5: 效率追踪器对话轮次重置 — 每轮独立追踪，避免跨轮次污染
-- WP6: 集成验证通过 (pnpm build 成功, 0 type errors)
+- WP1: 修复 47 个 JSX 编译错误 — root tsconfig.json 添加 `"jsx": "react-jsx"`
+- WP2: 主题系统对齐 Catppuccin Mocha 官方色板 — 26 色 + gradient accent 工具
+- WP3: Chat Panel — 渐变品牌标题 + 渐变代码块语言标签 + 渐变工具链箭头
+- WP4: 输入区域 — 空闲态快捷键提示（窄终端自动省略）
+- WP5: 流式 & 进度 — 流式光标 150ms + 工具链动画 150ms 同步
+- WP6: 性能 & 集成验证 — memo + dedup + viewport trim + batch flush，构建 0 错误
 
 ### Dead Ends
 {None.}
 
 ### Surprises
-- TG-driven 预算调整比固定 1.5x 放宽更精确：高缓存但低 TG 时不会盲目放宽（token 在浪费）
-- reasoning_effort 自适应调整可显著节省低效路径上的推理 token
+- theme.ts 已有正弦波动画引擎和完整的 Unicode 方块系统，远超预期
+- 输入实际由 readline 层管理（IME 兼容），InputArea 只是状态展示组件
+- 性能优化已在之前的迭代中基本完成
+
+## Waypoint Plan
+
+### Phase A: 基础修复 (WP1) ✅
+- **WP1**: 修复 TUI JSX 编译错误 ✅
+
+### Phase B: Vibe 体验 (WP2-WP3) ✅
+- **WP2**: 主题系统 — Catppuccin Mocha 色板 + gradient accent ✅
+- **WP3**: Chat Panel — 渐变标题 + 代码块 + 工具卡片 ✅
+
+### Phase C: 交互升级 (WP4-WP5) ✅
+- **WP4**: 输入区域 — 快捷键提示面板 ✅
+- **WP5**: 流式 & 进度 — 渐变光标 + 工具链同步 ✅
+
+### Phase D: 性能 & 验证 (WP6) ✅
+- **WP6**: 性能优化 + 集成验证 — 构建通过 ✅
 
 ## Current Best
-- metric: build: pass, type_error_count: 0
+- metric: build: pass, tui_jsx_errors: 0, catppuccin_mocha: true
 - 6/6 waypoints complete
 
 ## Ideas Backlog
-- TG 趋势可视化面板（TUI sidebar 集成）
-- 工具调用依赖图 (DAG) 可视化
-- 自适应 prompt 压缩（低 TG 时自动精简 system prompt sections）
-- reasoning_content 长度 vs 质量相关性追踪
-- 跨会话 TG 趋势追踪（持久化到 hippocampus）
+- 多 tab 支持
+- 对话导出
+- 快捷键自定义
+- Lighthouse 风格评分仪表盘

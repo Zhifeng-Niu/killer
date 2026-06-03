@@ -129,6 +129,8 @@ import { SessionManager, type SessionSnapshot } from '../session/index.js';
 import { Logger } from '../log/index.js';
 import { PeriodicMemoryGuard, trimArray, trimAgentState } from './memory-guard.js';
 import { TokenEfficiencyTracker, type LLMCallRecord, type ToolCallRecord, type EfficiencyReport } from './token-efficiency.js';
+import { WorkflowEngine, type TaskExecutor, type WorkflowDefinition, type WorkflowResult } from './workflow-engine.js';
+import { WorkflowStore } from './workflow-store.js';
 
 /**
  * 生成唯一 ID
@@ -199,6 +201,8 @@ export class OdysseusAgent implements IDriveSource {
   readonly hooks: LifecycleHooks = new LifecycleHooks();
   readonly middleware: MiddlewarePipeline = new MiddlewarePipeline();
   readonly contextWindow: ContextWindowManager = new ContextWindowManager();
+  private workflowEngine!: WorkflowEngine;
+  private workflowStore!: WorkflowStore;
 
   // 对话上下文（工作记忆窗口）— 无硬上限，由 ContextWindowManager 智能裁剪
   private conversationHistory: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }> = [];
@@ -346,6 +350,7 @@ export class OdysseusAgent implements IDriveSource {
           .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
         this.restoreConversationHistory(history);
         this.logger.info(`Restored ${history.length} conversation turns from previous session`);
+        await this.hooks.emit('session:resume', { turnsRestored: history.length });
       }
 
       // Restore hippocampus memories from auto-saved snapshot
@@ -1150,10 +1155,17 @@ Examples:
 
     // 上下文窗口绑定 LLM 用于智能摘要
     this.contextWindow.bindLLM(this.config.llm);
+    // 绑定 hooks 通知回调（context:pre-compact / post-compact）
+    this.contextWindow.bindHookNotifier((event, payload) => {
+      this.hooks.emit(event as any, payload).catch(() => {});
+    });
 
     // 根据 provider 能力动态调整上下文预算
     const caps = this.resolveProviderCapabilities();
-    if (caps) this.contextWindow.setProviderCapabilities(caps);
+    if (caps) {
+      this.contextWindow.setProviderCapabilities(caps);
+      this.contextWindow.setThinkingMode(caps.thinkingMode ?? false);
+    }
 
     // 感官路由器
     this.sensoryRouter = new SensoryRouter();
@@ -1248,6 +1260,8 @@ Examples:
       },
       initConfigDir: () => initOdysseusDir(),
       shutdown: () => this.shutdown(),
+      executeWorkflow: (def) => this.executeWorkflow(def),
+      getWorkflowStore: () => this.workflowStore,
     });
   }
 
@@ -1501,6 +1515,13 @@ Examples:
 
     // Scheduled Task Runner — 定时任务调度
     this.scheduledRunner = new ScheduledTaskRunner();
+
+    // Workflow Engine — 分阶段并行编排
+    this.workflowEngine = new WorkflowEngine(
+      { executeTask: (prompt, options) => this.executeWorkflowTask(prompt, options) },
+      (event, payload) => { this.hooks.emit(event as import('./hooks.js').LifecycleEvent, payload); },
+    );
+    this.workflowStore = new WorkflowStore(this.sessionDir);
   }
 
   private wireModules(): void {
@@ -4290,6 +4311,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           if (!batchResult.result.success) {
             const lesson = extractLessonFromToolFailure(toolName, 'execution', batchResult.result.error ?? 'unknown');
             if (lesson) recordLesson(lesson);
+            this.hooks.emit('tool:error', { tool: toolName, round, error: batchResult.result.error }).catch(() => {});
           }
 
           const resultStr = batchResult.result.success
@@ -4310,6 +4332,15 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
           await this.hooks.emit('tool:result', { tool: toolName, round });
         }
+
+        // v2: 批量完成事件
+        await this.hooks.emit('tool:batch-complete', {
+          batchSize: batchResults.length,
+          tools: batchResults.map(br => br.name),
+          successCount: batchResults.filter(br => br.result.success).length,
+          failCount: batchResults.filter(br => !br.result.success).length,
+          round,
+        });
 
         // ── Token Efficiency: 记录本轮 LLM 调用到效率追踪器 ──
         this.efficiencyTracker.recordCall({
@@ -4413,6 +4444,110 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     await this.hooks.emit('delegate:complete', { task, cellsUsed: result.totalCellsUsed, durationMs: result.durationMs });
 
     return result;
+  }
+
+  /**
+   * 执行 workflow 定义（分阶段并行编排）
+   */
+  async executeWorkflow(workflow: WorkflowDefinition): Promise<WorkflowResult> {
+    this.logger.info(`Starting workflow "${workflow.name}" with ${workflow.phases.length} phases`);
+    await this.hooks.emit('cycle:start', { input: `[workflow] ${workflow.name}` });
+    const result = await this.workflowEngine.execute(workflow);
+    this.logger.info(`Workflow "${workflow.name}" completed: ${result.success ? 'success' : 'partial'}, ${result.totalDurationMs}ms`);
+
+    // 自动保存成功的 workflow
+    if (result.success) {
+      try {
+        this.workflowStore.save(workflow, result);
+      } catch {
+        // 持久化失败不影响结果返回
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * 获取 WorkflowStore（供命令使用）
+   */
+  getWorkflowStore(): WorkflowStore {
+    return this.workflowStore;
+  }
+
+  /**
+   * TaskExecutor 实现 — workflow 中的每个子任务通过此方法执行
+   *
+   * 复用 LLM 调用 + 工具执行管道，但独立于主对话流（不写入 conversationHistory）
+   */
+  private async executeWorkflowTask(
+    prompt: string,
+    options?: { allowedTools?: string[]; maxTurns?: number },
+  ): Promise<{ output: string; tokensUsed?: number; tgScore?: number }> {
+    const systemContext = this.buildSystemPrompt(prompt);
+    const provider = this.config.llm;
+    const maxTurns = options?.maxTurns ?? 10;
+
+    let output: string;
+    let totalTokens = 0;
+    const startTime = Date.now();
+
+    // 使用原生 function calling 循环（如果有工具限制则过滤）
+    const tools = options?.allowedTools
+      ? this.buildToolDefinitions().filter(t => options.allowedTools!.includes(t.function.name))
+      : this.buildToolDefinitions();
+
+    const supportsNative = 'completeWithTools' in provider
+      && typeof (provider as unknown as Record<string, unknown>).completeWithTools === 'function';
+
+    if (supportsNative && tools.length > 0) {
+      const messages: ChatMessage[] = [
+        { role: 'system', content: systemContext },
+        { role: 'user', content: prompt },
+      ];
+
+      let round = 0;
+      let lastResponse = '';
+      while (round < maxTurns) {
+        round++;
+        try {
+          const result = await (provider as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>).completeWithTools(messages, tools);
+          const resp = result as { content: string; toolCalls?: ToolCall[]; tokensUsed?: number };
+          totalTokens += resp.tokensUsed ?? 0;
+
+          if (!resp.toolCalls || resp.toolCalls.length === 0) {
+            lastResponse = resp.content;
+            break;
+          }
+
+          // 执行工具调用
+          const toolOutputs: string[] = [];
+          for (const tc of resp.toolCalls) {
+            try {
+              const execResult = await this.tools.execute(tc.function.name, tc.function.arguments);
+              toolOutputs.push(`[${tc.function.name}]: ${typeof execResult === 'string' ? execResult : JSON.stringify(execResult)}`);
+            } catch (err) {
+              toolOutputs.push(`[${tc.function.name}] ERROR: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+
+          messages.push({ role: 'assistant', content: resp.content });
+          messages.push({ role: 'user', content: `Tool results:\n${toolOutputs.join('\n')}` });
+          lastResponse = resp.content;
+        } catch (err) {
+          this.logger.warn(`Workflow task LLM error in round ${round}: ${err instanceof Error ? err.message : String(err)}`);
+          break;
+        }
+      }
+      output = lastResponse;
+    } else {
+      // Fallback: 简单 complete 调用
+      output = await this.callLLMWithRetry(prompt, systemContext);
+    }
+
+    const durationMs = Date.now() - startTime;
+    const tgScore = totalTokens > 0 ? output.length / totalTokens : 1;
+
+    return { output, tokensUsed: totalTokens, tgScore };
   }
 
   /**

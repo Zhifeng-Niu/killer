@@ -1,0 +1,103 @@
+# Odysseus Agent - Kubernetes Deployment
+#
+# Usage:
+#   kubectl apply -f deploy/k8s.yaml
+#   kubectl port-forward svc/odysseus 3000:3000
+#
+# With secrets:
+#   kubectl create secret generic odysseus-secrets \
+#     --from-literal=DEEPSEEK_API_KEY=your-key
+#   kubectl apply -f deploy/k8s.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: odysseus
+  labels:
+    app: odysseus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: odysseus
+  template:
+    metadata:
+      labels:
+        app: odysseus
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: odysseus
+          image: odysseus:latest
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: ODYSSEUS_LOG_LEVEL
+              value: info
+            - name: ODYSSEUS_SESSION_STORE
+              value: file
+          envFrom:
+            - secretRef:
+                name: odysseus-secrets
+                optional: true
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: data
+              mountPath: /app/.odysseus
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: odysseus-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: odysseus-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: odysseus
+spec:
+  selector:
+    app: odysseus
+  ports:
+    - port: 3000
+      targetPort: http
+      name: http
+  type: ClusterIP
