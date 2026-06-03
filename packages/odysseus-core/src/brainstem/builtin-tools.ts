@@ -8,7 +8,7 @@ import { promises as fs } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { resolve, normalize } from 'path';
-import type { Tool, ToolResult, SandboxMode } from './tool-executor.js';
+import type { Tool, ToolResult, ToolProgressCallback, SandboxMode } from './tool-executor.js';
 
 const execAsync = promisify(exec);
 
@@ -898,6 +898,181 @@ export class SendMessageTool implements Tool {
 }
 
 // ============================================================================
+// Playwright 浏览器自动化
+// ============================================================================
+
+type BrowserCommand =
+  | 'open' | 'goto' | 'close' | 'click' | 'type' | 'fill'
+  | 'press' | 'snapshot' | 'screenshot' | 'eval'
+  | 'tab-list' | 'tab-new' | 'tab-close' | 'tab-select'
+  | 'go-back' | 'go-forward' | 'reload'
+  | 'console' | 'requests';
+
+const BROWSER_COMMANDS: readonly BrowserCommand[] = [
+  'open', 'goto', 'close', 'click', 'type', 'fill',
+  'press', 'snapshot', 'screenshot', 'eval',
+  'tab-list', 'tab-new', 'tab-close', 'tab-select',
+  'go-back', 'go-forward', 'reload',
+  'console', 'requests',
+];
+
+const READ_ONLY_COMMANDS = new Set<BrowserCommand>([
+  'snapshot', 'screenshot', 'tab-list', 'console', 'requests',
+]);
+
+const MAX_OUTPUT = 4000;
+const SESSION_NAME = 'odysseus';
+
+export class PlaywrightBrowserTool implements Tool {
+  name = 'browser';
+  description = `Browser automation via playwright-cli. Open pages, click elements, type text, take screenshots, extract content.
+Commands: ${BROWSER_COMMANDS.join(', ')}
+Elements are targeted by ref (from snapshot), CSS selector, or Playwright locator.`;
+  parameters = {
+    type: 'object',
+    properties: {
+      command: {
+        type: 'string',
+        enum: BROWSER_COMMANDS,
+        description: 'Browser command to execute',
+      },
+      url: { type: 'string', description: 'URL (for open/goto)' },
+      ref: { type: 'string', description: 'Element ref or CSS selector (for click/type/fill/hover)' },
+      text: { type: 'string', description: 'Text to type or fill' },
+      key: { type: 'string', description: 'Key to press (e.g. Enter, Tab, arrowdown)' },
+      expression: { type: 'string', description: 'JS expression (for eval)' },
+      filename: { type: 'string', description: 'Output filename (for screenshot/pdf)' },
+      submit: { type: 'boolean', description: 'Press Enter after fill' },
+      index: { type: 'number', description: 'Tab index (for tab-select/tab-close)' },
+    },
+    required: ['command'],
+  };
+
+  isReadOnly?(params: unknown): boolean {
+    const { command } = (params ?? {}) as { command?: string };
+    return READ_ONLY_COMMANDS.has((command ?? '') as BrowserCommand);
+  }
+
+  async execute(params: unknown, onProgress?: ToolProgressCallback): Promise<ToolResult> {
+    if (typeof params !== 'object' || params === null) {
+      return { success: false, error: 'Invalid params' };
+    }
+
+    const { command } = params as { command?: string };
+    if (!command || !BROWSER_COMMANDS.includes(command as BrowserCommand)) {
+      return { success: false, error: `Unknown command: ${command}. Use: ${BROWSER_COMMANDS.join(', ')}` };
+    }
+
+    const args = this.buildArgs(params as Record<string, unknown>);
+    const cliCmd = `playwright-cli -s=${SESSION_NAME} ${args}`;
+
+    try {
+      onProgress?.({ type: 'start', message: `browser: ${command}`, timestamp: Date.now() });
+      const { stdout, stderr } = await execAsync(cliCmd, {
+        timeout: 30000,
+        maxBuffer: 1024 * 1024,
+      });
+
+      const output = (stdout || '').trim();
+      const errors = (stderr || '').trim();
+
+      if (errors && !output) {
+        return { success: false, error: this.truncate(errors) };
+      }
+
+      return {
+        success: true,
+        data: {
+          command,
+          output: this.truncate(output),
+          ...(errors ? { warnings: this.truncate(errors) } : {}),
+        },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('not found') || message.includes('ENOENT')) {
+        return {
+          success: false,
+          error: 'playwright-cli not installed. Run: npm install -g @playwright/cli',
+        };
+      }
+      return { success: false, error: this.truncate(message) };
+    }
+  }
+
+  private buildArgs(params: Record<string, unknown>): string {
+    const command = params.command as string;
+    const url = params.url as string | undefined;
+    const ref = params.ref as string | undefined;
+    const text = params.text as string | undefined;
+    const key = params.key as string | undefined;
+    const expression = params.expression as string | undefined;
+    const filename = params.filename as string | undefined;
+    const submit = params.submit as boolean | undefined;
+    const index = params.index as number | undefined;
+    const parts: string[] = [command];
+
+    switch (command) {
+      case 'open':
+        if (url) parts.push(this.shellArg(url));
+        break;
+      case 'goto':
+        if (url) parts.push(this.shellArg(url));
+        break;
+      case 'click':
+      case 'dblclick':
+      case 'hover':
+        if (ref) parts.push(this.shellArg(ref));
+        break;
+      case 'type':
+        if (text) parts.push(this.shellArg(text));
+        break;
+      case 'fill':
+        if (ref) parts.push(this.shellArg(ref));
+        if (text) parts.push(this.shellArg(text));
+        if (submit) parts.push('--submit');
+        break;
+      case 'press':
+      case 'keydown':
+      case 'keyup':
+        if (key) parts.push(this.shellArg(key));
+        break;
+      case 'snapshot':
+        if (ref) parts.push(this.shellArg(ref));
+        if (filename) parts.push(`--filename=${this.shellArg(filename)}`);
+        break;
+      case 'screenshot':
+        if (ref) parts.push(this.shellArg(ref));
+        if (filename) parts.push(`--filename=${this.shellArg(filename)}`);
+        break;
+      case 'eval':
+        if (expression) parts.push(this.shellArg(expression));
+        if (ref) parts.push(this.shellArg(ref));
+        break;
+      case 'tab-new':
+        if (url) parts.push(this.shellArg(url));
+        break;
+      case 'tab-close':
+      case 'tab-select':
+        if (index != null) parts.push(String(index));
+        break;
+    }
+
+    return parts.join(' ');
+  }
+
+  private shellArg(s: string): string {
+    const escaped = s.replace(/'/g, "'\\''");
+    return `'${escaped}'`;
+  }
+
+  private truncate(s: string): string {
+    if (s.length <= MAX_OUTPUT) return s;
+    return s.slice(0, MAX_OUTPUT) + `\n... truncated (${s.length} chars total)`;
+  }
+}
+
+// ============================================================================
 // 工具集合
 // ============================================================================
 
@@ -921,6 +1096,7 @@ export function getBuiltinTools(): Tool[] {
     new WebFetchTool(),
     new SynapseBroadcastTool(),
     new SendMessageTool(),
+    new PlaywrightBrowserTool(),
   ];
 }
 
