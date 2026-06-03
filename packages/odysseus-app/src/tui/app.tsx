@@ -270,7 +270,7 @@ export function OdysseusTUI({ agent, bridge }: OdysseusTUIProps) {
                 if (toolMsgId) {
                   updateMessage(toolMsgId, (m) => ({ ...m, content: renderToolChain(true) }));
                 }
-              }, 200);
+              }, 150);
             } else {
               updateMessage(toolMsgId, (m) => ({ ...m, content: renderToolChain(true) }));
             }

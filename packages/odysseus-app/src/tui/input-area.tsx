@@ -1,14 +1,9 @@
 /**
- * Input Area — 状态栏 + 四态指示器
+ * Input Area — 状态栏 + 四态指示器 + 输入提示
  *
- * 纯展示组件：动画、状态栏、状态指示文字。
+ * 纯展示组件：动画、状态栏、状态指示文字、空闲态输入提示。
  * 不使用 TextInput / useInput（避免 raw mode 与 IME 冲突导致 Terminal 崩溃）。
  * 实际输入由 readline 层在 tui/index.tsx 中管理，用户在终端原生提示符处输入。
- *
- * 空闲态：只显示状态栏
- * 思考态：边框呼吸 + 月相指示器
- * 流式态：波形指示器 + 工具状态
- * 错误态：红闪渐隐
  */
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -61,6 +56,7 @@ export const InputArea = React.memo(function InputArea({
   emotion = '',
 }: InputAreaProps) {
   const { stdout } = useStdout();
+  const termCols = stdout?.columns ?? 80;
 
   // ── 动画帧 ──
   const [borderFrame, setBorderFrame] = useState(0);
@@ -126,6 +122,10 @@ export const InputArea = React.memo(function InputArea({
   const ctxSegments = contextBar(contextUsed, contextTotal, 12);
   const modelShort = model.length > 18 ? model.slice(0, 16) + '…' : model;
 
+  // ── 快捷键提示（窄终端时省略）──
+  const showHints = termCols >= 60 && agentStatus === 'idle';
+  const hintText = showHints ? '  /help commands · Esc cancel · Ctrl+C quit' : '';
+
   return (
     <Box flexDirection="column">
       {/* 状态栏 — 模型 · 动效 · 时间 · context · 核心状态 */}
@@ -158,6 +158,13 @@ export const InputArea = React.memo(function InputArea({
         <Box borderStyle="round" borderColor={isFlashingError ? errorFadeFrames[errorFrame] : colors.border} paddingX={1}>
           <Text color={indicatorColor}>{indicator} </Text>
           <Text color={colors.secondary}>{statusText}</Text>
+        </Box>
+      )}
+
+      {/* 空闲态输入提示 */}
+      {agentStatus === 'idle' && (
+        <Box marginLeft={1}>
+          <Text color={colors.separator}>{hintText}</Text>
         </Box>
       )}
     </Box>
