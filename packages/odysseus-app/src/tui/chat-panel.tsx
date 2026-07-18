@@ -136,7 +136,13 @@ function renderToolChainCard(spinner: string, chain: string, keyBase: number): R
 }
 
 function renderContent(text: string): React.ReactNode {
-  const lines = text.split('\n');
+  // Strip <thinking>...</thinking> blocks — DeepSeek V4 outputs these,
+  // they can be hundreds of lines long and crash the terminal when rendered.
+  // Also handles unclosed <thinking> (streaming in progress).
+  let cleaned = text.replace(/<thinking>[\s\S]*?<\/thinking>/g, '').trim();
+  cleaned = cleaned.replace(/<thinking>[\s\S]*/g, '').trim();
+
+  const lines = cleaned.split('\n');
   const elements: React.ReactNode[] = [];
   let inCodeBlock = false;
   let codeBuffer: string[] = [];

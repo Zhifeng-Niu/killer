@@ -7,7 +7,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Box, Text, useApp, useStdout } from 'ink';
+import { Box, Text, useApp, useStdout, useInput } from 'ink';
 import { ChatPanel, type ChatMessage } from './chat-panel.js';
 import { InputArea } from './input-area.js';
 import { colors, box, formatDuration } from './theme.js';
@@ -16,11 +16,6 @@ import { generateBootGreeting } from '../cli/greeting.js';
 
 interface OdysseusTUIProps {
   agent: OdysseusAgent;
-  bridge: {
-    submit: (fn: (input: string) => void) => void;
-    getStatus: (fn: () => string) => void;
-    abort: (fn: () => void) => void;
-  };
 }
 
 let msgCounter = 0;
@@ -39,7 +34,7 @@ function createMessage(role: ChatMessage['role'], content: string, streaming = f
   return { id: `msg-${++msgCounter}`, role, content, streaming, timestamp: Date.now() };
 }
 
-export function OdysseusTUI({ agent, bridge }: OdysseusTUIProps) {
+export function OdysseusTUI({ agent }: OdysseusTUIProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -52,6 +47,16 @@ export function OdysseusTUI({ agent, bridge }: OdysseusTUIProps) {
   const renderedIdsRef = useRef<Set<string>>(new Set());
   const messagesRef = useRef<ChatMessage[]>([]);
   const bootTimeRef = useRef(Date.now());
+
+  // ── 输入状态 ──
+  const [inputText, setInputText] = useState('');
+  const [cursorPos, setCursorPos] = useState(0);
+  const historyRef = useRef<string[]>([]);
+  const historyIdxRef = useRef(-1);
+  const draftRef = useRef('');
+  const statusRef = useRef(agentStatus);
+  statusRef.current = agentStatus;
+  const handleSubmitRef = useRef<((input: string) => Promise<void>) | undefined>(undefined);
 
   // ── Header 自管理 emotion 和 tick，不触发 App 重渲染 ──
 
@@ -219,7 +224,36 @@ export function OdysseusTUI({ agent, bridge }: OdysseusTUIProps) {
       let fullResponse = '';
       let lastFlush = 0;
       let statusSet = false;
+      let inThinkingBlock = false;
       const FLUSH_MS = 500;
+
+      /**
+       * 从原始 LLM 输出中剥离 <thinking> 块，返回干净的显示内容。
+       * 跟踪 inThinkingBlock 状态以处理流式中未闭合的标签。
+       */
+      function stripThinking(raw: string): string {
+        const hadThinking = /<thinking>/.test(raw);
+        let display = raw;
+        // 闭合的 thinking 块
+        display = display.replace(/<thinking>[\s\S]*?<\/thinking>/g, '');
+        // 流式中未闭合的 thinking（只有开头）
+        display = display.replace(/<thinking>[\s\S]*/g, '');
+        display = display.trim();
+
+        // 全部是 thinking 时，提取末尾摘要避免空白
+        if (!display && hadThinking) {
+          const match = raw.match(/<thinking>([\s\S]*?)<\/thinking>/);
+          if (match) {
+            const lines = match[1].split('\n').map((l: string) => l.trim()).filter(Boolean);
+            if (lines.length > 0) {
+              display = lines[lines.length - 1];
+              if (display.length > 200) display = display.slice(0, 197) + '...';
+            }
+          }
+        }
+
+        return display;
+      }
 
       // ── 工具链 Pipeline ──
       const toolEntries: Array<{ name: string; done: boolean }> = [];
@@ -241,6 +275,15 @@ export function OdysseusTUI({ agent, bridge }: OdysseusTUIProps) {
       const result = await agent.processInput(input, 'cli', (token) => {
         if (ac.signal.aborted) return;
         fullResponse += token;
+
+        // 检测 thinking 块边界以更新状态显示
+        if (token.includes('<thinking>')) inThinkingBlock = true;
+        if (token.includes('</thinking>')) inThinkingBlock = false;
+        if (inThinkingBlock && !statusSet) {
+          setAgentStatus('thinking');
+          return;
+        }
+
         if (!statusSet) {
           statusSet = true;
           setAgentStatus('streaming');
@@ -249,8 +292,8 @@ export function OdysseusTUI({ agent, bridge }: OdysseusTUIProps) {
         const now = Date.now();
         if (now - lastFlush >= FLUSH_MS) {
           lastFlush = now;
-          const snapshot = fullResponse;
-          updateMessage(agentMsgId, (m) => ({ ...m, content: snapshot }));
+          const displayContent = stripThinking(fullResponse);
+          updateMessage(agentMsgId, (m) => ({ ...m, content: displayContent }));
         }
       }, (status) => {
         if (ac.signal.aborted) return;
@@ -287,7 +330,8 @@ export function OdysseusTUI({ agent, bridge }: OdysseusTUIProps) {
 
       if (!ac.signal.aborted) {
         const elapsed = Date.now() - startTime;
-        const finalContent = result?.content?.trim() || fullResponse;
+        const rawFinal = result?.content?.trim() || fullResponse;
+        const finalContent = stripThinking(rawFinal);
         updateMessage(agentMsgId, (m) => ({ ...m, content: finalContent, streaming: false, duration: elapsed }));
       }
     } catch (error) {
@@ -312,22 +356,19 @@ export function OdysseusTUI({ agent, bridge }: OdysseusTUIProps) {
     }
   }, [agent]);
 
-  // ── Bridge: readline → ink ──
-  useEffect(() => {
-    bridge.submit(handleSubmit);
-  }, [handleSubmit, bridge]);
+  // 保持 handleSubmit ref 最新
+  handleSubmitRef.current = handleSubmit;
 
-  useEffect(() => {
-    bridge.getStatus(() => agentStatus);
-  }, [agentStatus, bridge]);
-
-  useEffect(() => {
-    bridge.abort(() => {
+  // ── 键盘输入 ──
+  useInput((input, key) => {
+    // Esc → 取消流式输出
+    if (key.escape) {
       if (abortRef.current) {
         abortRef.current.abort();
         abortRef.current = null;
         setIsThinking(false);
         setAgentStatus('idle');
+        setStatusDetail('');
         const pool = messagesRef.current;
         if (pool.length > 0) {
           const last = pool[pool.length - 1];
@@ -335,13 +376,149 @@ export function OdysseusTUI({ agent, bridge }: OdysseusTUIProps) {
             updateMessage(last.id, (m) => ({
               ...m,
               streaming: false,
-              content: m.content + '\n\n[已取消]',
+              content: m.content + '\n\n[cancelled]',
             }));
           }
         }
       }
-    });
-  }, [updateMessage, bridge]);
+      return;
+    }
+
+    // Ctrl+C → 优雅关闭
+    if (key.ctrl && input === 'c') {
+      agent.saveSession('tui-session');
+      agent.shutdown().then(() => exit()).catch(() => exit());
+      return;
+    }
+
+    // 以下按键仅在 idle 时处理
+    if (statusRef.current !== 'idle') return;
+
+    // Enter → 提交
+    if (key.return) {
+      const trimmed = inputText.trim();
+      if (!trimmed) return;
+      historyRef.current = [...historyRef.current, trimmed].slice(-200);
+      historyIdxRef.current = -1;
+      draftRef.current = '';
+      setInputText('');
+      setCursorPos(0);
+      if (handleSubmitRef.current) handleSubmitRef.current(trimmed);
+      return;
+    }
+
+    // Backspace
+    if (key.backspace) {
+      if (cursorPos > 0) {
+        setInputText(inputText.slice(0, cursorPos - 1) + inputText.slice(cursorPos));
+        setCursorPos(cursorPos - 1);
+      }
+      return;
+    }
+
+    // Delete
+    if (key.delete) {
+      if (cursorPos < inputText.length) {
+        setInputText(inputText.slice(0, cursorPos) + inputText.slice(cursorPos + 1));
+      }
+      return;
+    }
+
+    // Left
+    if (key.leftArrow) {
+      if (cursorPos > 0) setCursorPos(cursorPos - 1);
+      return;
+    }
+
+    // Right
+    if (key.rightArrow) {
+      if (cursorPos < inputText.length) setCursorPos(cursorPos + 1);
+      return;
+    }
+
+    // Home
+    if (key.home) {
+      setCursorPos(0);
+      return;
+    }
+
+    // End
+    if (key.end) {
+      setCursorPos(inputText.length);
+      return;
+    }
+
+    // Up → 历史导航
+    if (key.upArrow) {
+      const hist = historyRef.current;
+      if (hist.length === 0) return;
+      if (historyIdxRef.current === -1) {
+        draftRef.current = inputText;
+        historyIdxRef.current = hist.length - 1;
+      } else if (historyIdxRef.current > 0) {
+        historyIdxRef.current -= 1;
+      }
+      const item = hist[historyIdxRef.current];
+      setInputText(item);
+      setCursorPos(item.length);
+      return;
+    }
+
+    // Down → 历史导航
+    if (key.downArrow) {
+      if (historyIdxRef.current === -1) return;
+      if (historyIdxRef.current < historyRef.current.length - 1) {
+        historyIdxRef.current += 1;
+        const item = historyRef.current[historyIdxRef.current];
+        setInputText(item);
+        setCursorPos(item.length);
+      } else {
+        historyIdxRef.current = -1;
+        setInputText(draftRef.current);
+        setCursorPos(draftRef.current.length);
+      }
+      return;
+    }
+
+    // Tab → 命令补全
+    if (key.tab) {
+      if (inputText.startsWith('/')) {
+        const partial = inputText.slice(1, cursorPos).split(/\s/)[0].toLowerCase();
+        const matches = Array.from(KNOWN_TUI_COMMANDS).filter(c => c.startsWith(partial));
+        if (matches.length === 1) {
+          const completed = '/' + matches[0] + ' ';
+          setInputText(completed);
+          setCursorPos(completed.length);
+        }
+      }
+      return;
+    }
+
+    // Ctrl+U → 清空输入行
+    if (key.ctrl && input === 'u') {
+      setInputText('');
+      setCursorPos(0);
+      return;
+    }
+
+    // Ctrl+A → 行首
+    if (key.ctrl && input === 'a') {
+      setCursorPos(0);
+      return;
+    }
+
+    // Ctrl+E → 行尾
+    if (key.ctrl && input === 'e') {
+      setCursorPos(inputText.length);
+      return;
+    }
+
+    // 可打印字符（含 CJK 合成文本）
+    if (input && !key.ctrl && !key.meta) {
+      setInputText(inputText.slice(0, cursorPos) + input + inputText.slice(cursorPos));
+      setCursorPos(cursorPos + input.length);
+    }
+  });
 
   // ── 渲染 — 线性布局 ──
 
@@ -361,6 +538,8 @@ export function OdysseusTUI({ agent, bridge }: OdysseusTUIProps) {
         episodesCount={agent.getMemoryStats?.()?.totalEpisodes ?? 0}
         toolsCount={agent.tools?.list?.()?.length ?? 0}
         emotion={emotionToEmoji(agent.persona?.emotionalState?.getState?.()?.primaryEmotion ?? 'neutral')}
+        inputText={inputText}
+        cursorPos={cursorPos}
       />
     </Box>
   );

@@ -2,7 +2,7 @@
  * Anthropic Claude LLM Provider
  */
 
-import type { LLMProvider, LLMCompletion } from '@odysseus/core';
+import type { LLMProvider, LLMCompletion, ChatMessage } from '@odysseus/core';
 import type { LLMProviderConfig } from './types.js';
 
 const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
@@ -49,7 +49,7 @@ export class AnthropicProvider implements LLMProvider {
     this.apiUrl = config.baseUrl || DEFAULT_API_URL;
   }
 
-  async complete(prompt: string, context?: string): Promise<LLMCompletion> {
+  async complete(prompt: string, context?: string, _history?: ChatMessage[]): Promise<LLMCompletion> {
     const messages: AnthropicMessage[] = [{ role: 'user', content: [{ type: 'text', text: prompt }] }];
 
     const requestBody = {
@@ -112,7 +112,7 @@ export class AnthropicProvider implements LLMProvider {
     };
   }
 
-  async *stream(prompt: string, context?: string): AsyncIterable<string> {
+  async *stream(prompt: string, context?: string, _history?: ChatMessage[]): AsyncIterable<string> {
     const messages: AnthropicMessage[] = [{ role: 'user', content: [{ type: 'text', text: prompt }] }];
 
     const requestBody: Record<string, unknown> = {

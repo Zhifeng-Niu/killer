@@ -1,0 +1,11 @@
+{
+  "llm": {
+    "provider": "anthropic"
+  },
+  "agent": {
+    "debugLogging": false
+  },
+  "logging": {
+    "level": "info"
+  }
+}

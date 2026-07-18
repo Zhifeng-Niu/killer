@@ -1,18 +1,15 @@
 /**
- * Input Area — 状态栏 + 四态指示器 + 输入提示
+ * Input Area — 分隔线 + 状态栏 + 输入行
  *
- * 纯展示组件：动画、状态栏、状态指示文字、空闲态输入提示。
- * 不使用 TextInput / useInput（避免 raw mode 与 IME 冲突导致 Terminal 崩溃）。
- * 实际输入由 readline 层在 tui/index.tsx 中管理，用户在终端原生提示符处输入。
+ * idle: ▸ text█  — 可见输入行，紫色 prompt + 块状光标
+ * busy: ◐ thinking... — 动画指示器
  */
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Box, Text, useStdout } from 'ink';
 import {
-  colors, borderFlowFrames, moonFrames, waveFrames24, contextBar, lerpColor,
+  colors, moonFrames, waveFrames24, contextBar, lerpColor,
 } from './theme.js';
-
-// ── 错误渐隐帧 — 红→灰 800ms ──
 
 const errorFadeFrames = [
   colors.error,
@@ -21,8 +18,6 @@ const errorFadeFrames = [
   lerpColor(colors.error, colors.border, 0.75),
   colors.border,
 ] as const;
-
-// ── Props ──
 
 interface InputAreaProps {
   agentStatus: 'idle' | 'thinking' | 'streaming' | 'error';
@@ -37,9 +32,9 @@ interface InputAreaProps {
   episodesCount?: number;
   toolsCount?: number;
   emotion?: string;
+  inputText?: string;
+  cursorPos?: number;
 }
-
-// ── 组件 ──
 
 export const InputArea = React.memo(function InputArea({
   agentStatus,
@@ -54,12 +49,13 @@ export const InputArea = React.memo(function InputArea({
   episodesCount = 0,
   toolsCount = 0,
   emotion = '',
+  inputText = '',
+  cursorPos = 0,
 }: InputAreaProps) {
   const { stdout } = useStdout();
   const termCols = stdout?.columns ?? 80;
 
   // ── 动画帧 ──
-  const [borderFrame, setBorderFrame] = useState(0);
   const [indicatorFrame, setIndicatorFrame] = useState(0);
   const [errorFrame, setErrorFrame] = useState(0);
   const [isFlashingError, setIsFlashingError] = useState(false);
@@ -77,7 +73,6 @@ export const InputArea = React.memo(function InputArea({
     const timers: ReturnType<typeof setInterval>[] = [];
 
     if (agentStatus === 'thinking') {
-      timers.push(setInterval(() => setBorderFrame(f => (f + 1) % borderFlowFrames.length), 200));
       timers.push(setInterval(() => setIndicatorFrame(f => (f + 1) % moonFrames.length), 200));
     } else if (agentStatus === 'streaming') {
       timers.push(setInterval(() => setIndicatorFrame(f => (f + 1) % waveFrames24.length), 200));
@@ -98,7 +93,13 @@ export const InputArea = React.memo(function InputArea({
     return () => timers.forEach(clearInterval);
   }, [agentStatus, isFlashingError]);
 
-  // 左侧指示器
+  // ── 状态栏数据 ──
+  const ctxRatio = contextTotal > 0 ? contextUsed / contextTotal : 0;
+  const ctxColor = ctxRatio > 0.8 ? colors.pink : ctxRatio > 0.5 ? colors.amber : colors.purple;
+  const ctxSegments = contextBar(contextUsed, contextTotal, 12);
+  const modelShort = model.length > 18 ? model.slice(0, 16) + '…' : model;
+
+  // ── 指示器 ──
   const indicator = agentStatus === 'thinking'
     ? moonFrames[indicatorFrame]
     : agentStatus === 'streaming'
@@ -109,26 +110,26 @@ export const InputArea = React.memo(function InputArea({
     ? colors.purple
     : colors.secondary;
 
-  // 状态文字
   const statusText = agentStatus === 'streaming' && statusDetail
     ? statusDetail.length > 50 ? statusDetail.slice(0, 48) + '…' : statusDetail
     : agentStatus === 'thinking'
       ? 'thinking...'
-      : '';
+      : agentStatus === 'error'
+        ? statusDetail || 'error'
+        : '';
 
-  // ── 状态栏数据 ──
-  const ctxRatio = contextTotal > 0 ? contextUsed / contextTotal : 0;
-  const ctxColor = ctxRatio > 0.8 ? colors.pink : ctxRatio > 0.5 ? colors.amber : colors.purple;
-  const ctxSegments = contextBar(contextUsed, contextTotal, 12);
-  const modelShort = model.length > 18 ? model.slice(0, 16) + '…' : model;
-
-  // ── 快捷键提示（窄终端时省略）──
-  const showHints = termCols >= 60 && agentStatus === 'idle';
-  const hintText = showHints ? '  /help commands · Esc cancel · Ctrl+C quit' : '';
+  // ── 光标渲染 ──
+  const safePos = Math.min(cursorPos, inputText.length);
+  const beforeCursor = inputText.slice(0, safePos);
+  const charAtCursor = inputText[safePos] || ' ';
+  const afterCursor = inputText.slice(safePos + 1);
 
   return (
     <Box flexDirection="column">
-      {/* 状态栏 — 模型 · 动效 · 时间 · context · 核心状态 */}
+      {/* 分隔线 */}
+      <Text color={colors.separator}>{'─'.repeat(Math.min(termCols, 120))}</Text>
+
+      {/* 状态栏 */}
       <Box marginLeft={1}>
         <Text color={colors.purple}>◈ </Text>
         <Text color={colors.purpleBright}>{modelShort}</Text>
@@ -153,18 +154,18 @@ export const InputArea = React.memo(function InputArea({
         {emotion && (<><Text color={colors.separator}> </Text><Text>{emotion}</Text></>)}
       </Box>
 
-      {/* 非空闲时的状态提示行 */}
-      {agentStatus !== 'idle' && (
-        <Box borderStyle="round" borderColor={isFlashingError ? errorFadeFrames[errorFrame] : colors.border} paddingX={1}>
+      {/* 输入行或状态指示器 */}
+      {agentStatus === 'idle' ? (
+        <Box marginLeft={1}>
+          <Text color={colors.purple}>▸ </Text>
+          <Text>{beforeCursor}</Text>
+          <Text backgroundColor={colors.purple} color={colors.bg}>{charAtCursor}</Text>
+          <Text>{afterCursor}</Text>
+        </Box>
+      ) : (
+        <Box marginLeft={1}>
           <Text color={indicatorColor}>{indicator} </Text>
           <Text color={colors.secondary}>{statusText}</Text>
-        </Box>
-      )}
-
-      {/* 空闲态输入提示 */}
-      {agentStatus === 'idle' && (
-        <Box marginLeft={1}>
-          <Text color={colors.separator}>{hintText}</Text>
         </Box>
       )}
     </Box>

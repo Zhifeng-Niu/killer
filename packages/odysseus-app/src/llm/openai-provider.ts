@@ -2,7 +2,7 @@
  * OpenAI LLM Provider
  */
 
-import type { LLMProvider, LLMCompletion } from '@odysseus/core';
+import type { LLMProvider, LLMCompletion, ChatMessage } from '@odysseus/core';
 import type { LLMProviderConfig } from './types.js';
 
 const DEFAULT_MODEL = 'gpt-4o';
@@ -57,7 +57,7 @@ export class OpenAIProvider implements LLMProvider {
     };
   }
 
-  async complete(prompt: string, context?: string): Promise<LLMCompletion> {
+  async complete(prompt: string, context?: string, _history?: ChatMessage[]): Promise<LLMCompletion> {
     const messages: OpenAIMessage[] = [];
 
     if (context) {
@@ -121,7 +121,7 @@ export class OpenAIProvider implements LLMProvider {
     };
   }
 
-  async *stream(prompt: string, context?: string): AsyncIterable<string> {
+  async *stream(prompt: string, context?: string, _history?: ChatMessage[]): AsyncIterable<string> {
     const messages: OpenAIMessage[] = [];
 
     if (context) {

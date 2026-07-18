@@ -127,6 +127,7 @@ import { initOdysseusDir } from '../config/types.js';
 import { SkillManager, type SkillExecutionResult } from '../skills/manager.js';
 import { SessionManager, type SessionSnapshot } from '../session/index.js';
 import { Logger } from '../log/index.js';
+import { beginSpan, traceAsync, type Span } from '../log/trace.js';
 import { PeriodicMemoryGuard, trimArray, trimAgentState } from './memory-guard.js';
 import { TokenEfficiencyTracker, type LLMCallRecord, type ToolCallRecord, type EfficiencyReport } from './token-efficiency.js';
 import { WorkflowEngine, type TaskExecutor, type WorkflowDefinition, type WorkflowResult } from './workflow-engine.js';
@@ -137,6 +138,35 @@ import { WorkflowStore } from './workflow-store.js';
  */
 function generateId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/**
+ * 从 LLM 响应中剥离 <thinking> 块。
+ * DeepSeek V4 把推理过程混在 content 里，不清理会导致：
+ * 1. 历史记录膨胀（每轮 4-8KB thinking）
+ * 2. 下一轮模型看到自己的 thinking 后产生更多 thinking（正反馈循环）
+ * 3. TUI 渲染溢出
+ */
+function stripThinkingBlocks(text: string): string {
+  // 闭合的 thinking 块
+  let clean = text.replace(/<thinking>[\s\S]*?<\/thinking>/g, '');
+  // 流式中未闭合的 thinking（只有开头没有结尾）
+  clean = clean.replace(/<thinking>[\s\S]*/g, '');
+  clean = clean.trim();
+
+  // 如果剥离后为空，从 thinking 中提取末尾摘要（避免对话历史出现空消息）
+  if (!clean) {
+    const match = text.match(/<thinking>([\s\S]*?)<\/thinking>/);
+    if (match) {
+      const lines = match[1].split('\n').map(l => l.trim()).filter(Boolean);
+      if (lines.length > 0) {
+        clean = lines[lines.length - 1];
+        if (clean.length > 200) clean = clean.slice(0, 197) + '...';
+      }
+    }
+  }
+
+  return clean;
 }
 
 const WRAP_UP = /\b(thanks?|thank you|bye|goodbye|see you|got it|that's all|done|完美|谢|再见|好了|差不多了|搞定)\b/i;
@@ -1886,7 +1916,7 @@ Examples:
 
     // 最小状态更新 — 只记对话历史
     this.conversationHistory.push({ role: 'user', content, timestamp: Date.now() });
-    this.conversationHistory.push({ role: 'assistant', content: response, timestamp: Date.now() });
+    this.conversationHistory.push({ role: 'assistant', content: stripThinkingBlocks(response), timestamp: Date.now() });
     this.trimHistory();
 
     this.logger.info(`Auto-continue completed: "${stepDesc.slice(0, 50)}" → ${response.length} chars`);
@@ -3313,7 +3343,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       if (data.conversationHistory && Array.isArray(data.conversationHistory)) {
         this.conversationHistory = data.conversationHistory.map((m: { role: string; content: string; timestamp?: number }) => ({
           role: m.role as 'user' | 'assistant',
-          content: m.content,
+          content: m.role === 'assistant' ? stripThinkingBlocks(m.content) : m.content,
           timestamp: m.timestamp ?? Date.now(),
         }));
       }
@@ -3472,8 +3502,11 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     onToken?: (token: string) => void,
     onStatus?: (status: string) => void,
   ): Promise<{ content: string }> {
+    const inputSpan = beginSpan('processInput', { inputLen: content.length, channel: _channel });
+
     // === 自主执行快速路径 ===
     if (content.startsWith('[AUTO-CONTINUE]')) {
+      inputSpan.end('ok');
       return await this.processAutoContinue(content, onToken, onStatus);
     }
 
@@ -3593,8 +3626,11 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         await this.hooks.emit('input:received', { content: innerCtx.input, channel: innerCtx.channel });
         await this.hooks.emit('cycle:start', { input: innerCtx.input });
 
-        // 构建 prompt：persona + 对话历史 + 用户输入 + 关联记忆
+        // 构建 prompt：persona + 关联记忆（对话历史通过 messages 数组传递，不嵌入 system prompt）
         const systemContext = this.buildSystemPrompt(innerCtx.input);
+        // 将 conversationHistory 转为 ChatMessage[]，用于 provider 的多轮对话
+        const chatHistory: ChatMessage[] = this.conversationHistory
+          .map(m => ({ role: m.role, content: m.content }));
         let response: string;
 
         try {
@@ -3602,11 +3638,19 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           metrics.llmCalls.inc();
 
           // 尝试原生 function calling（支持工具链自主循环）
-          response = await this.runNativeToolLoop(innerCtx.input, systemContext, onToken, onStatus);
+          const llmSpan = inputSpan.child('llm.call', { model: this.config.llm.getModel?.() });
+          try {
+            response = await this.runNativeToolLoop(innerCtx.input, systemContext, onToken, onStatus, chatHistory);
+            llmSpan.setAttr('responseLen', response?.length ?? 0).end('ok');
+          } catch (llmInnerErr) {
+            llmSpan.end('error', llmInnerErr);
+            throw llmInnerErr;
+          }
           stopTimer();
         } catch (llmError) {
           metrics.llmErrors.inc();
           const errMsg = llmError instanceof Error ? llmError.message : String(llmError);
+          inputSpan.setAttr('llmError', errMsg);
           const isCircuitBreaker = llmError instanceof LLMError && llmError.code === 'LLM_ERROR' && errMsg.includes('Circuit breaker');
           if (isCircuitBreaker) {
             response = 'I\'m having trouble thinking clearly right now — my thoughts keep slipping away. Could you give me a moment and try again? I\'ll remember what you said.';
@@ -3619,10 +3663,11 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         }
 
         // 记录到对话历史（工具链循环已在 runNativeToolLoop 中完成）
+        const cleanResponse = stripThinkingBlocks(response);
         this.conversationHistory.push({ role: 'user', content: innerCtx.input, timestamp: Date.now() });
-        this.conversationHistory.push({ role: 'assistant', content: response, timestamp: Date.now() });
-        this.lastResponseFeatures = extractResponseFeatures(response);
-        this.recentResponses.push(response);
+        this.conversationHistory.push({ role: 'assistant', content: cleanResponse, timestamp: Date.now() });
+        this.lastResponseFeatures = extractResponseFeatures(cleanResponse);
+        this.recentResponses.push(cleanResponse);
         if (this.recentResponses.length > 20) this.recentResponses = this.recentResponses.slice(-20);
         this.trimHistory();
 
@@ -3735,14 +3780,15 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         }
 
         await this.hooks.emit('input:processed', { content: innerCtx.input, responseLength: response.length });
-        await this.hooks.emit('cycle:end', { input: innerCtx.input, responseLength: response.length });
+        await this.hooks.emit('cycle:end', { input: innerCtx.input, responseLength: cleanResponse.length });
 
-        innerCtx.response = response;
+        innerCtx.response = cleanResponse;
       });
     } catch (outerError) {
       // 优雅错误恢复：管道外部异常
       const errMsg = outerError instanceof Error ? outerError.message : String(outerError);
       this.logger.error(`processInput pipeline error: ${errMsg}`);
+      inputSpan.setAttr('pipelineError', errMsg).end('error', outerError);
       MetricsCollector.getInstance().counter('pipeline_errors').inc();
       await this.hooks.emit('error:pipeline', { error: errMsg, input: content }).catch(() => {});
 
@@ -3808,6 +3854,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       }
     }
 
+    inputSpan.setAttr('responseLen', finalResponse.length).end('ok');
     return { content: finalResponse };
   }
 
@@ -3832,8 +3879,10 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     input: string,
     systemContext: string,
     onToken?: (token: string) => void,
+    history?: ChatMessage[],
   ): Promise<string> {
     const maxAttempts = OdysseusAgent.MAX_LLM_RETRIES;
+    const retrySpan = beginSpan('llm.retry', { inputLen: input.length, systemLen: systemContext.length });
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -3844,34 +3893,40 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           // 尝试流式输出，失败后降级为完整请求
           try {
             const chunks: string[] = [];
-            for await (const chunk of this.config.llm.stream(input, systemContext)) {
+            for await (const chunk of this.config.llm.stream(input, systemContext, history)) {
               chunks.push(chunk);
               onToken(chunk);
             }
             response = chunks.join('');
           } catch (streamErr) {
+            retrySpan.setAttr(`streamFallback_attempt${attempt}`, true);
             this.logger.warn(`Stream failed (attempt ${attempt}), falling back to complete: ${
               streamErr instanceof Error ? streamErr.message : String(streamErr)
             }`);
-            const result = await this.config.llm.complete(input, systemContext);
+            const result = await this.config.llm.complete(input, systemContext, history);
             response = result.content;
             onToken(response);
             this.trackCacheStats(result as any);
           }
         } else {
-          const result = await this.config.llm.complete(input, systemContext);
+          const result = await this.config.llm.complete(input, systemContext, history);
           response = result.content;
           this.trackCacheStats(result as any);
         }
 
+        retrySpan.setAttr('attempts', attempt).setAttr('responseLen', response.length).end('ok');
         await this.hooks.emit('llm:response', { responseLength: response.length, attempt });
         return response;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
+        retrySpan.setAttr(`error_attempt${attempt}`, errMsg);
         await this.hooks.emit('llm:error', { error: errMsg, attempt });
 
         const isLastAttempt = attempt === maxAttempts;
-        if (isLastAttempt) throw err;
+        if (isLastAttempt) {
+          retrySpan.end('error', err);
+          throw err;
+        }
 
         const delay = OdysseusAgent.RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
         this.logger.warn(`LLM call failed (attempt ${attempt}/${maxAttempts}), retrying in ${delay}ms: ${errMsg}`);
@@ -3967,9 +4022,9 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       return `${base}\n\n[FIX PROTOCOL: Analyze the error pattern. Check if previous fixes introduced new issues. Use self_read on the specific failing line. Make ONE targeted change and verify before continuing.]`;
     }
     if (round > 8) {
-      return `${base}\n\n[Multiple failures detected. Consider: (1) report current progress to user, (2) try a fundamentally different approach, (3) simplify the task scope.]`;
+      return `${base}\n\n[Multiple failures detected. STOP calling tools. Report what you've learned to the user and ask for guidance.]`;
     }
-    return `${base} IMPORTANT: Do NOT give up. Try a different approach, use alternative tools, or break the task into smaller steps.`;
+    return `${base} [SUGGESTION: If the tool keeps failing, stop retrying and explain the issue to the user. Try a different tool or approach instead.]`;
   }
 
   /** 计算编码工具链的整体 TG */
@@ -4003,7 +4058,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     if (result.response !== response) {
       const lastIdx = this.conversationHistory.length - 1;
       if (lastIdx >= 0 && this.conversationHistory[lastIdx].role === 'assistant') {
-        this.conversationHistory[lastIdx] = { ...this.conversationHistory[lastIdx], content: result.response };
+        this.conversationHistory[lastIdx] = { ...this.conversationHistory[lastIdx], content: stripThinkingBlocks(result.response) };
       }
     }
 
@@ -4038,6 +4093,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     systemContext: string,
     onToken?: (token: string) => void,
     onStatus?: (status: string) => void,
+    history?: ChatMessage[],
   ): Promise<string | null> {
     const hasActivePlan = this.planExecutor.getActivePlans().some(
       p => p.steps.some(s => s.status === 'ready'),
@@ -4068,7 +4124,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       'Do NOT describe what you will do — actually call the tools now.',
     ].join('\n');
 
-    const execResponse = await this.callLLMWithRetry(bridgePrompt, systemContext, onToken);
+    const execResponse = await this.callLLMWithRetry(bridgePrompt, systemContext, onToken, history);
     return execResponse;
   }
 
@@ -4077,21 +4133,26 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
     systemContext: string,
     onToken?: (token: string) => void,
     onStatus?: (status: string) => void,
+    history?: ChatMessage[],
   ): Promise<string> {
+    const loopSpan = beginSpan('toolLoop', { inputLen: userInput.length });
+
+    try {
     // === 阶段 1：普通文本调用（流式输出给用户）===
     // 先不加 tools 参数，让模型自然响应。
     // 避免模型对所有输入都强制调用工具（DeepSeek 的已知行为）。
-    let response = await this.callLLMWithRetry(userInput, systemContext, onToken);
+    let response = await this.callLLMWithRetry(userInput, systemContext, onToken, history);
 
     // 解析文本中的工具调用标记（DSML/inline/code block）
     const toolResult = await this.executeToolCallsFromResponse(response);
     response = toolResult.response;
+    loopSpan.setAttr('toolsExecuted', toolResult.toolsExecuted).setAttr('toolNames', toolResult.executedToolNames.join(','));
 
     if (!toolResult.toolsExecuted) {
       // 纯文本响应 — 检查是否需要强制工具执行
       // 当 LLM 说"我要做 X"但不调工具时，自动桥接到执行
       const forcedResult = await this.tryBridgeToExecution(
-        response, userInput, systemContext, onToken, onStatus,
+        response, userInput, systemContext, onToken, onStatus, history,
       );
       if (forcedResult) {
         response = forcedResult;
@@ -4116,7 +4177,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       const followUpPrompt = hasErrors
         ? `Some tools failed. Here's what happened:\n${response.slice(0, 2000)}\n\nYou MUST continue working on the user's task. Do NOT just explain the error. Try alternative approaches: use different tools, break the task into smaller steps, or use your own knowledge. Keep working until the task is actually done.`
         : `Based on these tool results, provide your final answer to the user's request:\n${response}`;
-      const followUp = await this.callLLMWithRetry(followUpPrompt, systemContext, onToken);
+      const followUp = await this.callLLMWithRetry(followUpPrompt, systemContext, onToken, history);
       return followUp;
     }
 
@@ -4172,9 +4233,12 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
     let round = 1;
     const callHistory: string[] = [];
+    let consecutiveFailures = 0; // 连续工具失败计数
+    const MAX_CONSECUTIVE_FAILURES = 3; // 连续失败上限
+    const MAX_ROUNDS = 12; // 硬性轮次上限
 
-    // 无硬性轮次限制 — 通过重复检测和 token 预算自然收敛
-    while (true) {
+    // 重复检测 + 失败收敛 + 轮次上限三重保护
+    while (round <= MAX_ROUNDS) {
       onStatus?.('Reasoning...');
 
       let result;
@@ -4186,7 +4250,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
         // 不静默停止 — 让模型基于已有结果继续工作
         try {
           const fallbackPrompt = `A tool execution error occurred: ${errMsg.slice(0, 200)}.\nYou MUST continue working on the user's original task. Based on what you've already accomplished, find an alternative approach. Do NOT just explain the error — actually complete the task or make meaningful progress using other available tools or knowledge.`;
-          const fallbackResponse = await this.callLLMWithRetry(fallbackPrompt, systemContext, onToken);
+          const fallbackResponse = await this.callLLMWithRetry(fallbackPrompt, systemContext, onToken, history);
           if (fallbackResponse) return fallbackResponse;
         } catch { /* fallback also failed */ }
         break;
@@ -4194,7 +4258,16 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
       // 没有工具调用 — 模型给了最终文本响应
       if (!result.toolCalls || result.toolCalls.length === 0) {
-        const finalContent = result.content || '';
+        let finalContent = result.content || '';
+        // thinking-only 响应：从 reasoning_content 提取摘要
+        if (!finalContent && (result as any).reasoningContent) {
+          const reasoning = (result as any).reasoningContent as string;
+          const lines = reasoning.split('\n').map((l: string) => l.trim()).filter(Boolean);
+          if (lines.length > 0) {
+            finalContent = lines[lines.length - 1];
+            if (finalContent.length > 300) finalContent = finalContent.slice(0, 297) + '...';
+          }
+        }
         if (finalContent) {
           onToken?.('\n' + finalContent);
         }
@@ -4342,6 +4415,40 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
           round,
         });
 
+        // ── 连续失败收敛：工具反复失败时强制总结 ──
+        const batchFailed = batchResults.every(br => !br.result.success);
+        const batchSucceeded = batchResults.some(br => br.result.success);
+        if (batchFailed) {
+          consecutiveFailures++;
+        } else if (batchSucceeded) {
+          consecutiveFailures = 0;
+        }
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          const failureNames = batchResults.map(br => br.name).join(', ');
+          const failureErrors = batchResults
+            .filter(br => !br.result.success)
+            .map(br => `${br.name}: ${br.result.error ?? 'unknown'}`)
+            .join('; ');
+          this.logger.warn(`Tool loop: ${consecutiveFailures} consecutive failures, forcing convergence. Errors: ${failureErrors}`);
+          // 注入系统消息强制模型总结并回复用户
+          messages.push({
+            role: 'user',
+            content: `[SYSTEM: Your last ${consecutiveFailures} tool call batches all failed (${failureErrors}). STOP calling tools. You MUST respond to the user NOW with what you know. If you cannot complete the task, explain what went wrong and suggest alternatives.]`,
+          });
+          try {
+            const summaryResult = await (provider as any).completeWithTools(messages, []);
+            let summaryText = summaryResult?.content || '';
+            if (!summaryText && summaryResult?.reasoningContent) {
+              const lines = summaryResult.reasoningContent.split('\n').map((l: string) => l.trim()).filter(Boolean);
+              summaryText = lines[lines.length - 1] || '';
+            }
+            if (summaryText) onToken?.('\n' + summaryText);
+            return summaryText || response;
+          } catch {
+            return response;
+          }
+        }
+
         // ── Token Efficiency: 记录本轮 LLM 调用到效率追踪器 ──
         this.efficiencyTracker.recordCall({
           round,
@@ -4363,10 +4470,36 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
       }
     }
 
+    // 轮次上限兜底：强制获取最终文本回复
+    if (round > MAX_ROUNDS) {
+      this.logger.warn(`Tool loop hit round limit (${MAX_ROUNDS}), forcing final response`);
+      messages.push({
+        role: 'user',
+        content: '[SYSTEM: Maximum tool call rounds reached. STOP calling tools and respond to the user NOW with a summary of what you found.]',
+      });
+      try {
+        const finalResult = await (provider as any).completeWithTools(messages, []);
+        let finalText = finalResult?.content || '';
+        if (!finalText && finalResult?.reasoningContent) {
+          const lines = finalResult.reasoningContent.split('\n').map((l: string) => l.trim()).filter(Boolean);
+          finalText = lines[lines.length - 1] || '';
+        }
+        if (finalText) onToken?.('\n' + finalText);
+        return finalText || response;
+      } catch {
+        return response;
+      }
+    }
+
     // 标记最后一轮为有效（产生了用户看到的输出）
     this.efficiencyTracker.markEffective(round);
 
+    loopSpan.setAttr('rounds', round).end('ok');
     return response;
+    } catch (toolLoopErr) {
+      loopSpan.end('error', toolLoopErr);
+      throw toolLoopErr;
+    }
   }
 
   /**
@@ -4438,7 +4571,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
 
     // 记录到对话历史
     this.conversationHistory.push({ role: 'user', content: `[delegate] ${task}`, timestamp: Date.now() });
-    this.conversationHistory.push({ role: 'assistant', content: result.synthesis, timestamp: Date.now() });
+    this.conversationHistory.push({ role: 'assistant', content: stripThinkingBlocks(result.synthesis), timestamp: Date.now() });
     this.trimHistory();
 
     await this.hooks.emit('delegate:complete', { task, cellsUsed: result.totalCellsUsed, durationMs: result.durationMs });
@@ -5761,7 +5894,7 @@ If this step requires using a tool, use it. If it's a reasoning/analysis step, p
   restoreConversationHistory(history: Array<{ role: 'user' | 'assistant'; content: string; timestamp?: number }>): void {
     this.conversationHistory = history.map(m => ({
       role: m.role,
-      content: m.content,
+      content: m.role === 'assistant' ? stripThinkingBlocks(m.content) : m.content,
       timestamp: m.timestamp ?? Date.now(),
     }));
     this.logger.info(`Restored ${history.length} conversation turns`);

@@ -399,8 +399,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
     this.reasoningEffort = config.reasoningEffort ?? 'high';
   }
 
-  async complete(prompt: string, context?: string): Promise<LLMCompletion> {
-    const messages = this.buildMessages(prompt, context);
+  async complete(prompt: string, context?: string, history?: ChatMessage[]): Promise<LLMCompletion> {
+    const messages = this.buildMessages(prompt, context, history);
 
     const response = await this.doRequest(messages, false);
 
@@ -434,8 +434,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
     };
   }
 
-  async *stream(prompt: string, context?: string): AsyncIterable<string> {
-    const messages = this.buildMessages(prompt, context);
+  async *stream(prompt: string, context?: string, history?: ChatMessage[]): AsyncIterable<string> {
+    const messages = this.buildMessages(prompt, context, history);
 
     const response = await this.doRequest(messages, true);
 
@@ -656,9 +656,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
     };
   }
 
-  private buildMessages(prompt: string, context?: string): ChatMessage[] {
+  private buildMessages(prompt: string, context?: string, history?: ChatMessage[]): ChatMessage[] {
     const messages: ChatMessage[] = [];
     if (context) messages.push({ role: 'system', content: context });
+    if (history && history.length > 0) messages.push(...history);
     messages.push({ role: 'user', content: prompt });
     return messages;
   }

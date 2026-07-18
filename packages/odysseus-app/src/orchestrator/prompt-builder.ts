@@ -1027,23 +1027,6 @@ export function buildSystemPrompt(deps: PromptBuilderDeps): string {
     parts.push('Don\'t interview them — just be curious and natural. Each thing you learn is precious because it\'s the beginning of your relationship.');
   }
 
-  // === 对话历史 ===
-  if (deps.conversationHistory.length > 0) {
-    parts.push('\nConversation so far:');
-    const managedHistory = deps.contextWindow.manage(
-      deps.conversationHistory.map(m => ({ ...m, timestamp: undefined })),
-    );
-    const totalTurns = managedHistory.length;
-    for (let i = 0; i < totalTurns; i++) {
-      const turn = managedHistory[i];
-      const prefix = turn.role === 'user' ? 'User' : turn.role === 'system' ? 'Context' : 'Assistant';
-      // 最近 3 轮保留更多上下文，早期轮次压缩更积极
-      const turnsFromEnd = totalTurns - i;
-      const maxLen = turnsFromEnd <= 6 ? 500 : turnsFromEnd <= 12 ? 300 : 150;
-      parts.push(`${prefix}: ${turn.content.slice(0, maxLen)}${turn.content.length > maxLen ? '...' : ''}`);
-    }
-  }
-
   // === Section 去重：合并内容重叠的 section ===
   if (parts.length > 5) {
     const sectionEntries = parts
@@ -1410,12 +1393,12 @@ export function getCacheStableFingerprint(deps: PromptBuilderDeps): string {
 }
 
 /**
- * 格式化"多长时间以前"
+ * 格式化"多长时间以前"（使用时间桶避免每秒变化导致缓存失效）
  */
 function formatTimeAgo(timestamp: number): string {
   const seconds = Math.floor((Date.now() - timestamp) / 1000);
   if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 300) * 5}m ago`; // 5分钟桶
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
   if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
   return new Date(timestamp).toLocaleDateString();

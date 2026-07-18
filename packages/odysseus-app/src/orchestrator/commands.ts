@@ -26,7 +26,7 @@ const COMMAND_NAMES = [
   'plugins', 'plugin-unload', 'init',
   'narrative', 'predictions', 'emotions',
   'health', 'diagnostics', 'broadcast', 'report',
-  'workflow',
+  'workflow', 'trace',
   'stop', 'exit',
 ] as const;
 
@@ -188,6 +188,7 @@ export class CommandHandler {
       case 'broadcast': this.handleBroadcastCommand(); return true;
       case 'report':    this.handleReportCommand(); return true;
       case 'workflow':  this.handleWorkflowCommand(args); return true;
+      case 'trace':     this.handleTraceCommand(args); return true;
       case 'stop':      this.handleStopCommand(); return true;
       case 'exit':      this.handleStopCommand(); return true;
       default:          return false;
@@ -1075,6 +1076,68 @@ export class CommandHandler {
     }
 
     this.outputManager.sendResult(`Unknown workflow sub-command: ${subCommand}. Use /workflow help.`);
+  }
+
+  private handleTraceCommand(args: string[] | undefined): void {
+    const { getTraceFilePath } = require('../log/trace.js') as typeof import('../log/trace.js');
+    const { readFileSync, existsSync } = require('node:fs') as typeof import('node:fs');
+
+    const sub = (Array.isArray(args) ? args.join(' ') : args ?? '').trim();
+    const traceFile = getTraceFilePath();
+
+    if (sub === 'path') {
+      this.outputManager.sendResult(`Trace file: ${traceFile}`);
+      return;
+    }
+
+    if (!existsSync(traceFile)) {
+      this.outputManager.sendResult('No trace file found. Send a message first to generate traces.');
+      return;
+    }
+
+    try {
+      const lines = readFileSync(traceFile, 'utf-8').trim().split('\n');
+      const totalSpans = lines.length;
+      const errors = lines.filter(l => l.includes('"status":"error"'));
+      const lastN = sub === 'all' ? lines : lines.slice(-20);
+
+      let output = `Trace: ${traceFile}\n`;
+      output += `Total spans: ${totalSpans} | Errors: ${errors.length}\n`;
+      output += '─'.repeat(50) + '\n';
+
+      for (const line of lastN) {
+        try {
+          const span = JSON.parse(line);
+          const dur = span.durationMs != null ? `${span.durationMs}ms` : '...';
+          const status = span.status === 'error' ? 'FAIL' : span.status === 'cancelled' ? 'CANCEL' : 'OK';
+          const err = span.error ? ` | ${span.error.message.slice(0, 80)}` : '';
+          const attrs = span.name === 'llm.call' || span.name === 'llm.retry'
+            ? ` | attempts=${span.attributes?.attempts ?? '-'} respLen=${span.attributes?.responseLen ?? '-'}`
+            : span.name === 'toolLoop'
+              ? ` | tools=${span.attributes?.toolNames ?? '-'} rounds=${span.attributes?.rounds ?? '-'}`
+              : span.name === 'processInput'
+                ? ` | inLen=${span.attributes?.inputLen ?? '-'} outLen=${span.attributes?.responseLen ?? '-'}`
+                : '';
+          output += `[${status}] ${span.name} ${dur}${err}${attrs}\n`;
+        } catch {
+          output += `[??] ${line.slice(0, 100)}\n`;
+        }
+      }
+
+      if (errors.length > 0) {
+        output += '\n─ Recent errors ─\n';
+        for (const errLine of errors.slice(-5)) {
+          try {
+            const span = JSON.parse(errLine);
+            output += `  ${span.name}: ${span.error?.message ?? 'unknown'} (${span.durationMs}ms)\n`;
+          } catch { /* skip */ }
+        }
+      }
+
+      this.outputManager.sendResult(output);
+    } catch (err) {
+      this.outputManager.sendResult(`Failed to read trace: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
 

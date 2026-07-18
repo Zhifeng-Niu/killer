@@ -83,17 +83,17 @@ export class ResilientLLMProvider implements LLMProvider {
     }
   }
 
-  async complete(prompt: string, context?: string): Promise<LLMCompletion> {
-    return this.executeWithResilience(() => this.inner.complete(prompt, context));
+  async complete(prompt: string, context?: string, history?: ChatMessage[]): Promise<LLMCompletion> {
+    return this.executeWithResilience(() => this.inner.complete(prompt, context, history));
   }
 
-  async *stream(prompt: string, context?: string): AsyncIterable<string> {
+  async *stream(prompt: string, context?: string, history?: ChatMessage[]): AsyncIterable<string> {
     // 流式调用使用重试但不使用断路器（流可能部分失败）
     const lastError: Error[] = [];
 
     for (let attempt = 1; attempt <= this.retryConfig.maxAttempts; attempt++) {
       try {
-        const stream = this.inner.stream(prompt, context);
+        const stream = this.inner.stream(prompt, context, history);
         for await (const chunk of stream) {
           yield chunk;
         }

@@ -4,7 +4,7 @@
  * Uses the Gemini REST API with OpenAI-compatible format.
  */
 
-import type { LLMProvider, LLMCompletion } from '@odysseus/core';
+import type { LLMProvider, LLMCompletion, ChatMessage } from '@odysseus/core';
 import type { LLMProviderConfig } from './types.js';
 
 const DEFAULT_MODEL = 'gemini-2.0-flash';
@@ -56,7 +56,7 @@ export class GeminiProvider implements LLMProvider {
     };
   }
 
-  async complete(prompt: string, context?: string): Promise<LLMCompletion> {
+  async complete(prompt: string, context?: string, _history?: ChatMessage[]): Promise<LLMCompletion> {
     const messages = this.buildMessages(prompt, context);
 
     const response = await this.request(messages, false);
@@ -76,7 +76,7 @@ export class GeminiProvider implements LLMProvider {
     };
   }
 
-  async *stream(prompt: string, context?: string): AsyncIterable<string> {
+  async *stream(prompt: string, context?: string, _history?: ChatMessage[]): AsyncIterable<string> {
     const messages = this.buildMessages(prompt, context);
 
     const response = await fetch(this.config.baseUrl, {

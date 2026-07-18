@@ -3,7 +3,7 @@
  * 使用 OpenRouter API 访问多种 LLM 模型
  */
 
-import type { LLMProvider, LLMCompletion } from '@odysseus/core';
+import type { LLMProvider, LLMCompletion, ChatMessage } from '@odysseus/core';
 import type { LLMProviderConfig } from './types.js';
 
 const DEFAULT_MODEL = 'anthropic/claude-sonnet-4';
@@ -58,7 +58,7 @@ export class OpenRouterProvider implements LLMProvider {
     };
   }
 
-  async complete(prompt: string, context?: string): Promise<LLMCompletion> {
+  async complete(prompt: string, context?: string, _history?: ChatMessage[]): Promise<LLMCompletion> {
     const messages: OpenRouterMessage[] = [];
 
     if (context) {
@@ -123,7 +123,7 @@ export class OpenRouterProvider implements LLMProvider {
     };
   }
 
-  async *stream(prompt: string, context?: string): AsyncIterable<string> {
+  async *stream(prompt: string, context?: string, _history?: ChatMessage[]): AsyncIterable<string> {
     const messages: OpenRouterMessage[] = [];
 
     if (context) {

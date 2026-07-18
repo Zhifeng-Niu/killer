@@ -11,7 +11,7 @@ import { startReadlineLoop } from './cli/index.js';
 import { startTUI } from './tui/index.js';
 import { APIServer } from './api/index.js';
 import { registerRoutes } from './api/routes.js';
-import { Logger } from './log/index.js';
+import { Logger, initTrace, getTraceFilePath } from './log/index.js';
 import { loadConfig, initOdysseusDir, type OdysseusConfig } from './config/index.js';
 import { loadEnvFiles } from './config/env.js';
 import { runInitWizard } from './cli/init-wizard.js';
@@ -349,6 +349,9 @@ async function main(): Promise<void> {
     console.warn(`Warning: Could not create .odysseus directory: ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // 初始化 trace 系统 — 写入 .odysseus/trace.jsonl
+  initTrace();
+
   // 加载配置（CLI > env > project .odysseus/config.json > ~/.odysseus/config.json > defaults）
   const config = loadConfig(debug ? { agent: { debugLogging: true } } : undefined);
 
@@ -410,6 +413,7 @@ async function main(): Promise<void> {
         console.error('停止 API 服务时出错:', error);
       }
     }
+    console.log(`  trace: ${getTraceFilePath()}`);
     process.exit(0);
   };
 
@@ -505,12 +509,33 @@ async function main(): Promise<void> {
   // 防止未处理的 Promise 拒绝导致静默失败
   process.on('unhandledRejection', (reason) => {
     logger.error(`Unhandled promise rejection: ${reason}`);
+    // 写入 trace 文件便于诊断
+    const { beginSpan } = require('./log/trace.js') as typeof import('./log/trace.js');
+    const span = beginSpan('unhandledRejection', { reason: String(reason) });
+    span.end('error', reason instanceof Error ? reason : new Error(String(reason)));
   });
 
   // 防止未捕获异常导致进程崩溃而不清理
   process.on('uncaughtException', (error) => {
     logger.error(`Uncaught exception: ${error}`);
-    shutdown();
+    // 写入 trace 文件
+    try {
+      const { beginSpan } = require('./log/trace.js') as typeof import('./log/trace.js');
+      const span = beginSpan('uncaughtException', { stack: error.stack?.slice(0, 200) });
+      span.end('error', error);
+    } catch { /* trace itself failed */ }
+
+    // 恢复终端状态（ink alternate screen 可能没清理）
+    if (process.stdout.isTTY) {
+      process.stdout.write('\x1b[?1049l'); // 退出 alternate screen
+      process.stdout.write('\x1b[?25h');   // 显示光标
+      process.stdout.write('\x1b[0m');     // 重置颜色
+    }
+
+    console.error(`\n=== Odysseus crashed ===\n${error.stack ?? error.message}\nTrace: ${(() => { try { return require('./log/trace.js').getTraceFilePath(); } catch { return 'N/A'; } })()}`);
+
+    // 不要调 shutdown() — 它可能也在 crash 路径上。直接退出。
+    process.exit(1);
   });
 }
 

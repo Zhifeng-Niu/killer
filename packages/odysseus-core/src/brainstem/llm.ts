@@ -73,8 +73,8 @@ export type ChatMessage =
  * LLM Provider 接口
  */
 export interface LLMProvider {
-  complete(prompt: string, context?: string): Promise<LLMCompletion>;
-  stream(prompt: string, context?: string): AsyncIterable<string>;
+  complete(prompt: string, context?: string, history?: ChatMessage[]): Promise<LLMCompletion>;
+  stream(prompt: string, context?: string, history?: ChatMessage[]): AsyncIterable<string>;
   getModel(): string;
 
   /**
@@ -96,7 +96,7 @@ export class MockLLMProvider implements LLMProvider {
     this.responsePattern = responsePattern;
   }
 
-  async complete(prompt: string, context?: string): Promise<LLMCompletion> {
+  async complete(prompt: string, context?: string, _history?: ChatMessage[]): Promise<LLMCompletion> {
     // 模拟网络延迟
     await this.delay(80);
 
@@ -119,7 +119,7 @@ export class MockLLMProvider implements LLMProvider {
     };
   }
 
-  async *stream(prompt: string, context?: string): AsyncIterable<string> {
+  async *stream(prompt: string, context?: string, _history?: ChatMessage[]): AsyncIterable<string> {
     // If a custom pattern is set (tests), use legacy behavior
     let response: string;
     if (this.responsePattern !== 'Mock reasoning response') {
